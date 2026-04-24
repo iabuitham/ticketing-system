@@ -1,0 +1,1085 @@
+<?php
+session_start();
+require_once '../includes/db.php';
+require_once '../includes/functions.php';
+require_once '../includes/language.php';
+
+if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
+    header('Location: login.php');
+    exit();
+}
+
+$conn = getConnection();
+
+// Get filters
+$status_filter = isset($_GET['status']) ? $_GET['status'] : '';
+$search = isset($_GET['search']) ? sanitizeInput($_GET['search']) : '';
+
+// Build query
+$query = "SELECT * FROM reservations WHERE 1=1";
+$params = [];
+$types = "";
+
+if ($status_filter && $status_filter != 'all') {
+    $query .= " AND status = ?";
+    $params[] = $status_filter;
+    $types .= "s";
+}
+
+if ($search) {
+    $query .= " AND (name LIKE ? OR reservation_id LIKE ? OR phone LIKE ?)";
+    $search_param = "%{$search}%";
+    $params[] = $search_param;
+    $params[] = $search_param;
+    $params[] = $search_param;
+    $types .= "sss";
+}
+
+$query .= " ORDER BY created_at DESC";
+
+$stmt = $conn->prepare($query);
+if (!empty($params)) {
+    $stmt->bind_param($types, ...$params);
+}
+$stmt->execute();
+$reservations = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$stmt->close();
+
+// Get statistics
+$stats = $conn->query("SELECT 
+    COUNT(*) as total,
+    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+    SUM(CASE WHEN status = 'registered' THEN 1 ELSE 0 END) as registered,
+    SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid,
+    SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
+    SUM(additional_amount_due) as total_additional_due
+FROM reservations")->fetch_assoc();
+
+// Get attendee stats
+$attendeeStats = $conn->query("SELECT 
+    SUM(CASE WHEN status = 'paid' THEN adults ELSE 0 END) as total_adults,
+    SUM(CASE WHEN status = 'paid' THEN teens ELSE 0 END) as total_teens,
+    SUM(CASE WHEN status = 'paid' THEN kids ELSE 0 END) as total_kids,
+    SUM(CASE WHEN status = 'paid' THEN adults + teens + kids ELSE 0 END) as total_attendees,
+    SUM(CASE WHEN status IN ('pending', 'registered') THEN adults + teens + kids ELSE 0 END) as pending_attendees
+FROM reservations")->fetch_assoc();
+
+// Get revenue by payment method
+$revenue = $conn->query("SELECT 
+    SUM(CASE WHEN payment_method = 'cash' AND status = 'paid' THEN total_amount ELSE 0 END) as cash,
+    SUM(CASE WHEN payment_method = 'cliq' AND status = 'paid' THEN total_amount ELSE 0 END) as cliq,
+    SUM(CASE WHEN payment_method = 'visa' AND status = 'paid' THEN total_amount ELSE 0 END) as visa,
+    SUM(CASE WHEN status = 'paid' THEN total_amount ELSE 0 END) as total
+FROM reservations")->fetch_assoc();
+
+// Get cancelled revenue
+$cancelledResult = $conn->query("SELECT SUM(total_amount) as total FROM reservations WHERE status = 'cancelled' AND total_amount > 0");
+$cancelledRevenue = $cancelledResult->fetch_assoc()['total'] ?? 0;
+
+$adultPrice = getSetting('ticket_price_adult', 10);
+$teenPrice = getSetting('ticket_price_teen', 10);
+$kidPrice = getSetting('ticket_price_kid', 0);
+$currency = getSetting('currency', 'JOD');
+
+// Get today's stats for sound notification
+$todayCount = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE DATE(created_at) = CURDATE()")->fetch_assoc()['count'];
+
+$conn->close();
+?>
+<!DOCTYPE html>
+<html lang="<?php echo $lang; ?>" dir="<?php echo getDirection(); ?>">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+    <title><?php echo t('dashboard'); ?> - <?php echo t('ticketing_system'); ?></title>
+    <!-- Bootstrap Icons CDN -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f0f2f5;
+            padding: 20px;
+            transition: background 0.3s ease;
+        }
+        
+        /* Dark Mode */
+        body.dark-mode {
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+        
+        .container { max-width: 1400px; margin: 0 auto; }
+        
+        /* Navigation */
+        .navbar {
+            background: white;
+            border-radius: 24px;
+            padding: 16px 24px;
+            margin-bottom: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+        
+        body.dark-mode .navbar {
+            background: #1e293b;
+        }
+        
+        .navbar h1 { font-size: 1.5rem; display: flex; align-items: center; gap: 8px; }
+        body.dark-mode .navbar h1 { color: #e2e8f0; }
+        
+        .nav-links { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+        
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .dark-mode-toggle {
+            background: none;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .dark-mode-toggle:hover {
+            background: rgba(0,0,0,0.1);
+        }
+        
+        body.dark-mode .dark-mode-toggle:hover {
+            background: rgba(255,255,255,0.1);
+        }
+        
+        /* Language Switcher */
+        .language-switcher {
+            display: flex;
+            gap: 5px;
+            background: #f1f5f9;
+            padding: 4px;
+            border-radius: 40px;
+        }
+        
+        body.dark-mode .language-switcher {
+            background: #334155;
+        }
+        
+        .language-switcher button {
+            background: none;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 30px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 12px;
+            transition: all 0.2s;
+            color: #475569;
+        }
+        
+        body.dark-mode .language-switcher button {
+            color: #94a3b8;
+        }
+        
+        .language-switcher button.active {
+            background: #4f46e5;
+            color: white;
+        }
+        
+        .btn-logout {
+            background: #ef4444;
+            color: white;
+            padding: 8px 20px;
+            border-radius: 40px;
+            text-decoration: none;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .btn-logout:hover {
+            background: #dc2626;
+        }
+        
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+        
+        .stat-card {
+            background: white;
+            border-radius: 20px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+        
+        body.dark-mode .stat-card {
+            background: #1e293b;
+        }
+        
+        .stat-card.primary { background: linear-gradient(135deg, #4f46e5, #4338ca); color: white; }
+        .stat-card.success { background: linear-gradient(135deg, #10b981, #059669); color: white; }
+        .stat-card.warning { background: linear-gradient(135deg, #f59e0b, #d97706); color: white; }
+        .stat-card.info { background: linear-gradient(135deg, #0ea5e9, #0284c7); color: white; }
+        
+        body.dark-mode .stat-card.primary,
+        body.dark-mode .stat-card.success,
+        body.dark-mode .stat-card.warning,
+        body.dark-mode .stat-card.info {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+        }
+        
+        .stat-number { font-size: 32px; font-weight: bold; margin-bottom: 8px; }
+        .stat-label { font-size: 14px; opacity: 0.9; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+        
+        .stat-details {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .detail-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+        }
+        
+        .detail-item i {
+            margin-right: 6px;
+        }
+        
+        /* Filters Bar */
+        .filters-bar {
+            background: white;
+            border-radius: 20px;
+            padding: 16px 20px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+        
+        body.dark-mode .filters-bar {
+            background: #1e293b;
+        }
+        
+        .search-box { 
+            display: flex; 
+            gap: 10px; 
+            flex-wrap: wrap; 
+            position: relative;
+        }
+        
+        .search-box input, .search-box select {
+            padding: 8px 16px;
+            border: 1px solid #e2e8f0;
+            border-radius: 40px;
+            font-size: 14px;
+            background: white;
+            transition: all 0.3s ease;
+        }
+        
+        .search-box input {
+            padding-left: 35px;
+        }
+        
+        .search-icon {
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #94a3b8;
+            pointer-events: none;
+        }
+        
+        body.dark-mode .search-box input,
+        body.dark-mode .search-box select {
+            background: #0f172a;
+            border-color: #334155;
+            color: #e2e8f0;
+        }
+        
+        /* Buttons */
+        .btn {
+            padding: 8px 16px;
+            border-radius: 10px;
+            border: none;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-weight: 500;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .btn-primary { background: #4f46e5; color: white; }
+        .btn-primary:hover { background: #4338ca; transform: translateY(-1px); }
+        .btn-success { background: #10b981; color: white; }
+        .btn-success:hover { background: #059669; }
+        .btn-secondary { background: #64748b; color: white; }
+        .btn-secondary:hover { background: #475569; }
+        .btn-warning { background: #f59e0b; color: white; }
+        .btn-info { background: #0ea5e9; color: white; }
+        .btn-danger { background: #ef4444; color: white; }
+        .btn-danger:hover { background: #dc2626; }
+        .btn-sm { padding: 6px 12px; font-size: 12px; }
+        
+        /* Table */
+        .table-container {
+            background: white;
+            border-radius: 20px;
+            overflow-x: auto;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+        
+        body.dark-mode .table-container {
+            background: #1e293b;
+        }
+        
+        table { width: 100%; border-collapse: collapse; min-width: 900px; }
+        th, td { padding: 14px 16px; text-align: left; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }
+        th { background: #f8fafc; font-weight: 600; }
+        
+        body.dark-mode th {
+            background: #0f172a;
+            color: #94a3b8;
+            border-color: #334155;
+        }
+        
+        body.dark-mode td {
+            border-color: #334155;
+            color: #cbd5e1;
+        }
+        
+        /* Status Badges */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .status-pending { background: #fef3c7; color: #92400e; }
+        .status-registered { background: #dbeafe; color: #1e40af; }
+        .status-paid { background: #d1fae5; color: #065f46; }
+        .status-cancelled { background: #fee2e2; color: #991b1b; }
+        
+        body.dark-mode .status-pending { background: #451a03; color: #fde68a; }
+        body.dark-mode .status-registered { background: #1e3a5f; color: #93c5fd; }
+        body.dark-mode .status-paid { background: #064e3b; color: #6ee7b7; }
+        body.dark-mode .status-cancelled { background: #7f1d1d; color: #fca5a5; }
+        
+        /* Table Badges */
+        .badge-table {
+            display: inline-block;
+            background: #e2e8f0;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #1e293b;
+            text-align: center;
+            min-width: 50px;
+        }
+        
+        body.dark-mode .badge-table {
+            background: #334155;
+            color: #e2e8f0;
+        }
+        
+        .guest-badge {
+            font-weight: 600;
+        }
+        
+        .guest-badge small {
+            font-size: 11px;
+            font-weight: normal;
+            color: #64748b;
+        }
+        
+        body.dark-mode .guest-badge small {
+            color: #94a3b8;
+        }
+        
+        .amount-due-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: #fef3c7;
+            color: #92400e;
+            padding: 4px 8px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        
+        body.dark-mode .amount-due-badge {
+            background: #451a03;
+            color: #fde68a;
+        }
+        
+        .text-muted {
+            color: #94a3b8;
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        
+        .status-badge i {
+            font-size: 11px;
+        }
+        
+        .amount-due {
+            font-weight: bold;
+            color: #f59e0b;
+        }
+        
+        .actions { white-space: nowrap; }
+        
+        /* Loading Overlay */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(3px);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 99999;
+        }
+        
+        .loading-overlay.active { display: flex; }
+        
+        .loading-spinner {
+            width: 60px;
+            height: 60px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        .loading-text {
+            color: white;
+            margin-top: 15px;
+            font-size: 14px;
+            text-align: center;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Sound Notification */
+        .sound-notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #10b981;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            z-index: 10001;
+            animation: slideInRight 0.3s ease;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+        
+        @keyframes slideInRight {
+            from {
+                opacity: 0;
+                transform: translateX(100%);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        .sound-notification.fade-out {
+            animation: fadeOut 0.5s ease forwards;
+        }
+        
+        @keyframes fadeOut {
+            to {
+                opacity: 0;
+                transform: translateX(100%);
+            }
+        }
+        
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 10000;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        body.dark-mode .modal-overlay {
+            background: rgba(0, 0, 0, 0.7);
+        }
+        
+        .modal-overlay.active { display: flex; }
+        
+        .modal-container {
+            background: white;
+            border-radius: 24px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 500px;
+            width: 90%;
+        }
+        
+        body.dark-mode .modal-container {
+            background: #1e293b;
+        }
+        
+        .modal-header {
+            padding: 20px 24px;
+            background: linear-gradient(135deg, #4f46e5, #4338ca);
+            color: white;
+            border-radius: 24px 24px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        body.dark-mode .modal-header {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+        }
+        
+        .modal-header h3 { margin: 0; font-size: 1.25rem; display: flex; align-items: center; gap: 8px; }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: white;
+        }
+        
+        .modal-body { padding: 24px; }
+        
+        /* RTL Support */
+        [dir="rtl"] {
+            text-align: right;
+        }
+        
+        [dir="rtl"] .actions,
+        [dir="rtl"] .search-box {
+            direction: rtl;
+        }
+        
+        [dir="rtl"] .detail-item {
+            flex-direction: row-reverse;
+        }
+        
+        [dir="rtl"] .btn i {
+            margin-left: 6px;
+            margin-right: 0;
+        }
+        
+        [dir="rtl"] .search-icon {
+            left: auto;
+            right: 12px;
+        }
+        
+        [dir="rtl"] .search-box input {
+            padding-left: 16px;
+            padding-right: 35px;
+        }
+        
+        @media (max-width: 1024px) {
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        
+        @media (max-width: 768px) {
+            .stats-grid { grid-template-columns: 1fr; }
+            .filters-bar { flex-direction: column; }
+            .search-box { width: 100%; }
+            .search-box input, .search-box select { flex: 1; }
+            .navbar { flex-direction: column; text-align: center; }
+            .nav-links { justify-content: center; }
+            .header-controls { justify-content: center; }
+            .table-container { overflow-x: auto; }
+            table { min-width: 850px; }
+            .btn-group { flex-wrap: nowrap; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Loading Overlay -->
+    <div class="loading-overlay">
+        <div style="text-align: center;">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">Processing...</div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Navigation -->
+        <div class="navbar">
+            <h1><i class="bi bi-ticket-perforated"></i> <?php echo t('ticketing_system'); ?></h1>
+            <div class="nav-links">
+                <div class="header-controls">
+                    <button id="darkModeToggle" class="dark-mode-toggle" title="Toggle Dark Mode"><i class="bi bi-moon-fill"></i></button>
+                    <div class="language-switcher">
+                        <button onclick="setLanguage('en')" class="<?php echo $lang == 'en' ? 'active' : ''; ?>">EN</button>
+                        <button onclick="setLanguage('ar')" class="<?php echo $lang == 'ar' ? 'active' : ''; ?>">AR</button>
+                    </div>
+                    <button id="soundToggle" onclick="toggleSound()" class="btn btn-secondary" style="background: #10b981;"><i class="bi bi-volume-up-fill"></i> Sound On</button>
+                    <span><i class="bi bi-person-circle"></i> <?php echo t('welcome'); ?>, <?php echo htmlspecialchars($_SESSION['admin_username']); ?></span>
+                    <a href="logout.php" class="btn-logout"><i class="bi bi-box-arrow-right"></i> <?php echo t('logout'); ?></a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistics Cards -->
+        <div class="stats-grid">
+            <div class="stat-card primary">
+                <div class="stat-number"><?php echo number_format($attendeeStats['total_attendees']); ?></div>
+                <div class="stat-label"><i class="bi bi-people-fill"></i> <?php echo t('total_attendees'); ?></div>
+                <div class="stat-details">
+                    <div class="detail-item">
+                        <span><i class="bi bi-gender-male"></i> <?php echo t('adults'); ?></span>
+                        <span><?php echo number_format($attendeeStats['total_adults']); ?></span>
+                    </div>
+                    <div class="detail-item">
+                        <span><i class="bi bi-gender-female"></i> <?php echo t('teens'); ?></span>
+                        <span><?php echo number_format($attendeeStats['total_teens']); ?></span>
+                    </div>
+                    <div class="detail-item">
+                        <span><i class="bi bi-egg-fried"></i> <?php echo t('kids'); ?></span>
+                        <span><?php echo number_format($attendeeStats['total_kids']); ?></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stat-card warning">
+                <div class="stat-number"><?php echo number_format($attendeeStats['pending_attendees']); ?></div>
+                <div class="stat-label"><i class="bi bi-hourglass-split"></i> <?php echo t('pending_attendees'); ?></div>
+                <div class="stat-details">
+                    <div class="detail-item">
+                        <span><i class="bi bi-currency-dollar"></i> <?php echo t('amount_due'); ?></span>
+                        <span><?php echo number_format($stats['total_additional_due'], 2); ?> <?php echo $currency; ?></span>
+                    </div>
+                    <div class="detail-item">
+                        <span><i class="bi bi-clock-history"></i> <?php echo t('pending'); ?></span>
+                        <span><?php echo $stats['pending'] + $stats['registered']; ?> <?php echo t('reservations'); ?></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stat-card success">
+                <div class="stat-number"><?php echo number_format($revenue['total'] ?? 0, 2); ?> <?php echo $currency; ?></div>
+                <div class="stat-label"><i class="bi bi-graph-up"></i> <?php echo t('total_revenue'); ?></div>
+                <div class="stat-details">
+                    <div class="detail-item">
+                        <span><i class="bi bi-cash-stack"></i> <?php echo t('cash'); ?></span>
+                        <span><?php echo number_format($revenue['cash'] ?? 0, 2); ?> <?php echo $currency; ?></span>
+                    </div>
+                    <div class="detail-item">
+                        <span><i class="bi bi-phone"></i> <?php echo t('cliq'); ?></span>
+                        <span><?php echo number_format($revenue['cliq'] ?? 0, 2); ?> <?php echo $currency; ?></span>
+                    </div>
+                    <div class="detail-item">
+                        <span><i class="bi bi-credit-card"></i> <?php echo t('visa'); ?></span>
+                        <span><?php echo number_format($revenue['visa'] ?? 0, 2); ?> <?php echo $currency; ?></span>
+                    </div>
+                    <div class="detail-item">
+                        <span><i class="bi bi-x-circle"></i> <?php echo t('cancelled'); ?></span>
+                        <span class="detail-value" style="color: #fecaca;">- <?php echo number_format($cancelledRevenue, 2); ?> <?php echo $currency; ?></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stat-card info">
+                <div class="stat-number"><?php echo $stats['total']; ?></div>
+                <div class="stat-label"><i class="bi bi-calendar-check"></i> <?php echo t('total_reservations'); ?></div>
+                <div class="stat-details">
+                    <div class="detail-item">
+                        <span><i class="bi bi-hourglass-top"></i> <?php echo t('pending'); ?></span>
+                        <span><?php echo $stats['pending']; ?></span>
+                    </div>
+                    <div class="detail-item">
+                        <span><i class="bi bi-check-circle"></i> <?php echo t('registered'); ?></span>
+                        <span><?php echo $stats['registered']; ?></span>
+                    </div>
+                    <div class="detail-item">
+                        <span><i class="bi bi-check-circle-fill"></i> <?php echo t('paid'); ?></span>
+                        <span><?php echo $stats['paid']; ?></span>
+                    </div>
+                    <div class="detail-item">
+                        <span><i class="bi bi-slash-circle"></i> <?php echo t('cancelled'); ?></span>
+                        <span><?php echo $stats['cancelled']; ?></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filters Bar -->
+        <div class="filters-bar">
+            <div class="search-box">
+                <i class="bi bi-search search-icon"></i>
+                <input type="text" id="search" placeholder="<?php echo t('search'); ?>" value="<?php echo htmlspecialchars($search); ?>">
+                <select id="statusFilter">
+                    <option value="all" <?php echo $status_filter == 'all' ? 'selected' : ''; ?>><?php echo t('all'); ?></option>
+                    <option value="pending" <?php echo $status_filter == 'pending' ? 'selected' : ''; ?>><?php echo t('pending'); ?></option>
+                    <option value="registered" <?php echo $status_filter == 'registered' ? 'selected' : ''; ?>><?php echo t('registered'); ?></option>
+                    <option value="paid" <?php echo $status_filter == 'paid' ? 'selected' : ''; ?>><?php echo t('paid'); ?></option>
+                    <option value="cancelled" <?php echo $status_filter == 'cancelled' ? 'selected' : ''; ?>><?php echo t('cancelled'); ?></option>
+                </select>
+                <button onclick="applyFilters()" class="btn btn-primary"><i class="bi bi-funnel"></i> <?php echo t('apply'); ?></button>
+                <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-repeat"></i> <?php echo t('reset'); ?></a>
+            </div>
+            <div>
+                <a href="create_reservation.php" class="btn btn-primary"><i class="bi bi-plus-circle"></i> <?php echo t('new_reservation'); ?></a>
+                <a href="bulk_whatsapp.php" class="btn btn-success"><i class="bi bi-whatsapp"></i> <?php echo t('bulk_whatsapp'); ?></a>
+                <button onclick="openExportModal()" class="btn btn-info"><i class="bi bi-filetype-csv"></i> <?php echo t('export_csv'); ?></button>
+                <a href="print_statement.php" class="btn btn-secondary"><i class="bi bi-printer"></i> <?php echo t('print_statement'); ?></a>
+                <a href="manager_report.php" class="btn btn-secondary"><i class="bi bi-bar-chart-steps"></i> <?php echo t('analytics'); ?></a>
+            </div>
+        </div>
+
+        <!-- Reservations Table -->
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="min-width: 180px;"><i class="bi bi-upc-scan"></i> <?php echo t('reservation_id'); ?></th>
+                        <th style="min-width: 150px;"><i class="bi bi-person"></i> <?php echo t('customer_name'); ?></th>
+                        <th style="min-width: 150px;"><i class="bi bi-telephone"></i> <?php echo t('phone_number'); ?></th>
+                        <th style="min-width: 80px;"><i class="bi bi-grid-3x3-gap-fill"></i> <?php echo t('table_id'); ?></th>
+                        <th style="min-width: 120px;"><i class="bi bi-people"></i> <?php echo t('guests'); ?></th>
+                        <th style="min-width: 100px;"><i class="bi bi-info-circle"></i> <?php echo t('status'); ?></th>
+                        <th style="min-width: 100px;"><i class="bi bi-currency-dollar"></i> <?php echo t('amount_due'); ?></th>
+                        <th style="min-width: 120px;"><i class="bi bi-calendar3"></i> <?php echo t('created'); ?></th>
+                        <th style="min-width: 220px;"><i class="bi bi-gear"></i> <?php echo t('actions'); ?></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($reservations as $res): 
+                        $totalGuests = $res['adults'] + $res['teens'] + $res['kids'];
+                        $amountDue = $res['additional_amount_due'] ?? 0;
+                    ?>
+                        <tr>
+                            <td><strong><?php echo htmlspecialchars($res['reservation_id']); ?></strong></td>
+                            <td><?php echo htmlspecialchars($res['name']); ?></td>
+                            <td><?php echo htmlspecialchars($res['phone']); ?></td>
+                            <td style="text-align: center;"><span class="badge-table"><?php echo htmlspecialchars($res['table_id']); ?></span></td>
+                            <td>
+                                <span class="guest-badge">
+                                    <?php echo $totalGuests; ?> 
+                                    <small>(<?php echo $res['adults']; ?>A, <?php echo $res['teens']; ?>T, <?php echo $res['kids']; ?>K)</small>
+                                </span>
+                            </td>
+                            <td>
+                                <span class="status-badge status-<?php echo $res['status']; ?>">
+                                    <i class="bi <?php echo $res['status'] == 'paid' ? 'bi-check-circle-fill' : ($res['status'] == 'pending' ? 'bi-hourglass-split' : ($res['status'] == 'registered' ? 'bi-check-circle' : 'bi-slash-circle')); ?>"></i>
+                                    <?php echo ucfirst($res['status']); ?>
+                                </span>
+                            </td>
+                            <td>
+                                <?php if ($amountDue > 0): ?>
+                                    <span class="amount-due-badge"><i class="bi bi-exclamation-triangle-fill"></i> <?php echo number_format($amountDue, 2); ?> <?php echo $currency; ?></span>
+                                <?php else: ?>
+                                    <span class="text-muted">-</span>
+                                <?php endif; ?>
+                            </td>
+                            <td><?php echo date('M d, H:i', strtotime($res['created_at'])); ?></td>
+                            <td class="actions">
+                                <div class="btn-group">
+                                    <a href="view_reservation.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-secondary" title="<?php echo t('view'); ?>">
+                                        <i class="bi bi-eye"></i>
+                                    </a>
+                                    <a href="edit_reservation.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-warning" title="<?php echo t('edit'); ?>">
+                                        <i class="bi bi-pencil"></i>
+                                    </a>
+                                    <?php if ($res['status'] != 'paid' && $res['status'] != 'cancelled'): ?>
+                                        <button onclick="alert('Payment modal would open here')" class="btn btn-sm btn-success" title="<?php echo t('pay'); ?>">
+                                            <i class="bi bi-credit-card"></i>
+                                        </button>
+                                    <?php endif; ?>
+                                    <button onclick="deleteReservation('<?php echo $res['reservation_id']; ?>', this)" class="btn btn-sm btn-danger" title="<?php echo t('delete'); ?>">
+                                        <i class="bi bi-trash3"></i>
+                                    </button>
+                                    <?php if ($res['status'] == 'paid'): ?>
+                                        <a href="print_ticket.php?reservation_id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-primary" title="<?php echo t('ticket'); ?>">
+                                            <i class="bi bi-ticket-perforated"></i>
+                                        </a>
+                                    <?php endif; ?>
+                                </div>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <?php if (empty($reservations)): ?>
+                        <tr>
+                            <td colspan="9" style="text-align: center; padding: 60px;">
+                                <i class="bi bi-inbox" style="font-size: 48px; opacity: 0.5;"></i>
+                                <p style="margin-top: 10px;"><?php echo t('no_reservations'); ?></p>
+                            </td>
+                        </tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Export Modal -->
+    <div id="exportModal" class="modal-overlay">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h3><i class="bi bi-filetype-csv"></i> <?php echo t('export_csv'); ?></h3>
+                <button onclick="closeExportModal()" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="background: #f1f5f9; border-radius: 16px; padding: 16px; margin-bottom: 20px;">
+                    <p style="margin: 0; color: #334155;"><i class="bi bi-info-circle"></i> <?php echo t('select_export_options'); ?></p>
+                </div>
+                
+                <form id="exportForm" method="GET" action="export_csv.php">
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #334155; font-size: 14px;"><i class="bi bi-funnel"></i> <?php echo t('filter_by_status'); ?></label>
+                        <select name="status" style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 12px; font-size: 14px;">
+                            <option value="all"><?php echo t('all'); ?></option>
+                            <option value="pending"><?php echo t('pending'); ?></option>
+                            <option value="registered"><?php echo t('registered'); ?></option>
+                            <option value="paid"><?php echo t('paid'); ?></option>
+                            <option value="cancelled"><?php echo t('cancelled'); ?></option>
+                        </select>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+                        <div>
+                            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #334155; font-size: 14px;"><i class="bi bi-calendar"></i> <?php echo t('from_date'); ?></label>
+                            <input type="date" name="from" style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 12px; font-size: 14px;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #334155; font-size: 14px;"><i class="bi bi-calendar"></i> <?php echo t('to_date'); ?></label>
+                            <input type="date" name="to" style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 12px; font-size: 14px;">
+                        </div>
+                    </div>
+                    
+                    <div style="background: #e0e7ff; border-radius: 12px; padding: 12px; margin-bottom: 20px;">
+                        <small style="color: #3730a3;"><i class="bi bi-info-square"></i> 📌 <?php echo t('export_note'); ?></small>
+                    </div>
+                    
+                    <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
+                        <button type="button" onclick="closeExportModal()" style="padding: 10px 20px; background: #64748b; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 500;"><i class="bi bi-x-lg"></i> <?php echo t('cancel'); ?></button>
+                        <button type="submit" style="padding: 10px 20px; background: #4f46e5; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 500;"><i class="bi bi-download"></i> <?php echo t('export_csv'); ?></button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ========== LOADING SPINNER ==========
+        function showLoading(message = 'Processing...') {
+            const overlay = document.querySelector('.loading-overlay');
+            const textEl = overlay?.querySelector('.loading-text');
+            if (textEl) textEl.innerText = message;
+            if (overlay) overlay.classList.add('active');
+        }
+
+        function hideLoading() {
+            const overlay = document.querySelector('.loading-overlay');
+            if (overlay) overlay.classList.remove('active');
+        }
+
+        // ========== DELETE WITH PASSWORD ==========
+        function deleteReservation(reservationId, element) {
+            const password = prompt('⚠️ SECURITY VERIFICATION REQUIRED\n\nEnter admin password to delete this reservation:\n(Default: AdminDelete2026)');
+            
+            if (password === null) return;
+            
+            if (password !== 'AdminDelete2026') {
+                showNotification('Invalid password!', 'error');
+                return;
+            }
+            
+            showLoading('Deleting reservation...');
+            
+            fetch('delete_reservation.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reservation_id: reservationId, password: password })
+            })
+            .then(response => response.json())
+            .then(data => {
+                hideLoading();
+                if (data.success) {
+                    const row = element.closest('tr');
+                    row.style.transition = 'all 0.3s ease';
+                    row.style.opacity = '0';
+                    row.style.transform = 'translateX(-20px)';
+                    setTimeout(() => {
+                        row.remove();
+                        showNotification('Reservation deleted successfully!', 'success');
+                        setTimeout(() => location.reload(), 1000);
+                    }, 300);
+                } else {
+                    showNotification(data.error, 'error');
+                }
+            })
+            .catch(error => {
+                hideLoading();
+                showNotification('Error: ' + error.message, 'error');
+            });
+        }
+
+        // ========== SOUND NOTIFICATION ==========
+        let soundEnabled = localStorage.getItem('soundEnabled') === 'true';
+
+        function playNotificationSound() {
+            if (!soundEnabled) return;
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                oscillator.frequency.value = 880;
+                gainNode.gain.value = 0.3;
+                oscillator.start();
+                gainNode.gain.exponentialRampToValueAtTime(0.00001, audioContext.currentTime + 0.5);
+                oscillator.stop(audioContext.currentTime + 0.5);
+                if (audioContext.state === 'suspended') audioContext.resume();
+            } catch(e) {}
+        }
+
+        function showNotification(message, type = 'info') {
+            const notification = document.createElement('div');
+            notification.className = 'sound-notification';
+            notification.style.background = type === 'success' ? '#10b981' : (type === 'error' ? '#ef4444' : '#3b82f6');
+            notification.innerHTML = `<span>${type === 'success' ? '✓' : (type === 'error' ? '✗' : 'ℹ')}</span><span>${message}</span>`;
+            document.body.appendChild(notification);
+            setTimeout(() => {
+                notification.style.animation = 'fadeOut 0.5s ease forwards';
+                setTimeout(() => notification.remove(), 500);
+            }, 3000);
+        }
+
+        function toggleSound() {
+            soundEnabled = !soundEnabled;
+            localStorage.setItem('soundEnabled', soundEnabled);
+            const soundBtn = document.getElementById('soundToggle');
+            if (soundBtn) {
+                soundBtn.innerHTML = soundEnabled ? '<i class="bi bi-volume-up-fill"></i> Sound On' : '<i class="bi bi-volume-mute-fill"></i> Sound Off';
+                soundBtn.style.background = soundEnabled ? '#10b981' : '#64748b';
+            }
+            showNotification(`Sound notifications ${soundEnabled ? 'enabled' : 'disabled'}`, 'info');
+        }
+
+        function checkNewReservations() {
+            fetch('check_new_reservations.php')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.new_count > 0) {
+                        playNotificationSound();
+                        showNotification(`${data.new_count} new reservation(s) just arrived!`, 'success');
+                    }
+                })
+                .catch(error => console.log('Error checking new reservations:', error));
+        }
+
+        // ========== OTHER FUNCTIONS ==========
+        function applyFilters() {
+            const search = document.getElementById('search').value;
+            const status = document.getElementById('statusFilter').value;
+            let url = `dashboard.php?search=${encodeURIComponent(search)}&status=${status}&lang=<?php echo $lang; ?>`;
+            window.location.href = url;
+        }
+
+        function setLanguage(lang) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('lang', lang);
+            window.location.href = url.toString();
+        }
+
+        function openExportModal() {
+            document.getElementById('exportModal').style.display = 'flex';
+        }
+
+        function closeExportModal() {
+            document.getElementById('exportModal').style.display = 'none';
+        }
+
+        // ========== DARK MODE ==========
+        const darkModeToggle = document.getElementById('darkModeToggle');
+        const isDarkMode = localStorage.getItem('darkMode') === 'true';
+        if (isDarkMode) {
+            document.body.classList.add('dark-mode');
+            darkModeToggle.innerHTML = '<i class="bi bi-sun-fill"></i>';
+        }
+        darkModeToggle.addEventListener('click', () => {
+            document.body.classList.toggle('dark-mode');
+            const isDark = document.body.classList.contains('dark-mode');
+            localStorage.setItem('darkMode', isDark);
+            darkModeToggle.innerHTML = isDark ? '<i class="bi bi-sun-fill"></i>' : '<i class="bi bi-moon-fill"></i>';
+        });
+
+        // ========== INITIALIZATION ==========
+        document.addEventListener('DOMContentLoaded', function() {
+            const soundBtn = document.getElementById('soundToggle');
+            if (soundBtn) {
+                soundBtn.innerHTML = soundEnabled ? '<i class="bi bi-volume-up-fill"></i> Sound On' : '<i class="bi bi-volume-mute-fill"></i> Sound Off';
+                soundBtn.style.background = soundEnabled ? '#10b981' : '#64748b';
+            }
+            setInterval(checkNewReservations, 30000);
+        });
+
+        document.getElementById('search')?.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') applyFilters();
+        });
+
+        window.onclick = function(event) {
+            const modal = document.getElementById('exportModal');
+            if (event.target === modal) closeExportModal();
+        }
+    </script>
+</body>
+</html>

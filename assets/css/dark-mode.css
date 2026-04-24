@@ -1,0 +1,178 @@
+/* ========== DARK MODE STYLES ========== */
+body.dark-mode {
+    background: #0f172a;
+    color: #e2e8f0;
+}
+
+/* Navigation */
+body.dark-mode .navbar {
+    background: #1e293b;
+    border-color: #334155;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+body.dark-mode .navbar h1 {
+    color: #e2e8f0;
+}
+
+/* Cards */
+body.dark-mode .stat-card {
+    background: #1e293b;
+    border-color: #334155;
+}
+
+body.dark-mode .stat-card.primary,
+body.dark-mode .stat-card.success,
+body.dark-mode .stat-card.warning,
+body.dark-mode .stat-card.info {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+}
+
+/* Table */
+body.dark-mode .table-container {
+    background: #1e293b;
+}
+
+body.dark-mode table th {
+    background: #0f172a;
+    color: #94a3b8;
+    border-color: #334155;
+}
+
+body.dark-mode table td {
+    border-color: #334155;
+    color: #cbd5e1;
+}
+
+body.dark-mode tr:hover {
+    background: #334155;
+}
+
+/* Status Badges in Dark Mode */
+body.dark-mode .status-pending {
+    background: #451a03;
+    color: #fde68a;
+}
+
+body.dark-mode .status-registered {
+    background: #1e3a5f;
+    color: #93c5fd;
+}
+
+body.dark-mode .status-paid {
+    background: #064e3b;
+    color: #6ee7b7;
+}
+
+body.dark-mode .status-cancelled {
+    background: #7f1d1d;
+    color: #fca5a5;
+}
+
+/* Buttons */
+body.dark-mode .btn-primary {
+    background: #4f46e5;
+}
+
+body.dark-mode .btn-secondary {
+    background: #475569;
+}
+
+body.dark-mode .btn-success {
+    background: #059669;
+}
+
+body.dark-mode .btn-warning {
+    background: #d97706;
+}
+
+body.dark-mode .btn-danger {
+    background: #dc2626;
+}
+
+/* Filters Bar */
+body.dark-mode .filters-bar {
+    background: #1e293b;
+    border-color: #334155;
+}
+
+body.dark-mode .filters-bar input,
+body.dark-mode .filters-bar select {
+    background: #0f172a;
+    border-color: #334155;
+    color: #e2e8f0;
+}
+
+body.dark-mode .filters-bar input::placeholder {
+    color: #64748b;
+}
+
+/* Modals */
+body.dark-mode .modal-container {
+    background: #1e293b;
+}
+
+body.dark-mode .modal-header {
+    background: linear-gradient(135deg, #2d3748 0%, #1a202c 100%);
+}
+
+body.dark-mode .modal-body {
+    background: #1e293b;
+    color: #e2e8f0;
+}
+
+body.dark-mode .form-group input,
+body.dark-mode .form-group select {
+    background: #0f172a;
+    border-color: #334155;
+    color: #e2e8f0;
+}
+
+body.dark-mode .payment-info-box {
+    background: #0f172a;
+}
+
+body.dark-mode .split-summary {
+    background: #064e3b;
+}
+
+/* Language Switcher */
+body.dark-mode .language-switcher button {
+    background: #334155;
+    color: #94a3b8;
+}
+
+body.dark-mode .language-switcher button.active {
+    background: #4f46e5;
+    color: white;
+}
+
+/* RTL Support */
+[dir="rtl"] {
+    text-align: right;
+}
+
+[dir="rtl"] .actions,
+[dir="rtl"] .action-buttons,
+[dir="rtl"] .dashboard-header,
+[dir="rtl"] .filters {
+    direction: rtl;
+}
+
+[dir="rtl"] .navbar h1::before {
+    margin-left: 8px;
+    margin-right: 0;
+}
+
+[dir="rtl"] .language-switcher {
+    margin-left: 0;
+    margin-right: auto;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    [dir="rtl"] .stats-grid,
+    [dir="rtl"] .filters-bar {
+        text-align: right;
+    }
+}
