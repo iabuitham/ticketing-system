@@ -1,92 +1,227 @@
 <?php
+/**
+ * Language handling file
+ * This file handles all translation-related functions
+ */
 
-// Available languages
-$available_languages = ['en', 'ar'];
-$default_language = 'en';
-
-// Set language from URL or session
-if (isset($_GET['lang']) && in_array($_GET['lang'], $available_languages)) {
-    $_SESSION['language'] = $_GET['lang'];
+// Only set session settings if session is not already active
+if (session_status() === PHP_SESSION_NONE) {
+    // Set session settings BEFORE starting the session
+    ini_set('session.cookie_httponly', 1);
+    ini_set('session.use_only_cookies', 1);
+    ini_set('session.cookie_secure', 0); // Set to 1 if using HTTPS
+    
+    // Start session
+    session_start();
 }
 
-$lang = isset($_SESSION['language']) ? $_SESSION['language'] : $default_language;
-$dir = $lang == 'ar' ? 'rtl' : 'ltr';
+// Set language based on session or GET parameter
+if (isset($_GET['lang'])) {
+    $_SESSION['lang'] = $_GET['lang'];
+}
+
+$lang = isset($_SESSION['lang']) ? $_SESSION['lang'] : 'en';
 
 // Translations array
 $translations = [
-    // Navigation
-    'dashboard' => ['en' => 'Dashboard', 'ar' => 'لوحة التحكم'],
-    'ticketing_system' => ['en' => 'Ticketing System', 'ar' => 'نظام التذاكر'],
-    'welcome' => ['en' => 'Welcome', 'ar' => 'مرحباً'],
-    'logout' => ['en' => 'Logout', 'ar' => 'تسجيل خروج'],
-    'back' => ['en' => 'Back', 'ar' => 'رجوع'],
-    
-    // Buttons
-    'new_reservation' => ['en' => 'New Reservation', 'ar' => 'حجز جديد'],
-    'bulk_whatsapp' => ['en' => 'Bulk WhatsApp', 'ar' => 'واتساب جماعي'],
-    'print_statement' => ['en' => 'Print Statement', 'ar' => 'طباعة كشف'],
-    'export_csv' => ['en' => 'Export CSV', 'ar' => 'تصدير CSV'],
-    'analytics' => ['en' => 'Analytics', 'ar' => 'تحليلات'],
-    'apply' => ['en' => 'Apply', 'ar' => 'تطبيق'],
-    'reset' => ['en' => 'Reset', 'ar' => 'إعادة تعيين'],
-    'cancel' => ['en' => 'Cancel', 'ar' => 'إلغاء'],
-    
-    // Table Headers
-    'reservation_id' => ['en' => 'Reservation ID', 'ar' => 'رقم الحجز'],
-    'customer_name' => ['en' => 'Customer Name', 'ar' => 'اسم العميل'],
-    'phone_number' => ['en' => 'Phone Number', 'ar' => 'رقم الهاتف'],
-    'table_id' => ['en' => 'Table ID', 'ar' => 'رقم الطاولة'],
-    'guests' => ['en' => 'Guests', 'ar' => 'الضيوف'],
-    'status' => ['en' => 'Status', 'ar' => 'الحالة'],
-    'created' => ['en' => 'Created', 'ar' => 'تاريخ الإنشاء'],
-    'actions' => ['en' => 'Actions', 'ar' => 'إجراءات'],
-    'amount_due' => ['en' => 'Amount Due', 'ar' => 'المبلغ المستحق'],
-    'reservations' => ['en' => 'Reservations', 'ar' => 'حجوزات'],
-    
-    // Status
-    'pending' => ['en' => 'Pending', 'ar' => 'قيد الانتظار'],
-    'registered' => ['en' => 'Registered', 'ar' => 'مسجل'],
-    'paid' => ['en' => 'Paid', 'ar' => 'مدفوع'],
-    'cancelled' => ['en' => 'Cancelled', 'ar' => 'ملغي'],
-    'all' => ['en' => 'All', 'ar' => 'الكل'],
-    
-    // Actions
-    'view' => ['en' => 'View', 'ar' => 'عرض'],
-    'edit' => ['en' => 'Edit', 'ar' => 'تعديل'],
-    'pay' => ['en' => 'Pay', 'ar' => 'دفع'],
-    'ticket' => ['en' => 'Ticket', 'ar' => 'تذكرة'],
-    'pay_due' => ['en' => 'Pay Due', 'ar' => 'دفع المستحق'],
-    
-    // Stats
-    'total_attendees' => ['en' => 'Total Attendees', 'ar' => 'إجمالي الحضور'],
-    'adults' => ['en' => 'Adults', 'ar' => 'بالغين'],
-    'teens' => ['en' => 'Teens', 'ar' => 'مراهقين'],
-    'kids' => ['en' => 'Kids', 'ar' => 'أطفال'],
-    'pending_attendees' => ['en' => 'Pending Attendees', 'ar' => 'الحضور قيد الانتظار'],
-    'total_revenue' => ['en' => 'Total Revenue', 'ar' => 'إجمالي الإيرادات'],
-    'total_reservations' => ['en' => 'Total Reservations', 'ar' => 'إجمالي الحجوزات'],
-    'cash' => ['en' => 'Cash', 'ar' => 'نقدي'],
-    'cliq' => ['en' => 'CliQ', 'ar' => 'كليك'],
-    'visa' => ['en' => 'Visa', 'ar' => 'فيزا'],
-    
-    // Search
-    'search' => ['en' => 'Search...', 'ar' => 'بحث...'],
-    
-    // Export Modal
-    'select_export_options' => ['en' => 'Select export options below', 'ar' => 'اختر خيارات التصدير أدناه'],
-    'filter_by_status' => ['en' => 'Filter by Status', 'ar' => 'تصفية حسب الحالة'],
-    'from_date' => ['en' => 'From Date', 'ar' => 'من تاريخ'],
-    'to_date' => ['en' => 'To Date', 'ar' => 'إلى تاريخ'],
-    'export_note' => ['en' => 'The export will include all reservations matching your filters. The file will be downloaded as CSV and can be opened in Excel.', 'ar' => 'سيتضمن التصدير جميع الحجوزات المطابقة لفلترتك. سيتم تنزيل الملف كـ CSV ويمكن فتحه في Excel.'],
+    'en' => [
+        'dashboard' => 'Dashboard',
+        'ticketing_system' => 'Ticketing System',
+        'welcome' => 'Welcome',
+        'logout' => 'Logout',
+        'total_attendees' => 'Total Attendees',
+        'adults' => 'Adults',
+        'teens' => 'Teens',
+        'kids' => 'Kids',
+        'pending_attendees' => 'Pending Attendees',
+        'amount_due' => 'Amount Due',
+        'pending' => 'Pending',
+        'registered' => 'Registered',
+        'paid' => 'Paid',
+        'cancelled' => 'Cancelled',
+        'total_revenue' => 'Total Revenue',
+        'cash' => 'Cash',
+        'cliq' => 'CliQ',
+        'visa' => 'Visa',
+        'total_reservations' => 'Total Reservations',
+        'search' => 'Search...',
+        'all' => 'All',
+        'apply' => 'Apply',
+        'reset' => 'Reset',
+        'new_reservation' => 'New Reservation',
+        'bulk_whatsapp' => 'Bulk WhatsApp',
+        'export_csv' => 'Export CSV',
+        'print_statement' => 'Print Statement',
+        'analytics' => 'Analytics',
+        'reservation_id' => 'Reservation ID',
+        'customer_name' => 'Customer Name',
+        'phone_number' => 'Phone Number',
+        'table_id' => 'Table',
+        'guests' => 'Guests',
+        'status' => 'Status',
+        'created' => 'Created',
+        'actions' => 'Actions',
+        'view' => 'View',
+        'edit' => 'Edit',
+        'pay' => 'Pay',
+        'delete' => 'Delete',
+        'ticket' => 'Ticket',
+        'no_reservations' => 'No reservations found',
+        'from_date' => 'From Date',
+        'to_date' => 'To Date',
+        'filter_by_status' => 'Filter by Status',
+        'select_export_options' => 'Select export options',
+        'export_note' => 'Export will include all reservations matching your criteria',
+        'cancel' => 'Cancel',
+        'system_settings' => 'System Settings',
+        'back_to_dashboard' => 'Back to Dashboard',
+        'save_settings' => 'Save Settings',
+        'general_settings' => 'General Settings',
+        'ticket_pricing' => 'Ticket Pricing',
+        'notification_settings' => 'Notification Settings',
+        'appearance_settings' => 'Appearance Settings',
+        'event_settings' => 'Event Settings',
+        'payment_transactions' => 'Payment Transactions',
+        'add_payment' => 'Add Payment',
+        'record_first_payment' => 'Record First Payment',
+        'no_payment_transactions' => 'No payment transactions recorded yet.',
+        'date_time' => 'Date & Time',
+        'payment_method' => 'Payment Method',
+        'reference_evidence' => 'Reference / Evidence',
+        'edit_reservation' => 'Edit Reservation',
+        'print_ticket' => 'Print Ticket',
+        'cancel_reservation' => 'Cancel Reservation',
+        'delete_reservation' => 'Delete Reservation',
+        'reservation_details' => 'Reservation Details',
+        'guests_breakdown' => 'Guests Breakdown',
+        'ticket_prices' => 'Ticket Prices',
+        'notes' => 'Notes',
+        'created_at' => 'Created At',
+        'email' => 'Email',
+        'view_reservation' => 'View Reservation'
+    ],
+    'ar' => [
+        'dashboard' => 'لوحة التحكم',
+        'ticketing_system' => 'نظام التذاكر',
+        'welcome' => 'مرحباً',
+        'logout' => 'تسجيل الخروج',
+        'total_attendees' => 'إجمالي الحضور',
+        'adults' => 'بالغين',
+        'teens' => 'مراهقين',
+        'kids' => 'أطفال',
+        'pending_attendees' => 'حضور معلق',
+        'amount_due' => 'المبلغ المستحق',
+        'pending' => 'معلق',
+        'registered' => 'مسجل',
+        'paid' => 'مدفوع',
+        'cancelled' => 'ملغي',
+        'total_revenue' => 'إجمالي الإيرادات',
+        'cash' => 'نقدي',
+        'cliq' => 'كليك',
+        'visa' => 'فيزا',
+        'total_reservations' => 'إجمالي الحجوزات',
+        'search' => 'بحث...',
+        'all' => 'الكل',
+        'apply' => 'تطبيق',
+        'reset' => 'إعادة تعيين',
+        'new_reservation' => 'حجز جديد',
+        'bulk_whatsapp' => 'واتساب جماعي',
+        'export_csv' => 'تصدير CSV',
+        'print_statement' => 'طباعة كشف',
+        'analytics' => 'تحليلات',
+        'reservation_id' => 'رقم الحجز',
+        'customer_name' => 'اسم العميل',
+        'phone_number' => 'رقم الهاتف',
+        'table_id' => 'طاولة',
+        'guests' => 'ضيوف',
+        'status' => 'الحالة',
+        'created' => 'تاريخ الإنشاء',
+        'actions' => 'إجراءات',
+        'view' => 'عرض',
+        'edit' => 'تعديل',
+        'pay' => 'دفع',
+        'delete' => 'حذف',
+        'ticket' => 'تذكرة',
+        'no_reservations' => 'لا توجد حجوزات',
+        'from_date' => 'من تاريخ',
+        'to_date' => 'إلى تاريخ',
+        'filter_by_status' => 'تصفية حسب الحالة',
+        'select_export_options' => 'اختر خيارات التصدير',
+        'export_note' => 'سيشمل التصدير جميع الحجوزات المطابقة لمعاييرك',
+        'cancel' => 'إلغاء',
+        'system_settings' => 'إعدادات النظام',
+        'back_to_dashboard' => 'رجوع للوحة التحكم',
+        'save_settings' => 'حفظ الإعدادات',
+        'general_settings' => 'الإعدادات العامة',
+        'ticket_pricing' => 'أسعار التذاكر',
+        'notification_settings' => 'إعدادات الإشعارات',
+        'appearance_settings' => 'إعدادات المظهر',
+        'event_settings' => 'إعدادات الفعالية',
+        'payment_transactions' => 'المدفوعات',
+        'add_payment' => 'إضافة دفعة',
+        'record_first_payment' => 'تسجيل أول دفعة',
+        'no_payment_transactions' => 'لا توجد مدفوعات مسجلة حتى الآن',
+        'date_time' => 'التاريخ والوقت',
+        'payment_method' => 'طريقة الدفع',
+        'reference_evidence' => 'المرجع / الإثبات',
+        'edit_reservation' => 'تعديل الحجز',
+        'print_ticket' => 'طباعة التذكرة',
+        'cancel_reservation' => 'إلغاء الحجز',
+        'delete_reservation' => 'حذف الحجز',
+        'reservation_details' => 'تفاصيل الحجز',
+        'guests_breakdown' => 'تفاصيل الضيوف',
+        'ticket_prices' => 'أسعار التذاكر',
+        'notes' => 'ملاحظات',
+        'created_at' => 'تاريخ الإنشاء',
+        'email' => 'البريد الإلكتروني',
+        'view_reservation' => 'عرض الحجز'
+    ]
 ];
 
+/**
+ * Get translation for a key
+ */
 function t($key) {
     global $translations, $lang;
-    return isset($translations[$key][$lang]) ? $translations[$key][$lang] : $key;
+    
+    if (isset($translations[$lang][$key])) {
+        return $translations[$lang][$key];
+    }
+    
+    // Fallback to English
+    if (isset($translations['en'][$key])) {
+        return $translations['en'][$key];
+    }
+    
+    return $key;
 }
 
+/**
+ * Get text direction based on language
+ */
 function getDirection() {
-    global $dir;
-    return $dir;
+    global $lang;
+    return $lang == 'ar' ? 'rtl' : 'ltr';
+}
+
+/**
+ * Get current language
+ */
+function getCurrentLanguage() {
+    global $lang;
+    return $lang;
+}
+
+/**
+ * Set language
+ */
+function setLanguage($newLang) {
+    global $lang;
+    if (in_array($newLang, ['en', 'ar'])) {
+        $_SESSION['lang'] = $newLang;
+        $lang = $newLang;
+        return true;
+    }
+    return false;
 }
 ?>

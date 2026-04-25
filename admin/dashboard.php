@@ -92,6 +92,12 @@ $currency = getSetting('currency', 'JOD');
 // Get today's stats for sound notification
 $todayCount = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE DATE(created_at) = CURDATE()")->fetch_assoc()['count'];
 
+// At the top of dashboard.php, after getting settings
+$siteName = getSetting('site_name', 'Ticketing System');
+$themeColor = getSetting('theme_color', '#4f46e5');
+$currencySymbol = getCurrencySymbol();
+$darkModeEnabled = isDarkModeEnabled();
+
 $conn->close();
 ?>
 <!DOCTYPE html>
@@ -764,7 +770,7 @@ $conn->close();
 
     <div class="container">
         <div class="navbar">
-            <h1><i class="bi bi-ticket-perforated"></i> <?php echo t('ticketing_system'); ?></h1>
+            <h1><i class="bi bi-ticket-perforated"></i> <?php echo htmlspecialchars($siteName); ?></h1>
             <div class="nav-links">
                 <div class="header-controls">
                     <button id="darkModeToggle" class="dark-mode-toggle" title="Toggle Dark Mode"><i class="bi bi-moon-fill"></i></button>

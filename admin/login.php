@@ -3,6 +3,16 @@ session_start();
 require_once '../includes/db.php';
 require_once '../includes/language.php';
 
+// Set session settings BEFORE starting the session
+ini_set('session.cookie_httponly', 1);
+ini_set('session.use_only_cookies', 1);
+ini_set('session.cookie_secure', 0); // Set to 1 if using HTTPS
+
+session_start();
+
+// Rest of your login code...
+?>
+
 if (isset($_SESSION['admin_logged_in']) && $_SESSION['admin_logged_in'] === true) {
     header('Location: dashboard.php');
     exit();

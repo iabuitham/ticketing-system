@@ -31,7 +31,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         
-        // Update cache if needed
+        // Handle checkboxes (they don't send value when unchecked)
+        $checkboxes = ['enable_whatsapp', 'enable_email', 'enable_sms', 'enable_captcha', 'dark_mode_enabled', 'maintenance_mode'];
+        foreach ($checkboxes as $checkbox) {
+            $value = isset($_POST["setting_$checkbox"]) ? '1' : '0';
+            $stmt = $conn->prepare("INSERT INTO system_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = ?");
+            $stmt->bind_param("sss", $checkbox, $value, $value);
+            $stmt->execute();
+            $stmt->close();
+        }
+        
         clearSettingsCache();
         $message = "System settings saved successfully!";
         $messageType = "success";
@@ -44,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $event_time = sanitizeInput($_POST['event_time']);
         $venue = sanitizeInput($_POST['venue']);
         $description = sanitizeInput($_POST['description']);
-        $capacity = intval($_POST['capacity']);
+        $capacity = !empty($_POST['capacity']) ? intval($_POST['capacity']) : null;
         $status = sanitizeInput($_POST['status']);
         
         if ($event_id > 0) {
@@ -71,7 +80,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $messageType = "success";
         
     } elseif (isset($_POST['delete_event'])) {
-        // Delete event
         $event_id = intval($_POST['delete_event']);
         $stmt = $conn->prepare("DELETE FROM event_settings WHERE id = ?");
         $stmt->bind_param("i", $event_id);
@@ -89,18 +97,29 @@ while ($row = $result->fetch_assoc()) {
     $systemSettings[$row['setting_key']] = $row;
 }
 
-// Get all events
-$events = $conn->query("SELECT * FROM event_settings ORDER BY event_date DESC")->fetch_all(MYSQLI_ASSOC);
+// Get all events with null handling
+$events = [];
+$result = $conn->query("SELECT * FROM event_settings ORDER BY event_date DESC");
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        // Set default values for null fields
+        $row['capacity'] = $row['capacity'] ?? 0;
+        $row['tickets_sold'] = $row['tickets_sold'] ?? 0;
+        $row['status'] = $row['status'] ?? 'upcoming';
+        $events[] = $row;
+    }
+}
 
 $currency = $systemSettings['currency']['setting_value'] ?? 'JOD';
 $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
+$themeColor = $systemSettings['theme_color']['setting_value'] ?? '#4f46e5';
 ?>
 <!DOCTYPE html>
 <html lang="<?php echo $lang; ?>" dir="<?php echo getDirection(); ?>">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?php echo t('settings'); ?> - <?php echo t('ticketing_system'); ?></title>
+    <title><?php echo t('system_settings'); ?> - <?php echo t('ticketing_system'); ?></title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -118,7 +137,6 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
         
         .container { max-width: 1400px; margin: 0 auto; }
         
-        /* Navigation */
         .navbar {
             background: white;
             border-radius: 24px;
@@ -138,7 +156,6 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
         
         .navbar h1 { font-size: 1.5rem; display: flex; align-items: center; gap: 8px; }
         
-        /* Tabs */
         .tabs {
             display: flex;
             gap: 10px;
@@ -166,7 +183,7 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
         }
         
         .tab-btn.active {
-            background: #4f46e5;
+            background: <?php echo $themeColor; ?>;
             color: white;
         }
         
@@ -184,7 +201,6 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
             to { opacity: 1; transform: translateY(0); }
         }
         
-        /* Cards */
         .card {
             background: white;
             border-radius: 20px;
@@ -217,7 +233,6 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
             font-size: 1.3rem;
         }
         
-        /* Form Grid */
         .form-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
@@ -263,7 +278,7 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
         .form-group select:focus,
         .form-group textarea:focus {
             outline: none;
-            border-color: #4f46e5;
+            border-color: <?php echo $themeColor; ?>;
             box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
         }
         
@@ -273,7 +288,6 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
             gap: 15px;
         }
         
-        /* Buttons */
         .btn {
             padding: 10px 20px;
             border-radius: 10px;
@@ -288,8 +302,8 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
             transition: all 0.2s;
         }
         
-        .btn-primary { background: #4f46e5; color: white; }
-        .btn-primary:hover { background: #4338ca; transform: translateY(-1px); }
+        .btn-primary { background: <?php echo $themeColor; ?>; color: white; }
+        .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
         .btn-success { background: #10b981; color: white; }
         .btn-success:hover { background: #059669; }
         .btn-danger { background: #ef4444; color: white; }
@@ -312,7 +326,6 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
             border-top-color: #334155;
         }
         
-        /* Table */
         .table-container {
             overflow-x: auto;
         }
@@ -343,7 +356,6 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
             color: #94a3b8;
         }
         
-        /* Modal */
         .modal-overlay {
             display: none;
             position: fixed;
@@ -376,7 +388,7 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
         
         .modal-header {
             padding: 20px 24px;
-            background: linear-gradient(135deg, #4f46e5, #4338ca);
+            background: <?php echo $themeColor; ?>;
             color: white;
             border-radius: 24px 24px 0 0;
             display: flex;
@@ -396,7 +408,13 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
             padding: 24px;
         }
         
-        /* Alert */
+        .modal-buttons {
+            padding: 0 24px 24px 24px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        
         .alert {
             padding: 12px 20px;
             border-radius: 12px;
@@ -416,7 +434,6 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
             color: #991b1b;
         }
         
-        /* Helper Classes */
         .text-muted {
             color: #64748b;
             font-size: 12px;
@@ -454,7 +471,6 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
 </head>
 <body>
     <div class="container">
-        <!-- Navigation -->
         <div class="navbar">
             <h1><i class="bi bi-gear"></i> <?php echo t('system_settings'); ?></h1>
             <div>
@@ -470,13 +486,15 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
             </div>
         <?php endif; ?>
         
-        <!-- Tabs -->
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('system')">
-                <i class="bi bi-sliders2"></i> System Settings
+                <i class="bi bi-sliders2"></i> General Settings
+            </button>
+            <button class="tab-btn" onclick="switchTab('pricing')">
+                <i class="bi bi-ticket-perforated"></i> Ticket Pricing
             </button>
             <button class="tab-btn" onclick="switchTab('events')">
-                <i class="bi bi-calendar-event"></i> Event Settings
+                <i class="bi bi-calendar-event"></i> Events
             </button>
             <button class="tab-btn" onclick="switchTab('notifications')">
                 <i class="bi bi-bell"></i> Notifications
@@ -486,7 +504,7 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
             </button>
         </div>
         
-        <!-- System Settings Tab -->
+        <!-- General Settings Tab -->
         <div id="systemTab" class="tab-content active">
             <form method="POST">
                 <div class="card">
@@ -496,8 +514,13 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
                     <div class="form-grid">
                         <div class="form-group">
                             <label><i class="bi bi-globe"></i> Site Name</label>
-                            <input type="text" name="setting_site_name" value="<?php echo htmlspecialchars($systemSettings['site_name']['setting_value'] ?? ''); ?>" class="form-control">
-                            <div class="text-muted">Name of your event/website</div>
+                            <input type="text" name="setting_site_name" value="<?php echo htmlspecialchars($systemSettings['site_name']['setting_value'] ?? 'Ticketing System'); ?>">
+                            <div class="text-muted">Name displayed throughout the system</div>
+                        </div>
+                        <div class="form-group">
+                            <label><i class="bi bi-tag"></i> Reservation ID Prefix</label>
+                            <input type="text" name="setting_reservation_prefix" value="<?php echo htmlspecialchars($systemSettings['reservation_prefix']['setting_value'] ?? 'TKT'); ?>">
+                            <div class="text-muted">Example: TKT-20240315-ABC123</div>
                         </div>
                         <div class="form-group">
                             <label><i class="bi bi-currency-exchange"></i> Currency Code</label>
@@ -510,7 +533,7 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
                         </div>
                         <div class="form-group">
                             <label><i class="bi bi-cash"></i> Currency Symbol</label>
-                            <input type="text" name="setting_currency_symbol" value="<?php echo htmlspecialchars($systemSettings['currency_symbol']['setting_value'] ?? 'JD'); ?>" class="form-control">
+                            <input type="text" name="setting_currency_symbol" value="<?php echo htmlspecialchars($systemSettings['currency_symbol']['setting_value'] ?? 'JD'); ?>">
                         </div>
                         <div class="form-group">
                             <label><i class="bi bi-clock"></i> Timezone</label>
@@ -521,12 +544,40 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
                                 <option value="UTC" <?php echo ($systemSettings['timezone']['setting_value'] ?? '') == 'UTC' ? 'selected' : ''; ?>>UTC</option>
                             </select>
                         </div>
+                        <div class="form-group">
+                            <label><i class="bi bi-shield-lock"></i> Max Reservations Per Day</label>
+                            <input type="number" name="setting_max_reservations_per_day" value="<?php echo $systemSettings['max_reservations_per_day']['setting_value'] ?? 1000; ?>">
+                            <div class="text-muted">Set 0 for unlimited</div>
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" name="setting_enable_captcha" value="1" <?php echo ($systemSettings['enable_captcha']['setting_value'] ?? '1') == '1' ? 'checked' : ''; ?>>
+                                Enable CAPTCHA on booking form
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" name="setting_maintenance_mode" value="1" <?php echo ($systemSettings['maintenance_mode']['setting_value'] ?? '0') == '1' ? 'checked' : ''; ?>>
+                                Maintenance Mode (Only admins can access)
+                            </label>
+                        </div>
                     </div>
                 </div>
                 
+                <div class="form-actions">
+                    <button type="submit" name="save_system_settings" class="btn btn-primary">
+                        <i class="bi bi-save"></i> Save Settings
+                    </button>
+                </div>
+            </form>
+        </div>
+        
+        <!-- Ticket Pricing Tab -->
+        <div id="pricingTab" class="tab-content">
+            <form method="POST">
                 <div class="card">
                     <div class="card-header">
-                        <h2><i class="bi bi-ticket-perforated"></i> Ticket Pricing</h2>
+                        <h2><i class="bi bi-ticket-perforated"></i> Ticket Prices</h2>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
@@ -575,39 +626,15 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
                     </div>
                 </div>
                 
-                <div class="card">
-                    <div class="card-header">
-                        <h2><i class="bi bi-shield-lock"></i> Security & Limits</h2>
-                    </div>
-                    <div class="form-grid">
-                        <div class="form-group">
-                            <label>Max Reservations Per Day</label>
-                            <input type="number" name="setting_max_reservations_per_day" value="<?php echo $systemSettings['max_reservations_per_day']['setting_value'] ?? 1000; ?>">
-                        </div>
-                        <div class="form-group">
-                            <label>
-                                <input type="checkbox" name="setting_enable_captcha" value="1" <?php echo ($systemSettings['enable_captcha']['setting_value'] ?? '1') == '1' ? 'checked' : ''; ?>>
-                                Enable CAPTCHA on booking form
-                            </label>
-                        </div>
-                        <div class="form-group">
-                            <label>
-                                <input type="checkbox" name="setting_maintenance_mode" value="1" <?php echo ($systemSettings['maintenance_mode']['setting_value'] ?? '0') == '1' ? 'checked' : ''; ?>>
-                                Maintenance Mode (Only admins can access)
-                            </label>
-                        </div>
-                    </div>
-                </div>
-                
                 <div class="form-actions">
                     <button type="submit" name="save_system_settings" class="btn btn-primary">
-                        <i class="bi bi-save"></i> Save All Settings
+                        <i class="bi bi-save"></i> Save Pricing Settings
                     </button>
                 </div>
             </form>
         </div>
         
-        <!-- Event Settings Tab -->
+        <!-- Events Tab -->
         <div id="eventsTab" class="tab-content">
             <div class="card">
                 <div class="card-header">
@@ -617,48 +644,55 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
                     </button>
                 </div>
                 
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Event Name</th>
-                                <th>Date & Time</th>
-                                <th>Venue</th>
-                                <th>Capacity</th>
-                                <th>Tickets Sold</th>
-                                <th>Status</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($events as $event): ?>
+                <?php if (empty($events)): ?>
+                    <div style="text-align: center; padding: 60px 20px;">
+                        <i class="bi bi-calendar-x" style="font-size: 64px; opacity: 0.3;"></i>
+                        <p style="margin-top: 15px; color: #64748b;">No events found. Click "Add New Event" to create one.</p>
+                    </div>
+                <?php else: ?>
+                    <div class="table-container">
+                        <table>
+                            <thead>
                                 <tr>
-                                    <td><strong><?php echo htmlspecialchars($event['event_name']); ?></strong></td>
-                                    <td>
-                                        <?php echo date('M d, Y', strtotime($event['event_date'])); ?><br>
-                                        <small><?php echo date('h:i A', strtotime($event['event_time'])); ?></small>
-                                    </td>
-                                    <td><?php echo htmlspecialchars($event['venue']); ?></td>
-                                    <td><?php echo number_format($event['capacity']); ?></td>
-                                    <td><?php echo number_format($event['tickets_sold']); ?></td>
-                                    <td>
-                                        <span class="badge badge-<?php echo $event['status']; ?>">
-                                            <?php echo ucfirst($event['status']); ?>
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <button onclick="editEvent(<?php echo $event['id']; ?>)" class="btn btn-warning btn-sm">
-                                            <i class="bi bi-pencil"></i>
-                                        </button>
-                                        <button onclick="deleteEvent(<?php echo $event['id']; ?>)" class="btn btn-danger btn-sm">
-                                            <i class="bi bi-trash"></i>
-                                        </button>
-                                    </td>
+                                    <th>Event Name</th>
+                                    <th>Date & Time</th>
+                                    <th>Venue</th>
+                                    <th>Capacity</th>
+                                    <th>Tickets Sold</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
                                 </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($events as $event): ?>
+                                    <tr>
+                                        <td><strong><?php echo htmlspecialchars($event['event_name']); ?></strong></td>
+                                        <td>
+                                            <?php echo date('M d, Y', strtotime($event['event_date'])); ?><br>
+                                            <small><?php echo date('h:i A', strtotime($event['event_time'])); ?></small>
+                                        </td>
+                                        <td><?php echo htmlspecialchars($event['venue']); ?></td>
+                                        <td><?php echo number_format(floatval($event['capacity'])); ?></td>
+                                        <td><?php echo number_format(floatval($event['tickets_sold'])); ?></td>
+                                        <td>
+                                            <span class="badge badge-<?php echo htmlspecialchars($event['status']); ?>">
+                                                <?php echo ucfirst(htmlspecialchars($event['status'])); ?>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <button onclick="editEvent(<?php echo $event['id']; ?>)" class="btn btn-warning btn-sm">
+                                                <i class="bi bi-pencil"></i>
+                                            </button>
+                                            <button onclick="deleteEvent(<?php echo $event['id']; ?>)" class="btn btn-danger btn-sm">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php endif; ?>
             </div>
         </div>
         
@@ -679,6 +713,7 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
                         <div class="form-group">
                             <label>WhatsApp Business Number</label>
                             <input type="text" name="setting_whatsapp_number" value="<?php echo htmlspecialchars($systemSettings['whatsapp_number']['setting_value'] ?? ''); ?>" placeholder="+962XXXXXXXXX">
+                            <div class="text-muted">Include country code</div>
                         </div>
                         <div class="form-group">
                             <label>WhatsApp API Key</label>
@@ -740,6 +775,7 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
                         <div class="form-group">
                             <label>Primary Theme Color</label>
                             <input type="color" name="setting_theme_color" value="<?php echo $systemSettings['theme_color']['setting_value'] ?? '#4f46e5'; ?>">
+                            <div class="text-muted">Used for buttons, links, and accents</div>
                         </div>
                         <div class="form-group">
                             <label>
@@ -816,7 +852,8 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
                     <div class="form-row">
                         <div class="form-group">
                             <label>Capacity</label>
-                            <input type="number" name="capacity" id="capacity" class="form-control">
+                            <input type="number" name="capacity" id="capacity" class="form-control" value="0">
+                            <div class="text-muted">Maximum number of tickets available (0 = unlimited)</div>
                         </div>
                         <div class="form-group">
                             <label>Status</label>
@@ -829,7 +866,7 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
                         </div>
                     </div>
                 </div>
-                <div class="modal-buttons" style="padding: 0 24px 24px 24px; display: flex; justify-content: flex-end; gap: 10px;">
+                <div class="modal-buttons">
                     <button type="button" onclick="closeEventModal()" class="btn btn-secondary">Cancel</button>
                     <button type="submit" name="save_event" class="btn btn-primary">Save Event</button>
                 </div>
@@ -838,9 +875,7 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
     </div>
     
     <script>
-        // Tab switching
         function switchTab(tab) {
-            // Hide all tabs
             document.querySelectorAll('.tab-content').forEach(content => {
                 content.classList.remove('active');
             });
@@ -848,23 +883,24 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
                 btn.classList.remove('active');
             });
             
-            // Show selected tab
             if (tab === 'system') {
                 document.getElementById('systemTab').classList.add('active');
                 document.querySelector('.tab-btn').classList.add('active');
+            } else if (tab === 'pricing') {
+                document.getElementById('pricingTab').classList.add('active');
+                document.querySelectorAll('.tab-btn')[1].classList.add('active');
             } else if (tab === 'events') {
                 document.getElementById('eventsTab').classList.add('active');
-                document.querySelectorAll('.tab-btn')[1].classList.add('active');
+                document.querySelectorAll('.tab-btn')[2].classList.add('active');
             } else if (tab === 'notifications') {
                 document.getElementById('notificationsTab').classList.add('active');
-                document.querySelectorAll('.tab-btn')[2].classList.add('active');
+                document.querySelectorAll('.tab-btn')[3].classList.add('active');
             } else if (tab === 'appearance') {
                 document.getElementById('appearanceTab').classList.add('active');
-                document.querySelectorAll('.tab-btn')[3].classList.add('active');
+                document.querySelectorAll('.tab-btn')[4].classList.add('active');
             }
         }
         
-        // Event Modal Functions
         function openEventModal() {
             document.getElementById('modalTitle').innerHTML = '<i class="bi bi-calendar-plus"></i> Add New Event';
             document.getElementById('eventId').value = '0';
@@ -873,26 +909,25 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
             document.getElementById('eventTime').value = '';
             document.getElementById('venue').value = '';
             document.getElementById('description').value = '';
-            document.getElementById('capacity').value = '';
+            document.getElementById('capacity').value = '0';
             document.getElementById('status').value = 'upcoming';
             document.getElementById('eventModal').classList.add('active');
         }
         
         function editEvent(eventId) {
-            // Fetch event data via AJAX
             fetch(`get_event.php?id=${eventId}`)
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
                         document.getElementById('modalTitle').innerHTML = '<i class="bi bi-pencil"></i> Edit Event';
                         document.getElementById('eventId').value = data.event.id;
-                        document.getElementById('eventName').value = data.event.event_name;
-                        document.getElementById('eventDate').value = data.event.event_date;
-                        document.getElementById('eventTime').value = data.event.event_time;
-                        document.getElementById('venue').value = data.event.venue;
-                        document.getElementById('description').value = data.event.description;
-                        document.getElementById('capacity').value = data.event.capacity;
-                        document.getElementById('status').value = data.event.status;
+                        document.getElementById('eventName').value = data.event.event_name || '';
+                        document.getElementById('eventDate').value = data.event.event_date || '';
+                        document.getElementById('eventTime').value = data.event.event_time || '';
+                        document.getElementById('venue').value = data.event.venue || '';
+                        document.getElementById('description').value = data.event.description || '';
+                        document.getElementById('capacity').value = data.event.capacity || 0;
+                        document.getElementById('status').value = data.event.status || 'upcoming';
                         document.getElementById('eventModal').classList.add('active');
                     }
                 })
@@ -915,13 +950,12 @@ $currencySymbol = $systemSettings['currency_symbol']['setting_value'] ?? 'JD';
             document.getElementById('eventModal').classList.remove('active');
         }
         
-        // Dark Mode Toggle
+        // Dark Mode
         const isDarkMode = localStorage.getItem('darkMode') === 'true';
         if (isDarkMode) {
             document.body.classList.add('dark-mode');
         }
         
-        // Close modal when clicking outside
         window.onclick = function(event) {
             const modal = document.getElementById('eventModal');
             if (event.target === modal) {
