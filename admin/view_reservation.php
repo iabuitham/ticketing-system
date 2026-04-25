@@ -354,7 +354,7 @@ $conn->close();
         <div class="navbar">
             <h1><i class="bi bi-ticket-perforated"></i> <?php echo t('ticketing_system'); ?></h1>
             <div>
-                <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> <?php echo t('back_to_dashboard'); ?></a>
+                <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> <?php echo t('Back To Dashboard'); ?></a>
                 <a href="logout.php" class="btn-logout"><i class="bi bi-box-arrow-right"></i> <?php echo t('logout'); ?></a>
             </div>
         </div>
@@ -362,7 +362,7 @@ $conn->close();
         <!-- Reservation Details -->
         <div class="card">
             <div class="card-header">
-                <h2><i class="bi bi-receipt"></i> <?php echo t('reservation_details'); ?></h2>
+                <h2><i class="bi bi-receipt"></i> <?php echo t('Reservation Details'); ?></h2>
                 <span class="status-badge status-<?php echo $reservation['status']; ?>">
                     <i class="bi <?php echo $reservation['status'] == 'paid' ? 'bi-check-circle-fill' : ($reservation['status'] == 'pending' ? 'bi-hourglass-split' : ($reservation['status'] == 'registered' ? 'bi-check-circle' : 'bi-slash-circle')); ?>"></i>
                     <?php echo ucfirst($reservation['status']); ?>
@@ -383,36 +383,21 @@ $conn->close();
                     <div class="info-value"><?php echo htmlspecialchars($reservation['phone']); ?></div>
                 </div>
                 <div class="info-item">
-                    <div class="info-label"><i class="bi bi-envelope"></i> <?php echo t('email'); ?></div>
-                    <div class="info-value"><?php echo htmlspecialchars($reservation['email'] ?? '-'); ?></div>
-                </div>
-                <div class="info-item">
                     <div class="info-label"><i class="bi bi-grid-3x3-gap-fill"></i> <?php echo t('table_id'); ?></div>
                     <div class="info-value"><?php echo htmlspecialchars($reservation['table_id']); ?></div>
                 </div>
                 <div class="info-item">
-                    <div class="info-label"><i class="bi bi-calendar3"></i> <?php echo t('created_at'); ?></div>
+                    <div class="info-label"><i class="bi bi-calendar3"></i> <?php echo t('Created At'); ?></div>
                     <div class="info-value"><?php echo date('F d, Y H:i:s', strtotime($reservation['created_at'])); ?></div>
                 </div>
-            </div>
-            
-            <div class="info-grid">
                 <div class="info-item">
-                    <div class="info-label"><i class="bi bi-people"></i> <?php echo t('guests_breakdown'); ?></div>
+                    <div class="info-label"><i class="bi bi-people"></i> <?php echo t('Guests Breakdown'); ?></div>
                     <div class="info-value">
                         <?php 
                         $totalGuests = $reservation['adults'] + $reservation['teens'] + $reservation['kids'];
                         ?>
                         <strong><?php echo $totalGuests; ?></strong> total guests<br>
-                        <small>👨 Adults: <?php echo $reservation['adults']; ?> | 👧 Teens: <?php echo $reservation['teens']; ?> | 🧒 Kids: <?php echo $reservation['kids']; ?></small>
-                    </div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label"><i class="bi bi-currency-dollar"></i> <?php echo t('ticket_prices'); ?></div>
-                    <div class="info-value">
-                        Adult: <?php echo number_format(getSetting('ticket_price_adult', 10), 2); ?> <?php echo $currency; ?> | 
-                        Teen: <?php echo number_format(getSetting('ticket_price_teen', 10), 2); ?> <?php echo $currency; ?> | 
-                        Kid: <?php echo number_format(getSetting('ticket_price_kid', 0), 2); ?> <?php echo $currency; ?>
+                        <small>Adults: <?php echo $reservation['adults']; ?> | Teens: <?php echo $reservation['teens']; ?> | Kids: <?php echo $reservation['kids']; ?></small>
                     </div>
                 </div>
                 <?php if (!empty($reservation['notes'])): ?>
@@ -427,7 +412,7 @@ $conn->close();
         <!-- Payment Transactions Section -->
         <div class="card">
             <div class="card-header">
-                <h2><i class="bi bi-credit-card"></i> <?php echo t('payment_transactions'); ?></h2>
+                <h2><i class="bi bi-credit-card"></i> <?php echo t('Payment Transactions'); ?></h2>
                 <?php if ($reservation['status'] != 'paid' && $reservation['status'] != 'cancelled' && $amount_due > 0): ?>
                     <a href="dashboard.php" class="btn btn-success btn-sm">
                         <i class="bi bi-plus-circle"></i> <?php echo t('add_payment'); ?>
@@ -546,26 +531,26 @@ $conn->close();
         <!-- Action Buttons -->
         <div class="button-group">
             <a href="edit_reservation.php?id=<?php echo urlencode($reservation_id); ?>" class="btn btn-warning">
-                <i class="bi bi-pencil"></i> <?php echo t('edit_reservation'); ?>
+                <i class="bi bi-pencil"></i> <?php echo t('Edit Reservation'); ?>
             </a>
             <?php if ($reservation['status'] == 'paid'): ?>
                 <a href="print_ticket.php?reservation_id=<?php echo urlencode($reservation_id); ?>" class="btn btn-primary" target="_blank">
-                    <i class="bi bi-ticket-perforated"></i> <?php echo t('print_ticket'); ?>
+                    <i class="bi bi-ticket-perforated"></i> <?php echo t('Print Ticker'); ?>
                 </a>
             <?php endif; ?>
             <a href="print_statement.php?id=<?php echo urlencode($reservation_id); ?>" class="btn btn-info" target="_blank">
-                <i class="bi bi-printer"></i> <?php echo t('print_statement'); ?>
+                <i class="bi bi-printer"></i> <?php echo t('Print Statement'); ?>
             </a>
             <?php if ($reservation['status'] != 'cancelled' && $reservation['status'] != 'paid'): ?>
                 <button onclick="cancelReservation('<?php echo $reservation_id; ?>')" class="btn btn-danger">
-                    <i class="bi bi-x-circle"></i> <?php echo t('cancel_reservation'); ?>
+                    <i class="bi bi-x-circle"></i> <?php echo t('Cancel Reservation'); ?>
                 </button>
             <?php endif; ?>
             <button onclick="deleteReservation('<?php echo $reservation_id; ?>')" class="btn btn-danger">
-                <i class="bi bi-trash"></i> <?php echo t('delete_reservation'); ?>
+                <i class="bi bi-trash"></i> <?php echo t('Delete Reservation'); ?>
             </button>
             <a href="dashboard.php" class="btn btn-secondary">
-                <i class="bi bi-arrow-left"></i> <?php echo t('back_to_dashboard'); ?>
+                <i class="bi bi-arrow-left"></i> <?php echo t('Back To Dashboard'); ?>
             </a>
         </div>
     </div>
