@@ -9,7 +9,6 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
     exit();
 }
 
-$conn = getConnection();
 $reservation_id = isset($_GET['id']) ? sanitizeInput($_GET['id']) : '';
 
 if (empty($reservation_id)) {
@@ -17,108 +16,198 @@ if (empty($reservation_id)) {
     exit();
 }
 
-$stmt = $conn->prepare("SELECT * FROM reservations WHERE reservation_id = ?");
+$conn = getConnection();
+
+// Get reservation details with total paid from split payments
+$query = "SELECT r.*, 
+          COALESCE((SELECT SUM(amount) FROM split_payments WHERE reservation_id = r.reservation_id), 0) as total_paid
+          FROM reservations r 
+          WHERE r.reservation_id = ?";
+
+$stmt = $conn->prepare($query);
 $stmt->bind_param("s", $reservation_id);
 $stmt->execute();
 $reservation = $stmt->get_result()->fetch_assoc();
 $stmt->close();
 
 if (!$reservation) {
-    header('Location: dashboard.php?error=Not found');
+    header('Location: dashboard.php');
     exit();
 }
 
-// Get all payments (initial + additional)
-$payments = $conn->query("SELECT * FROM split_payments WHERE reservation_id = '$reservation_id' ORDER BY created_at ASC");
-$allPayments = $payments->fetch_all(MYSQLI_ASSOC);
-
-// Get ticket codes
-$tickets = $conn->query("SELECT * FROM ticket_codes WHERE reservation_id = '$reservation_id' ORDER BY guest_type, guest_number")->fetch_all(MYSQLI_ASSOC);
-
-// Get event settings
-$event = $conn->query("SELECT * FROM event_settings LIMIT 1")->fetch_assoc();
-if (!$event) {
-    $event = [
-        'event_name' => 'Annual Tech Conference 2024',
-        'event_date' => date('Y-m-d', strtotime('+30 days')),
-        'event_time' => '18:00:00',
-        'venue' => 'Grand Hall, Amman'
-    ];
-}
-
-$totalGuests = $reservation['adults'] + $reservation['teens'] + $reservation['kids'];
-$paidGuests = ($reservation['paid_adults'] ?? 0) + ($reservation['paid_teens'] ?? 0) + ($reservation['paid_kids'] ?? 0);
-$totalDue = $reservation['total_amount'];
-$additionalDue = $reservation['additional_amount_due'] ?? 0;
+$total_paid = floatval($reservation['total_paid']);
+$total_amount = floatval($reservation['total_amount']);
+$amount_due = $total_amount - $total_paid;
 $currency = getSetting('currency', 'JOD');
 
-$conn->close();
+// Get payment splits for this reservation
+$stmt = $conn->prepare("SELECT * FROM split_payments WHERE reservation_id = ? ORDER BY payment_date DESC");
+$stmt->bind_param("s", $reservation_id);
+$stmt->execute();
+$payments = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$stmt->close();
 
-function getStatusClass($status) {
-    switch ($status) {
-        case 'pending': return 'status-pending';
-        case 'registered': return 'status-registered';
-        case 'paid': return 'status-paid';
-        case 'cancelled': return 'status-cancelled';
-        default: return 'status-pending';
-    }
-}
+$conn->close();
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="<?php echo $lang; ?>" dir="<?php echo getDirection(); ?>">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
-    <html lang="<?php echo $lang; ?>" dir="<?php echo getDirection(); ?>">
-    <link rel="stylesheet" href="../assets/css/dark-mode.css">
-    <title>View Reservation - Ticketing System</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?php echo t('view_reservation'); ?> - <?php echo t('ticketing_system'); ?></title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #f0f2f5;
             padding: 20px;
+            transition: background 0.3s ease;
         }
+        
+        body.dark-mode {
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+        
         .container { max-width: 1200px; margin: 0 auto; }
-        .header {
+        
+        /* Navigation */
+        .navbar {
             background: white;
-            padding: 20px;
-            border-radius: 16px;
-            margin-bottom: 20px;
+            border-radius: 24px;
+            padding: 16px 24px;
+            margin-bottom: 24px;
             display: flex;
             justify-content: space-between;
             align-items: center;
             flex-wrap: wrap;
             gap: 15px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
+        
+        body.dark-mode .navbar {
+            background: #1e293b;
+        }
+        
+        .navbar h1 { font-size: 1.5rem; display: flex; align-items: center; gap: 8px; }
+        
+        .btn {
+            padding: 8px 16px;
+            border-radius: 10px;
+            border: none;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-weight: 500;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .btn-primary { background: #4f46e5; color: white; }
+        .btn-primary:hover { background: #4338ca; transform: translateY(-1px); }
+        .btn-secondary { background: #64748b; color: white; }
+        .btn-secondary:hover { background: #475569; }
+        .btn-success { background: #10b981; color: white; }
+        .btn-success:hover { background: #059669; }
+        .btn-warning { background: #f59e0b; color: white; }
+        .btn-danger { background: #ef4444; color: white; }
+        .btn-info { background: #0ea5e9; color: white; }
+        .btn-sm { padding: 6px 12px; font-size: 12px; }
+        
+        .btn-logout {
+            background: #ef4444;
+            color: white;
+            padding: 8px 20px;
+            border-radius: 40px;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .btn-logout:hover { background: #dc2626; }
+        
+        /* Cards */
         .card {
             background: white;
-            border-radius: 16px;
+            border-radius: 20px;
+            padding: 24px;
             margin-bottom: 20px;
-            overflow: hidden;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
+        
+        body.dark-mode .card {
+            background: #1e293b;
+        }
+        
         .card-header {
-            background: #f8fafc;
-            padding: 15px 20px;
-            border-bottom: 1px solid #e2e8f0;
-            font-weight: 600;
-            font-size: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e2e8f0;
         }
-        .card-body { padding: 20px; }
+        
+        body.dark-mode .card-header {
+            border-bottom-color: #334155;
+        }
+        
+        .card-header h2 {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 1.3rem;
+        }
+        
+        /* Info Grid */
         .info-grid {
             display: grid;
-            grid-template-columns: 1fr 2fr;
-            gap: 12px;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
         }
-        .info-label { font-weight: 600; color: #64748b; font-size: 13px; }
-        .info-value { color: #1e293b; font-size: 14px; }
-        .status-badge {
-            display: inline-block;
-            padding: 5px 12px;
-            border-radius: 20px;
+        
+        .info-item {
+            padding: 15px;
+            background: #f8fafc;
+            border-radius: 12px;
+        }
+        
+        body.dark-mode .info-item {
+            background: #0f172a;
+        }
+        
+        .info-label {
             font-size: 12px;
+            color: #64748b;
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .info-value {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1e293b;
+        }
+        
+        body.dark-mode .info-value {
+            color: #e2e8f0;
+        }
+        
+        /* Status Badge */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 14px;
             font-weight: 600;
         }
         .status-pending { background: #fef3c7; color: #92400e; }
@@ -126,387 +215,496 @@ function getStatusClass($status) {
         .status-paid { background: #d1fae5; color: #065f46; }
         .status-cancelled { background: #fee2e2; color: #991b1b; }
         
-        .alert-warning {
-            background: #fef3c7;
-            border-left: 4px solid #f59e0b;
+        /* Payment Summary */
+        .payment-summary {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+        
+        .summary-card {
             padding: 15px;
             border-radius: 12px;
-            margin-bottom: 15px;
+            text-align: center;
         }
-        .payment-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 0;
-            border-bottom: 1px solid #e2e8f0;
-            flex-wrap: wrap;
-            gap: 10px;
-        }
-        .payment-row:last-child { border-bottom: none; }
-        .payment-method {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            min-width: 120px;
-        }
-        .payment-amount {
-            font-weight: 700;
-            min-width: 100px;
-        }
-        .payment-details {
-            flex: 1;
-            display: flex;
-            gap: 10px;
-            align-items: center;
-            justify-content: flex-end;
-            flex-wrap: wrap;
-        }
-        .payment-badge {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 20px;
+        
+        .summary-card .label {
             font-size: 12px;
+            margin-bottom: 8px;
+        }
+        
+        .summary-card .amount {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        
+        /* Table */
+        .table-container {
+            overflow-x: auto;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        body.dark-mode th,
+        body.dark-mode td {
+            border-bottom-color: #334155;
+        }
+        
+        th {
+            background: #f8fafc;
             font-weight: 600;
         }
-        .badge-cash { background: #fef3c7; color: #92400e; }
-        .badge-cliq { background: #d1fae5; color: #065f46; }
-        .badge-visa { background: #dbeafe; color: #1e40af; }
-        .badge-additional { background: #e0e7ff; color: #3730a3; }
         
-        .proof-link {
-            background: #3b82f6;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            text-decoration: none;
-            display: inline-block;
-            cursor: pointer;
-        }
-        .receipt-badge {
-            background: #f1f5f9;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            color: #475569;
-        }
-        .payment-total-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 0;
-            margin-top: 5px;
-            border-top: 2px solid #cbd5e1;
-            font-weight: 700;
-        }
-        .split-badge {
-            margin-top: 15px;
-            padding: 8px;
-            background: #e0e7ff;
-            border-radius: 8px;
-            text-align: center;
-            font-size: 13px;
+        body.dark-mode th {
+            background: #0f172a;
+            color: #94a3b8;
         }
         
-        .proof-gallery {
-            margin-top: 15px;
+        /* Button Group */
+        .button-group {
             display: flex;
+            gap: 10px;
             flex-wrap: wrap;
-            gap: 15px;
-        }
-        .proof-item {
-            background: #f8fafc;
-            border-radius: 12px;
-            padding: 10px;
-            text-align: center;
-            border: 1px solid #e2e8f0;
-            width: 150px;
-        }
-        .proof-item img {
-            width: 100%;
-            height: 100px;
-            object-fit: cover;
-            border-radius: 8px;
-            cursor: pointer;
-        }
-        .proof-view-btn {
-            margin-top: 8px;
-            background: #6366f1;
-            color: white;
-            border: none;
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-size: 10px;
-            cursor: pointer;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e2e8f0;
         }
         
-        .ticket-card {
-            background: #f8fafc;
-            border-radius: 12px;
-            padding: 15px;
-            border-left: 4px solid #10b981;
-            margin-bottom: 10px;
+        body.dark-mode .button-group {
+            border-top-color: #334155;
         }
-        .ticket-unpaid { border-left-color: #f59e0b; }
-        .ticket-code {
-            font-family: monospace;
-            font-size: 12px;
-            background: white;
-            padding: 8px;
-            border-radius: 8px;
-            text-align: center;
-            word-break: break-all;
-        }
-        .btn {
-            padding: 10px 20px;
-            border: none;
-            border-radius: 10px;
-            cursor: pointer;
-            text-decoration: none;
-            display: inline-block;
-            font-size: 14px;
-            font-weight: 500;
-        }
-        .btn-primary { background: #6366f1; color: white; }
-        .btn-warning { background: #f59e0b; color: white; }
-        .btn-secondary { background: #64748b; color: white; }
-        .btn-sm { padding: 5px 12px; font-size: 12px; }
         
-        .modal {
-            display: none;
+        /* Loading Overlay */
+        .loading-overlay {
             position: fixed;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0,0,0,0.9);
-            z-index: 10000;
-            align-items: center;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(3px);
+            display: none;
             justify-content: center;
-            cursor: pointer;
+            align-items: center;
+            z-index: 99999;
         }
-        .modal.active { display: flex; }
-        .modal img {
-            max-width: 90%;
-            max-height: 90%;
-            border-radius: 8px;
+        
+        .loading-overlay.active { display: flex; }
+        
+        .loading-spinner {
+            width: 60px;
+            height: 60px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
         }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* RTL Support */
+        [dir="rtl"] {
+            text-align: right;
+        }
+        
+        [dir="rtl"] .button-group {
+            flex-direction: row-reverse;
+        }
+        
         @media (max-width: 768px) {
-            .container { padding: 10px; }
-            .info-grid { grid-template-columns: 1fr; gap: 8px; }
-            .header { flex-direction: column; text-align: center; }
-            .payment-row { flex-direction: column; align-items: flex-start; }
-            .payment-details { justify-content: flex-start; }
-            .proof-item { width: 120px; }
-            .proof-item img { height: 80px; }
+            .payment-summary {
+                grid-template-columns: 1fr;
+            }
+            .info-grid {
+                grid-template-columns: 1fr;
+            }
+            .button-group {
+                flex-direction: column;
+            }
+            .button-group .btn {
+                width: 100%;
+                justify-content: center;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🎫 Reservation Details</h1>
-            <a href="dashboard.php" class="btn btn-secondary">← Back to Dashboard</a>
-        </div>
-
-        <!-- Reservation Information Card -->
-        <div class="card">
-            <div class="card-header">📋 Reservation Information</div>
-            <div class="card-body">
-                <div class="info-grid">
-                    <div class="info-label">Reservation ID:</div>
-                    <div class="info-value"><strong><?php echo htmlspecialchars($reservation['reservation_id']); ?></strong></div>
-                    <div class="info-label">Status:</div>
-                    <div class="info-value"><span class="status-badge <?php echo getStatusClass($reservation['status']); ?>"><?php echo ucfirst($reservation['status']); ?></span></div>
-                    <div class="info-label">Customer Name:</div>
-                    <div class="info-value"><?php echo htmlspecialchars($reservation['name']); ?></div>
-                    <div class="info-label">Phone Number:</div>
-                    <div class="info-value"><?php echo htmlspecialchars($reservation['phone']); ?></div>
-                    <div class="info-label">Table ID:</div>
-                    <div class="info-value"><?php echo htmlspecialchars($reservation['table_id']); ?></div>
-                    <div class="info-label">Guests:</div>
-                    <div class="info-value"><?php echo $totalGuests; ?> total (<?php echo $reservation['adults']; ?> Adults, <?php echo $reservation['teens']; ?> Teens, <?php echo $reservation['kids']; ?> Kids)</div>
-                    <div class="info-label">Paid Guests:</div>
-                    <div class="info-value"><?php echo $paidGuests; ?> guests</div>
-                    <div class="info-label">Total Amount:</div>
-                    <div class="info-value"><strong><?php echo number_format($totalDue, 2); ?> <?php echo $currency; ?></strong></div>
-                    <div class="info-label">Notes:</div>
-                    <div class="info-value"><?php echo !empty($reservation['notes']) ? nl2br(htmlspecialchars($reservation['notes'])) : '<em>No notes</em>'; ?></div>
-                    <div class="info-label">Created:</div>
-                    <div class="info-value"><?php echo date('F j, Y g:i A', strtotime($reservation['created_at'])); ?></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Payment Information Card -->
-        <div class="card">
-            <div class="card-header">💰 Payment Information</div>
-            <div class="card-body">
-                <?php if ($additionalDue > 0 && $reservation['status'] == 'paid'): ?>
-                <div class="alert-warning">
-                    <div style="font-weight: 600; margin-bottom: 5px;">⚠️ Additional Payment Required</div>
-                    <div style="font-size: 14px;">
-                        Amount due: <strong><?php echo number_format($additionalDue, 2); ?> <?php echo $currency; ?></strong>
-                    </div>
-                </div>
-                <?php endif; ?>
-
-                <?php if ($reservation['status'] == 'paid'): ?>
-                    <div style="font-weight: 600; margin-bottom: 15px;">💸 Payment History:</div>
-                    
-                    <?php if (empty($allPayments)): ?>
-                        <div style="text-align: center; padding: 20px; color: #999;">No payments recorded</div>
-                    <?php else: ?>
-                        <?php 
-                        $totalPaid = 0;
-                        $allProofs = [];
-                        foreach ($allPayments as $payment): 
-                            $isAdditional = $payment['payment_type'] == 'additional';
-                            $badgeClass = $payment['payment_method'] == 'cash' ? 'badge-cash' : ($payment['payment_method'] == 'cliq' ? 'badge-cliq' : 'badge-visa');
-                            $badgeText = $payment['payment_method'] == 'cash' ? 'Cash' : ($payment['payment_method'] == 'cliq' ? 'CliQ' : 'Visa');
-                            if ($isAdditional) $badgeText .= ' (Additional)';
-                            $totalPaid += $payment['amount'];
-                            
-                            // Collect proofs for gallery
-                            if ($payment['proof_path'] && !empty($payment['proof_path'])) {
-                                $allProofs[] = [
-                                    'path' => $payment['proof_path'],
-                                    'method' => $payment['payment_method'],
-                                    'date' => $payment['created_at']
-                                ];
-                            }
-                        ?>
-                        <div class="payment-row">
-                            <div class="payment-method">
-                                <span class="payment-badge <?php echo $badgeClass; ?>"><?php echo $badgeText; ?></span>
-                            </div>
-                            <div class="payment-amount">
-                                <strong><?php echo number_format($payment['amount'], 2); ?> <?php echo $currency; ?></strong>
-                            </div>
-                            <div class="payment-details">
-                                <?php if ($payment['receipt_id']): ?>
-                                    <span class="receipt-badge">🧾 Receipt: <?php echo htmlspecialchars($payment['receipt_id']); ?></span>
-                                <?php endif; ?>
-                                <span style="font-size: 11px; color: #666;"><?php echo date('M d, H:i', strtotime($payment['created_at'])); ?></span>
-                            </div>
-                        </div>
-                        <?php endforeach; ?>
-                        
-                        <div class="payment-total-row">
-                            <span>Total Paid</span>
-                            <span><strong><?php echo number_format($totalPaid, 2); ?> <?php echo $currency; ?></strong></span>
-                        </div>
-                        
-                        <?php if (count($allPayments) > 1): ?>
-                        <div class="split-badge">
-                            🔀 Split Payment - Paid using multiple methods
-                        </div>
-                        <?php endif; ?>
-                        
-                        <!-- Proof Images Gallery -->
-                        <?php if (!empty($allProofs)): ?>
-                        <div style="margin-top: 20px;">
-                            <div style="font-weight: 600; margin-bottom: 10px;">📸 Payment Screenshots:</div>
-                            <div class="proof-gallery">
-                                <?php foreach ($allProofs as $proof): ?>
-                                <div class="proof-item">
-                                    <img src="../<?php echo $proof['path']; ?>" alt="Payment Proof" onclick="viewProof('../<?php echo $proof['path']; ?>')">
-                                    <div class="proof-label"><?php echo ucfirst($proof['method']); ?> Payment</div>
-                                    <button class="proof-view-btn" onclick="viewProof('../<?php echo $proof['path']; ?>')">View Full Size</button>
-                                </div>
-                                <?php endforeach; ?>
-                            </div>
-                        </div>
-                        <?php endif; ?>
-                        
-                    <?php endif; ?>
-                    
-                <?php else: ?>
-                    <div style="text-align: center; padding: 40px; background: #f8fafc; border-radius: 12px;">
-                        <p>📷 No payment information available</p>
-                        <p style="font-size: 13px; margin-top: 5px;">Payment required to complete reservation</p>
-                    </div>
-                <?php endif; ?>
-            </div>
-        </div>
-
-        <!-- Tickets Card -->
-        <div class="card">
-            <div class="card-header">🎫 Tickets (<?php echo count($tickets); ?> tickets)</div>
-            <div class="card-body">
-                <?php if (!empty($tickets)): ?>
-                    <?php foreach ($tickets as $ticket): 
-                        $isPaid = false;
-                        if ($ticket['guest_type'] == 'adult' && $ticket['guest_number'] <= ($reservation['paid_adults'] ?? 0)) $isPaid = true;
-                        if ($ticket['guest_type'] == 'teen' && $ticket['guest_number'] <= ($reservation['paid_teens'] ?? 0)) $isPaid = true;
-                        if ($ticket['guest_type'] == 'kid') $isPaid = true;
-                        $icon = $ticket['guest_type'] == 'adult' ? '👤' : ($ticket['guest_type'] == 'teen' ? '🧑' : '👶');
-                    ?>
-                    <div class="ticket-card <?php echo !$isPaid ? 'ticket-unpaid' : ''; ?>">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                            <span><?php echo $icon; ?> <?php echo ucfirst($ticket['guest_type']); ?> #<?php echo $ticket['guest_number']; ?></span>
-                            <span style="color: <?php echo $isPaid ? '#10b981' : '#f59e0b'; ?>;"><?php echo $isPaid ? '✓ Paid' : '○ Unpaid'; ?></span>
-                        </div>
-                        <div class="ticket-code"><?php echo htmlspecialchars($ticket['ticket_code']); ?></div>
-                        <div style="margin-top: 10px;">
-                            <a href="print_ticket.php?code=<?php echo urlencode($ticket['ticket_code']); ?>" target="_blank" class="btn btn-sm btn-primary">🖨️ Print</a>
-                        </div>
-                    </div>
-                    <?php endforeach; ?>
-                    
-                    <div class="ticket-link" style="margin-top: 20px; text-align: center;">
-                        <a href="print_ticket.php?reservation_id=<?php echo urlencode($reservation['reservation_id']); ?>" class="btn btn-primary" target="_blank">
-                            🖨️ Print All Tickets
-                        </a>
-                    </div>
-                <?php else: ?>
-                    <div style="text-align: center; padding: 40px;">
-                        <p>🎫 No tickets generated yet.</p>
-                        <?php if ($reservation['status'] == 'paid'): ?>
-                            <button onclick="alert('Regenerate tickets from edit page')" class="btn btn-warning">Regenerate Tickets</button>
-                        <?php else: ?>
-                            <p style="margin-top: 10px;">Tickets will be generated when payment is confirmed.</p>
-                        <?php endif; ?>
-                    </div>
-                <?php endif; ?>
-            </div>
-        </div>
-
-        <!-- Actions Card -->
-        <div class="card">
-            <div class="card-header">⚡ Actions</div>
-            <div class="card-body">
-                <div class="actions" style="display: flex; gap: 10px; flex-wrap: wrap;">
-                    <a href="edit_reservation.php?id=<?php echo urlencode($reservation['reservation_id']); ?>" class="btn btn-warning">✏️ Edit Reservation</a>
-                    <button onclick="window.print()" class="btn btn-secondary">🖨️ Print Page</button>
-                </div>
-            </div>
+    <div class="loading-overlay">
+        <div style="text-align: center;">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">Processing...</div>
         </div>
     </div>
 
-    <!-- Image Modal for Full Size Proof Viewing -->
-    <div id="imageModal" class="modal" onclick="closeImageModal()">
-        <img id="modalImage" src="" alt="Payment Proof">
+    <div class="container">
+        <!-- Navigation -->
+        <div class="navbar">
+            <h1><i class="bi bi-ticket-perforated"></i> <?php echo t('ticketing_system'); ?></h1>
+            <div>
+                <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> <?php echo t('back_to_dashboard'); ?></a>
+                <a href="logout.php" class="btn-logout"><i class="bi bi-box-arrow-right"></i> <?php echo t('logout'); ?></a>
+            </div>
+        </div>
+
+        <!-- Reservation Details -->
+        <div class="card">
+            <div class="card-header">
+                <h2><i class="bi bi-receipt"></i> <?php echo t('reservation_details'); ?></h2>
+                <span class="status-badge status-<?php echo $reservation['status']; ?>">
+                    <i class="bi <?php echo $reservation['status'] == 'paid' ? 'bi-check-circle-fill' : ($reservation['status'] == 'pending' ? 'bi-hourglass-split' : ($reservation['status'] == 'registered' ? 'bi-check-circle' : 'bi-slash-circle')); ?>"></i>
+                    <?php echo ucfirst($reservation['status']); ?>
+                </span>
+            </div>
+            
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label"><i class="bi bi-upc-scan"></i> <?php echo t('reservation_id'); ?></div>
+                    <div class="info-value"><?php echo htmlspecialchars($reservation['reservation_id']); ?></div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label"><i class="bi bi-person"></i> <?php echo t('customer_name'); ?></div>
+                    <div class="info-value"><?php echo htmlspecialchars($reservation['name']); ?></div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label"><i class="bi bi-telephone"></i> <?php echo t('phone_number'); ?></div>
+                    <div class="info-value"><?php echo htmlspecialchars($reservation['phone']); ?></div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label"><i class="bi bi-envelope"></i> <?php echo t('email'); ?></div>
+                    <div class="info-value"><?php echo htmlspecialchars($reservation['email'] ?? '-'); ?></div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label"><i class="bi bi-grid-3x3-gap-fill"></i> <?php echo t('table_id'); ?></div>
+                    <div class="info-value"><?php echo htmlspecialchars($reservation['table_id']); ?></div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label"><i class="bi bi-calendar3"></i> <?php echo t('created_at'); ?></div>
+                    <div class="info-value"><?php echo date('F d, Y H:i:s', strtotime($reservation['created_at'])); ?></div>
+                </div>
+            </div>
+            
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label"><i class="bi bi-people"></i> <?php echo t('guests_breakdown'); ?></div>
+                    <div class="info-value">
+                        <?php 
+                        $totalGuests = $reservation['adults'] + $reservation['teens'] + $reservation['kids'];
+                        ?>
+                        <strong><?php echo $totalGuests; ?></strong> total guests<br>
+                        <small>👨 Adults: <?php echo $reservation['adults']; ?> | 👧 Teens: <?php echo $reservation['teens']; ?> | 🧒 Kids: <?php echo $reservation['kids']; ?></small>
+                    </div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label"><i class="bi bi-currency-dollar"></i> <?php echo t('ticket_prices'); ?></div>
+                    <div class="info-value">
+                        Adult: <?php echo number_format(getSetting('ticket_price_adult', 10), 2); ?> <?php echo $currency; ?> | 
+                        Teen: <?php echo number_format(getSetting('ticket_price_teen', 10), 2); ?> <?php echo $currency; ?> | 
+                        Kid: <?php echo number_format(getSetting('ticket_price_kid', 0), 2); ?> <?php echo $currency; ?>
+                    </div>
+                </div>
+                <?php if (!empty($reservation['notes'])): ?>
+                <div class="info-item">
+                    <div class="info-label"><i class="bi bi-chat"></i> <?php echo t('notes'); ?></div>
+                    <div class="info-value"><?php echo nl2br(htmlspecialchars($reservation['notes'])); ?></div>
+                </div>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <!-- Payment Transactions Section -->
+        <div class="card">
+            <div class="card-header">
+                <h2><i class="bi bi-credit-card"></i> <?php echo t('payment_transactions'); ?></h2>
+                <?php if ($reservation['status'] != 'paid' && $reservation['status'] != 'cancelled' && $amount_due > 0): ?>
+                    <a href="dashboard.php" class="btn btn-success btn-sm">
+                        <i class="bi bi-plus-circle"></i> <?php echo t('add_payment'); ?>
+                    </a>
+                <?php endif; ?>
+            </div>
+            
+            <!-- Payment Summary Cards -->
+            <div class="payment-summary">
+                <div class="summary-card" style="background: #f1f5f9;">
+                    <div class="label" style="color: #64748b;">Total Amount</div>
+                    <div class="amount" style="color: #1e293b;">
+                        <?php echo number_format($total_amount, 2); ?> <?php echo $currency; ?>
+                    </div>
+                </div>
+                <div class="summary-card" style="background: #d1fae5;">
+                    <div class="label" style="color: #065f46;">Total Paid</div>
+                    <div class="amount" style="color: #065f46;">
+                        <?php echo number_format($total_paid, 2); ?> <?php echo $currency; ?>
+                    </div>
+                </div>
+                <div class="summary-card" style="background: <?php echo $amount_due > 0 ? '#fef3c7' : '#d1fae5'; ?>;">
+                    <div class="label" style="color: <?php echo $amount_due > 0 ? '#92400e' : '#065f46'; ?>;">Remaining Due</div>
+                    <div class="amount" style="color: <?php echo $amount_due > 0 ? '#f59e0b' : '#10b981'; ?>;">
+                        <?php echo number_format($amount_due, 2); ?> <?php echo $currency; ?>
+                    </div>
+                </div>
+            </div>
+            
+            <?php if (empty($payments)): ?>
+                <div style="text-align: center; padding: 60px 20px;">
+                    <i class="bi bi-inbox" style="font-size: 64px; opacity: 0.3; display: block; margin-bottom: 15px;"></i>
+                    <p style="color: #64748b;"><?php echo t('no_payment_transactions'); ?></p>
+                    <?php if ($reservation['status'] != 'paid' && $reservation['status'] != 'cancelled' && $amount_due > 0): ?>
+                        <a href="dashboard.php" class="btn btn-success" style="margin-top: 15px;">
+                            <i class="bi bi-plus-circle"></i> <?php echo t('record_first_payment'); ?>
+                        </a>
+                    <?php endif; ?>
+                </div>
+            <?php else: ?>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th><i class="bi bi-clock"></i> <?php echo t('date_time'); ?></th>
+                                <th><i class="bi bi-wallet2"></i> <?php echo t('payment_method'); ?></th>
+                                <th><i class="bi bi-cash"></i> <?php echo t('amount'); ?></th>
+                                <th><i class="bi bi-info-circle"></i> <?php echo t('reference_evidence'); ?></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($payments as $payment): ?>
+                                <tr>
+                                    <td>
+                                        <?php echo date('M d, Y H:i:s', strtotime($payment['payment_date'])); ?>
+                                    </td>
+                                    <td>
+                                        <?php 
+                                        $method_icon = [
+                                            'cash' => 'bi-cash-stack',
+                                            'cliq' => 'bi-phone',
+                                            'visa' => 'bi-credit-card'
+                                        ];
+                                        $method_color = [
+                                            'cash' => '#10b981',
+                                            'cliq' => '#8b5cf6',
+                                            'visa' => '#ef4444'
+                                        ];
+                                        ?>
+                                        <i class="bi <?php echo $method_icon[$payment['payment_method']]; ?>" style="color: <?php echo $method_color[$payment['payment_method']]; ?>;"></i>
+                                        <strong><?php echo ucfirst($payment['payment_method']); ?></strong>
+                                    </td>
+                                    <td style="font-weight: bold; color: #10b981;">
+                                        + <?php echo number_format($payment['amount'], 2); ?> <?php echo $currency; ?>
+                                    </td>
+                                    <td>
+                                        <?php if ($payment['payment_method'] == 'cash'): ?>
+                                            <div style="display: flex; align-items: center; gap: 5px;">
+                                                <i class="bi bi-person-badge"></i>
+                                                <span><strong>Received by:</strong> <?php echo htmlspecialchars($payment['received_by']); ?></span>
+                                            </div>
+                                        <?php elseif ($payment['payment_method'] == 'cliq' && $payment['proof_path']): ?>
+                                            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                                                <i class="bi bi-image"></i>
+                                                <a href="../<?php echo $payment['proof_path']; ?>" target="_blank" class="btn btn-sm btn-info">
+                                                    <i class="bi bi-eye"></i> View Screenshot
+                                                </a>
+                                                <a href="../<?php echo $payment['proof_path']; ?>" download class="btn btn-sm btn-secondary">
+                                                    <i class="bi bi-download"></i> Download
+                                                </a>
+                                            </div>
+                                        <?php elseif ($payment['payment_method'] == 'visa'): ?>
+                                            <div style="display: flex; align-items: center; gap: 5px;">
+                                                <i class="bi bi-receipt"></i>
+                                                <span><strong>Receipt ID:</strong> <?php echo htmlspecialchars($payment['receipt_id']); ?></span>
+                                            </div>
+                                        <?php endif; ?>
+                                        <div style="font-size: 11px; color: #64748b; margin-top: 5px;">
+                                            <i class="bi bi-clock"></i> Recorded: <?php echo date('M d, H:i', strtotime($payment['created_at'])); ?>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                        <tfoot>
+                            <tr style="background: #f8fafc; font-weight: bold;">
+                                <td colspan="2" style="text-align: right;">Total Paid:</td>
+                                <td colspan="2"><?php echo number_format($total_paid, 2); ?> <?php echo $currency; ?></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            <?php endif; ?>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="button-group">
+            <a href="edit_reservation.php?id=<?php echo urlencode($reservation_id); ?>" class="btn btn-warning">
+                <i class="bi bi-pencil"></i> <?php echo t('edit_reservation'); ?>
+            </a>
+            <?php if ($reservation['status'] == 'paid'): ?>
+                <a href="print_ticket.php?reservation_id=<?php echo urlencode($reservation_id); ?>" class="btn btn-primary" target="_blank">
+                    <i class="bi bi-ticket-perforated"></i> <?php echo t('print_ticket'); ?>
+                </a>
+            <?php endif; ?>
+            <a href="print_statement.php?id=<?php echo urlencode($reservation_id); ?>" class="btn btn-info" target="_blank">
+                <i class="bi bi-printer"></i> <?php echo t('print_statement'); ?>
+            </a>
+            <?php if ($reservation['status'] != 'cancelled' && $reservation['status'] != 'paid'): ?>
+                <button onclick="cancelReservation('<?php echo $reservation_id; ?>')" class="btn btn-danger">
+                    <i class="bi bi-x-circle"></i> <?php echo t('cancel_reservation'); ?>
+                </button>
+            <?php endif; ?>
+            <button onclick="deleteReservation('<?php echo $reservation_id; ?>')" class="btn btn-danger">
+                <i class="bi bi-trash"></i> <?php echo t('delete_reservation'); ?>
+            </button>
+            <a href="dashboard.php" class="btn btn-secondary">
+                <i class="bi bi-arrow-left"></i> <?php echo t('back_to_dashboard'); ?>
+            </a>
+        </div>
     </div>
 
     <script>
-        function viewProof(imageUrl) {
-            const modal = document.getElementById('imageModal');
-            const modalImg = document.getElementById('modalImage');
-            modal.classList.add('active');
-            modalImg.src = imageUrl;
+        function showLoading(message = 'Processing...') {
+            const overlay = document.querySelector('.loading-overlay');
+            const textEl = overlay?.querySelector('.loading-text');
+            if (textEl) textEl.innerText = message;
+            if (overlay) overlay.classList.add('active');
         }
-        
-        function closeImageModal() {
-            const modal = document.getElementById('imageModal');
-            modal.classList.remove('active');
+
+        function hideLoading() {
+            const overlay = document.querySelector('.loading-overlay');
+            if (overlay) overlay.classList.remove('active');
         }
-        
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') {
-                closeImageModal();
+
+        function showNotification(message, type = 'info') {
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: ${type === 'success' ? '#10b981' : (type === 'error' ? '#ef4444' : '#3b82f6')};
+                color: white;
+                padding: 12px 20px;
+                border-radius: 12px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                z-index: 10001;
+                animation: slideInRight 0.3s ease;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            `;
+            notification.innerHTML = `<span>${type === 'success' ? '✓' : (type === 'error' ? '✗' : 'ℹ')}</span><span>${message}</span>`;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.style.animation = 'fadeOut 0.5s ease forwards';
+                setTimeout(() => notification.remove(), 500);
+            }, 3000);
+        }
+
+        function cancelReservation(reservationId) {
+            const password = prompt('⚠️ SECURITY VERIFICATION REQUIRED\n\nEnter admin password to cancel this reservation:\n(Default: AdminDelete2026)');
+            
+            if (password === null) return;
+            
+            if (password !== 'AdminDelete2026') {
+                showNotification('Invalid password!', 'error');
+                return;
             }
-        });
+            
+            if (confirm('Are you sure you want to cancel this reservation? This action cannot be undone.')) {
+                showLoading('Cancelling reservation...');
+                
+                fetch('cancel_reservation.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reservation_id: reservationId, password: password })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    hideLoading();
+                    if (data.success) {
+                        showNotification('Reservation cancelled successfully!', 'success');
+                        setTimeout(() => {
+                            window.location.href = 'dashboard.php';
+                        }, 1500);
+                    } else {
+                        showNotification(data.error, 'error');
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    showNotification('Error: ' + error.message, 'error');
+                });
+            }
+        }
+
+        function deleteReservation(reservationId) {
+            const password = prompt('⚠️ SECURITY VERIFICATION REQUIRED\n\nEnter admin password to delete this reservation:\n(Default: AdminDelete2026)\n\nWARNING: This will permanently delete all data including payment records!');
+            
+            if (password === null) return;
+            
+            if (password !== 'AdminDelete2026') {
+                showNotification('Invalid password!', 'error');
+                return;
+            }
+            
+            if (confirm('⚠️ WARNING: This will permanently delete this reservation and ALL associated payment records. This action CANNOT be undone!\n\nAre you absolutely sure?')) {
+                showLoading('Deleting reservation...');
+                
+                fetch('delete_reservation.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reservation_id: reservationId, password: password })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    hideLoading();
+                    if (data.success) {
+                        showNotification('Reservation deleted successfully!', 'success');
+                        setTimeout(() => {
+                            window.location.href = 'dashboard.php';
+                        }, 1500);
+                    } else {
+                        showNotification(data.error, 'error');
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    showNotification('Error: ' + error.message, 'error');
+                });
+            }
+        }
+
+        // Add CSS animations
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes slideInRight {
+                from {
+                    opacity: 0;
+                    transform: translateX(100%);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateX(0);
+                }
+            }
+            
+            @keyframes fadeOut {
+                to {
+                    opacity: 0;
+                    transform: translateX(100%);
+                }
+            }
+        `;
+        document.head.appendChild(style);
     </script>
 </body>
 </html>

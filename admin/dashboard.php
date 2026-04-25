@@ -15,19 +15,21 @@ $conn = getConnection();
 $status_filter = isset($_GET['status']) ? $_GET['status'] : '';
 $search = isset($_GET['search']) ? sanitizeInput($_GET['search']) : '';
 
-// Build query
-$query = "SELECT * FROM reservations WHERE 1=1";
+// Build query with total paid from split_payments
+$query = "SELECT r.*, 
+          COALESCE((SELECT SUM(amount) FROM split_payments WHERE reservation_id = r.reservation_id), 0) as total_paid
+          FROM reservations r WHERE 1=1";
 $params = [];
 $types = "";
 
 if ($status_filter && $status_filter != 'all') {
-    $query .= " AND status = ?";
+    $query .= " AND r.status = ?";
     $params[] = $status_filter;
     $types .= "s";
 }
 
 if ($search) {
-    $query .= " AND (name LIKE ? OR reservation_id LIKE ? OR phone LIKE ?)";
+    $query .= " AND (r.name LIKE ? OR r.reservation_id LIKE ? OR r.phone LIKE ?)";
     $search_param = "%{$search}%";
     $params[] = $search_param;
     $params[] = $search_param;
@@ -35,7 +37,7 @@ if ($search) {
     $types .= "sss";
 }
 
-$query .= " ORDER BY created_at DESC";
+$query .= " ORDER BY r.created_at DESC";
 
 $stmt = $conn->prepare($query);
 if (!empty($params)) {
@@ -44,6 +46,12 @@ if (!empty($params)) {
 $stmt->execute();
 $reservations = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
+
+// Calculate actual amount due for each reservation
+foreach ($reservations as &$res) {
+    $totalPaid = floatval($res['total_paid'] ?? 0);
+    $res['actual_amount_due'] = max(0, floatval($res['total_amount']) - $totalPaid);
+}
 
 // Get statistics
 $stats = $conn->query("SELECT 
@@ -64,13 +72,13 @@ $attendeeStats = $conn->query("SELECT
     SUM(CASE WHEN status IN ('pending', 'registered') THEN adults + teens + kids ELSE 0 END) as pending_attendees
 FROM reservations")->fetch_assoc();
 
-// Get revenue by payment method
+// Get revenue by payment method from split_payments
 $revenue = $conn->query("SELECT 
-    SUM(CASE WHEN payment_method = 'cash' AND status = 'paid' THEN total_amount ELSE 0 END) as cash,
-    SUM(CASE WHEN payment_method = 'cliq' AND status = 'paid' THEN total_amount ELSE 0 END) as cliq,
-    SUM(CASE WHEN payment_method = 'visa' AND status = 'paid' THEN total_amount ELSE 0 END) as visa,
-    SUM(CASE WHEN status = 'paid' THEN total_amount ELSE 0 END) as total
-FROM reservations")->fetch_assoc();
+    SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END) as cash,
+    SUM(CASE WHEN payment_method = 'cliq' THEN amount ELSE 0 END) as cliq,
+    SUM(CASE WHEN payment_method = 'visa' THEN amount ELSE 0 END) as visa,
+    SUM(amount) as total
+FROM split_payments")->fetch_assoc();
 
 // Get cancelled revenue
 $cancelledResult = $conn->query("SELECT SUM(total_amount) as total FROM reservations WHERE status = 'cancelled' AND total_amount > 0");
@@ -92,7 +100,6 @@ $conn->close();
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
     <title><?php echo t('dashboard'); ?> - <?php echo t('ticketing_system'); ?></title>
-    <!-- Bootstrap Icons CDN -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -103,7 +110,6 @@ $conn->close();
             transition: background 0.3s ease;
         }
         
-        /* Dark Mode */
         body.dark-mode {
             background: #0f172a;
             color: #e2e8f0;
@@ -111,7 +117,6 @@ $conn->close();
         
         .container { max-width: 1400px; margin: 0 auto; }
         
-        /* Navigation */
         .navbar {
             background: white;
             border-radius: 24px;
@@ -164,7 +169,6 @@ $conn->close();
             background: rgba(255,255,255,0.1);
         }
         
-        /* Language Switcher */
         .language-switcher {
             display: flex;
             gap: 5px;
@@ -214,7 +218,6 @@ $conn->close();
             background: #dc2626;
         }
         
-        /* Stats Grid */
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -269,7 +272,6 @@ $conn->close();
             margin-right: 6px;
         }
         
-        /* Filters Bar */
         .filters-bar {
             background: white;
             border-radius: 20px;
@@ -324,7 +326,6 @@ $conn->close();
             color: #e2e8f0;
         }
         
-        /* Buttons */
         .btn {
             padding: 8px 16px;
             border-radius: 10px;
@@ -351,7 +352,6 @@ $conn->close();
         .btn-danger:hover { background: #dc2626; }
         .btn-sm { padding: 6px 12px; font-size: 12px; }
         
-        /* Table */
         .table-container {
             background: white;
             border-radius: 20px;
@@ -379,7 +379,6 @@ $conn->close();
             color: #cbd5e1;
         }
         
-        /* Status Badges */
         .status-badge {
             display: inline-flex;
             align-items: center;
@@ -399,7 +398,6 @@ $conn->close();
         body.dark-mode .status-paid { background: #064e3b; color: #6ee7b7; }
         body.dark-mode .status-cancelled { background: #7f1d1d; color: #fca5a5; }
         
-        /* Table Badges */
         .badge-table {
             display: inline-block;
             background: #e2e8f0;
@@ -458,18 +456,8 @@ $conn->close();
             flex-wrap: wrap;
         }
         
-        .status-badge i {
-            font-size: 11px;
-        }
-        
-        .amount-due {
-            font-weight: bold;
-            color: #f59e0b;
-        }
-        
         .actions { white-space: nowrap; }
         
-        /* Loading Overlay */
         .loading-overlay {
             position: fixed;
             top: 0;
@@ -507,7 +495,6 @@ $conn->close();
             100% { transform: rotate(360deg); }
         }
         
-        /* Sound Notification */
         .sound-notification {
             position: fixed;
             top: 20px;
@@ -546,7 +533,6 @@ $conn->close();
             }
         }
         
-        /* Modal */
         .modal-overlay {
             display: none;
             position: fixed;
@@ -570,7 +556,7 @@ $conn->close();
             background: white;
             border-radius: 24px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            max-width: 500px;
+            max-width: 600px;
             width: 90%;
             animation: modalSlideIn 0.3s ease;
         }
@@ -622,7 +608,7 @@ $conn->close();
         .modal-body { padding: 24px; }
         
         .form-group {
-            margin-bottom: 20px;
+            margin-bottom: 15px;
         }
         
         .form-group label {
@@ -640,9 +626,9 @@ $conn->close();
         .form-group input,
         .form-group select {
             width: 100%;
-            padding: 12px;
+            padding: 10px;
             border: 1px solid #cbd5e1;
-            border-radius: 12px;
+            border-radius: 8px;
             font-size: 14px;
             transition: all 0.2s;
         }
@@ -685,6 +671,29 @@ $conn->close();
             color: #4f46e5;
         }
         
+        .payment-split-item {
+            background: #f8fafc;
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 15px;
+            border: 1px solid #e2e8f0;
+        }
+        
+        body.dark-mode .payment-split-item {
+            background: #0f172a;
+            border-color: #334155;
+        }
+        
+        .cliq-preview {
+            margin-top: 10px;
+        }
+        
+        .cliq-preview img {
+            max-width: 100px;
+            max-height: 100px;
+            border-radius: 8px;
+        }
+        
         .modal-buttons {
             display: flex;
             justify-content: flex-end;
@@ -698,7 +707,6 @@ $conn->close();
             border-top-color: #334155;
         }
         
-        /* RTL Support */
         [dir="rtl"] {
             text-align: right;
         }
@@ -742,11 +750,11 @@ $conn->close();
             .table-container { overflow-x: auto; }
             table { min-width: 850px; }
             .btn-group { flex-wrap: nowrap; }
+            .modal-container { width: 95%; }
         }
     </style>
 </head>
 <body>
-    <!-- Loading Overlay -->
     <div class="loading-overlay">
         <div style="text-align: center;">
             <div class="loading-spinner"></div>
@@ -755,7 +763,6 @@ $conn->close();
     </div>
 
     <div class="container">
-        <!-- Navigation -->
         <div class="navbar">
             <h1><i class="bi bi-ticket-perforated"></i> <?php echo t('ticketing_system'); ?></h1>
             <div class="nav-links">
@@ -772,7 +779,6 @@ $conn->close();
             </div>
         </div>
 
-        <!-- Statistics Cards -->
         <div class="stats-grid">
             <div class="stat-card primary">
                 <div class="stat-number"><?php echo number_format($attendeeStats['total_attendees']); ?></div>
@@ -855,7 +861,6 @@ $conn->close();
             </div>
         </div>
 
-        <!-- Filters Bar -->
         <div class="filters-bar">
             <div class="search-box">
                 <i class="bi bi-search search-icon"></i>
@@ -879,7 +884,6 @@ $conn->close();
             </div>
         </div>
 
-        <!-- Reservations Table -->
         <div class="table-container">
             <table>
                 <thead>
@@ -898,33 +902,33 @@ $conn->close();
                 <tbody>
                     <?php foreach ($reservations as $res): 
                         $totalGuests = $res['adults'] + $res['teens'] + $res['kids'];
-                        $amountDue = $res['additional_amount_due'] ?? 0;
+                        $amountDue = $res['actual_amount_due'];
                     ?>
                         <tr>
-                            <td><strong><?php echo htmlspecialchars($res['reservation_id']); ?></strong></td>
-                            <td><?php echo htmlspecialchars($res['name']); ?></td>
-                            <td><?php echo htmlspecialchars($res['phone']); ?></td>
-                            <td style="text-align: center;"><span class="badge-table"><?php echo htmlspecialchars($res['table_id']); ?></span></td>
+                            <td><strong><?php echo htmlspecialchars($res['reservation_id']); ?></strong></d>
+                            <td><?php echo htmlspecialchars($res['name']); ?></d>
+                            <td><?php echo htmlspecialchars($res['phone']); ?></d>
+                            <td style="text-align: center;"><span class="badge-table"><?php echo htmlspecialchars($res['table_id']); ?></span></d>
                             <td>
                                 <span class="guest-badge">
                                     <?php echo $totalGuests; ?> 
                                     <small>(<?php echo $res['adults']; ?>A, <?php echo $res['teens']; ?>T, <?php echo $res['kids']; ?>K)</small>
                                 </span>
-                            </td>
+                            </d>
                             <td>
                                 <span class="status-badge status-<?php echo $res['status']; ?>">
                                     <i class="bi <?php echo $res['status'] == 'paid' ? 'bi-check-circle-fill' : ($res['status'] == 'pending' ? 'bi-hourglass-split' : ($res['status'] == 'registered' ? 'bi-check-circle' : 'bi-slash-circle')); ?>"></i>
                                     <?php echo ucfirst($res['status']); ?>
                                 </span>
-                            </td>
+                            </d>
                             <td>
                                 <?php if ($amountDue > 0): ?>
                                     <span class="amount-due-badge"><i class="bi bi-exclamation-triangle-fill"></i> <?php echo number_format($amountDue, 2); ?> <?php echo $currency; ?></span>
                                 <?php else: ?>
                                     <span class="text-muted">-</span>
                                 <?php endif; ?>
-                            </td>
-                            <td><?php echo date('M d, H:i', strtotime($res['created_at'])); ?></td>
+                            </d>
+                            <td><?php echo date('M d, H:i', strtotime($res['created_at'])); ?></d>
                             <td class="actions">
                                 <div class="btn-group">
                                     <a href="view_reservation.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-secondary" title="<?php echo t('view'); ?>">
@@ -933,8 +937,8 @@ $conn->close();
                                     <a href="edit_reservation.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-warning" title="<?php echo t('edit'); ?>">
                                         <i class="bi bi-pencil"></i>
                                     </a>
-                                    <?php if ($res['status'] != 'paid' && $res['status'] != 'cancelled'): ?>
-                                        <button onclick="openPaymentModal('<?php echo $res['reservation_id']; ?>', <?php echo $amountDue; ?>)" class="btn btn-sm btn-success" title="<?php echo t('pay'); ?>">
+                                    <?php if ($res['status'] != 'paid' && $res['status'] != 'cancelled' && $amountDue > 0): ?>
+                                        <button onclick="openPaymentModal('<?php echo $res['reservation_id']; ?>', <?php echo $res['total_amount']; ?>)" class="btn btn-sm btn-success" title="<?php echo t('pay'); ?>">
                                             <i class="bi bi-credit-card"></i>
                                         </button>
                                     <?php endif; ?>
@@ -947,7 +951,7 @@ $conn->close();
                                         </a>
                                     <?php endif; ?>
                                 </div>
-                            </td>
+                            </d>
                         </tr>
                     <?php endforeach; ?>
                     <?php if (empty($reservations)): ?>
@@ -955,7 +959,7 @@ $conn->close();
                             <td colspan="9" style="text-align: center; padding: 60px;">
                                 <i class="bi bi-inbox" style="font-size: 48px; opacity: 0.5;"></i>
                                 <p style="margin-top: 10px;"><?php echo t('no_reservations'); ?></p>
-                            </td>
+                            </d>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -967,38 +971,34 @@ $conn->close();
     <div id="paymentModal" class="modal-overlay">
         <div class="modal-container">
             <div class="modal-header">
-                <h3><i class="bi bi-credit-card"></i> Process Payment</h3>
+                <h3><i class="bi bi-credit-card"></i> Split Payment</h3>
                 <button onclick="closePaymentModal()" class="modal-close">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="amount-due-display">
-                    <div class="label">Amount Due</div>
-                    <div class="amount" id="modalAmountDue">0.00 <?php echo $currency; ?></div>
+                    <div class="label">Total Amount Due</div>
+                    <div class="amount" id="modalTotalAmountDue">0.00 <?php echo $currency; ?></div>
                 </div>
                 
-                <form id="paymentForm">
-                    <input type="hidden" id="paymentReservationId" name="reservation_id">
-                    
-                    <div class="form-group">
-                        <label><i class="bi bi-wallet2"></i> Payment Method</label>
-                        <select name="payment_method" id="paymentMethod" required>
-                            <option value="cash">Cash</option>
-                            <option value="cliq">CliQ</option>
-                            <option value="visa">Visa/Mastercard</option>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label><i class="bi bi-cash"></i> Payment Amount</label>
-                        <input type="number" name="paid_amount" id="paidAmount" step="0.01" required placeholder="Enter amount">
-                        <small style="color: #64748b; display: block; margin-top: 5px;">Enter the amount being paid</small>
-                    </div>
-                    
-                    <div class="modal-buttons">
-                        <button type="button" onclick="closePaymentModal()" class="btn btn-secondary">Cancel</button>
-                        <button type="submit" class="btn btn-success"><i class="bi bi-check-circle"></i> Process Payment</button>
-                    </div>
-                </form>
+                <div id="remainingAmountDisplay" style="background: #fef3c7; padding: 10px; border-radius: 8px; margin-bottom: 15px; text-align: center;">
+                    <small>Remaining to pay: <strong id="remainingAmount">0.00</strong> <?php echo $currency; ?></small>
+                </div>
+                
+                <div id="paymentSplits"></div>
+                
+                <button type="button" class="btn btn-secondary btn-sm" onclick="addPaymentSplit()" style="margin-bottom: 20px; width: 100%;">
+                    <i class="bi bi-plus-circle"></i> Add Another Payment Method
+                </button>
+                
+                <input type="hidden" id="paymentReservationId">
+                <input type="hidden" id="totalAmountDue">
+                
+                <div class="modal-buttons">
+                    <button type="button" onclick="closePaymentModal()" class="btn btn-secondary">Cancel</button>
+                    <button type="button" onclick="processSplitPayments()" class="btn btn-success">
+                        <i class="bi bi-check-circle"></i> Process All Payments
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -1052,7 +1052,6 @@ $conn->close();
     </div>
 
     <script>
-        // ========== LOADING SPINNER ==========
         function showLoading(message = 'Processing...') {
             const overlay = document.querySelector('.loading-overlay');
             const textEl = overlay?.querySelector('.loading-text');
@@ -1065,63 +1064,247 @@ $conn->close();
             if (overlay) overlay.classList.remove('active');
         }
 
-        // ========== PAYMENT MODAL FUNCTIONS ==========
         let currentReservationId = '';
-        let currentAmountDue = 0;
+        let currentTotalAmount = 0;
+        let paymentSplitCount = 0;
 
-        function openPaymentModal(reservationId, amountDue) {
+        function openPaymentModal(reservationId, totalAmount) {
             currentReservationId = reservationId;
-            currentAmountDue = amountDue;
+            currentTotalAmount = parseFloat(totalAmount);
             
             document.getElementById('paymentReservationId').value = reservationId;
-            document.getElementById('modalAmountDue').innerHTML = amountDue.toFixed(2) + ' <?php echo $currency; ?>';
-            document.getElementById('paidAmount').value = amountDue;
+            document.getElementById('modalTotalAmountDue').innerHTML = totalAmount.toFixed(2) + ' <?php echo $currency; ?>';
+            document.getElementById('totalAmountDue').value = totalAmount;
+            
+            // Reset splits
+            document.getElementById('paymentSplits').innerHTML = '';
+            paymentSplitCount = 0;
+            addPaymentSplit();
+            
+            updateRemainingAmount();
             document.getElementById('paymentModal').style.display = 'flex';
         }
 
         function closePaymentModal() {
             document.getElementById('paymentModal').style.display = 'none';
-            document.getElementById('paymentForm').reset();
         }
 
-        // Handle payment form submission
-        document.getElementById('paymentForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
+        function addPaymentSplit() {
+            const container = document.getElementById('paymentSplits');
+            const splitIndex = paymentSplitCount;
             
-            const paidAmount = parseFloat(document.getElementById('paidAmount').value);
-            const paymentMethod = document.getElementById('paymentMethod').value;
+            const splitDiv = document.createElement('div');
+            splitDiv.className = 'payment-split-item';
+            splitDiv.setAttribute('data-split-index', splitIndex);
+            splitDiv.innerHTML = `
+                <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-bottom: 10px; align-items: end;">
+                    <div class="form-group">
+                        <label>Payment Method</label>
+                        <select class="payment-method" onchange="togglePaymentFields(this, ${splitIndex})">
+                            <option value="">Select</option>
+                            <option value="cash">Cash</option>
+                            <option value="cliq">CliQ</option>
+                            <option value="visa">Visa</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Amount (${'<?php echo $currency; ?>'})</label>
+                        <input type="number" class="payment-amount" step="0.01" placeholder="0.00" onkeyup="updateRemainingAmount()">
+                    </div>
+                    <div class="form-group">
+                        <label>&nbsp;</label>
+                        <button type="button" class="btn btn-danger btn-sm" onclick="removePaymentSplit(this)">Remove</button>
+                    </div>
+                </div>
+                <div class="payment-fields" style="display: none;"></div>
+            `;
             
-            if (isNaN(paidAmount) || paidAmount <= 0) {
-                alert('Please enter a valid payment amount');
+            container.appendChild(splitDiv);
+            paymentSplitCount++;
+        }
+
+        function removePaymentSplit(button) {
+            const splitItem = button.closest('.payment-split-item');
+            if (document.querySelectorAll('.payment-split-item').length > 1) {
+                splitItem.remove();
+                updateRemainingAmount();
+            } else {
+                alert('You need at least one payment method');
+            }
+        }
+
+        function togglePaymentFields(selectElement, index) {
+            const method = selectElement.value;
+            const paymentFields = selectElement.closest('.payment-split-item').querySelector('.payment-fields');
+            
+            if (method === 'cash') {
+                paymentFields.innerHTML = `
+                    <div class="form-group">
+                        <label><i class="bi bi-person"></i> Received By (Staff Name)</label>
+                        <input type="text" class="received-by" placeholder="Enter staff name" required>
+                    </div>
+                `;
+                paymentFields.style.display = 'block';
+            } else if (method === 'cliq') {
+                paymentFields.innerHTML = `
+                    <div class="form-group">
+                        <label><i class="bi bi-image"></i> Upload Screenshot Evidence</label>
+                        <input type="file" class="proof-file" accept="image/*" onchange="previewImage(this)">
+                        <div class="cliq-preview"></div>
+                        <small style="color: #64748b;">Please upload a screenshot of the CliQ payment confirmation</small>
+                    </div>
+                `;
+                paymentFields.style.display = 'block';
+            } else if (method === 'visa') {
+                paymentFields.innerHTML = `
+                    <div class="form-group">
+                        <label><i class="bi bi-receipt"></i> Receipt ID / Transaction ID</label>
+                        <input type="text" class="receipt-id" placeholder="Enter Visa receipt ID" required>
+                        <small style="color: #64748b;">Enter the receipt number from the Visa transaction</small>
+                    </div>
+                `;
+                paymentFields.style.display = 'block';
+            } else {
+                paymentFields.style.display = 'none';
+                paymentFields.innerHTML = '';
+            }
+            
+            updateRemainingAmount();
+        }
+
+        function previewImage(input) {
+            if (input.files && input.files[0]) {
+                const reader = new FileReader();
+                const previewDiv = input.parentElement.querySelector('.cliq-preview');
+                
+                reader.onload = function(e) {
+                    previewDiv.innerHTML = `<img src="${e.target.result}" alt="Preview" style="max-width: 100px; max-height: 100px; border-radius: 8px; margin-top: 10px;"><br><small>Preview loaded</small>`;
+                };
+                
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+
+        function updateRemainingAmount() {
+            let totalPaid = 0;
+            const amounts = document.querySelectorAll('.payment-amount');
+            amounts.forEach(amount => {
+                const val = parseFloat(amount.value);
+                if (!isNaN(val)) totalPaid += val;
+            });
+            
+            const remaining = currentTotalAmount - totalPaid;
+            const remainingElement = document.getElementById('remainingAmount');
+            if (remainingElement) {
+                remainingElement.textContent = remaining.toFixed(2);
+                if (remaining < 0) {
+                    remainingElement.style.color = '#ef4444';
+                } else if (remaining === 0) {
+                    remainingElement.style.color = '#10b981';
+                } else {
+                    remainingElement.style.color = '#f59e0b';
+                }
+            }
+        }
+
+        async function processSplitPayments() {
+            const splits = [];
+            const splitItems = document.querySelectorAll('.payment-split-item');
+            let totalAmount = 0;
+            
+            for (let item of splitItems) {
+                const method = item.querySelector('.payment-method').value;
+                const amount = parseFloat(item.querySelector('.payment-amount').value);
+                
+                if (!method) {
+                    alert('Please select a payment method for all splits');
+                    return;
+                }
+                
+                if (isNaN(amount) || amount <= 0) {
+                    alert('Please enter valid amount for all splits');
+                    return;
+                }
+                
+                totalAmount += amount;
+                
+                const splitData = {
+                    method: method,
+                    amount: amount
+                };
+                
+                if (method === 'cash') {
+                    const receivedBy = item.querySelector('.received-by')?.value;
+                    if (!receivedBy) {
+                        alert('Please enter who received the cash payment');
+                        return;
+                    }
+                    splitData.received_by = receivedBy;
+                } else if (method === 'cliq') {
+                    const fileInput = item.querySelector('.proof-file');
+                    if (!fileInput.files[0]) {
+                        alert('Please upload a screenshot for CliQ payment');
+                        return;
+                    }
+                    splitData.hasFile = true;
+                } else if (method === 'visa') {
+                    const receiptId = item.querySelector('.receipt-id')?.value;
+                    if (!receiptId) {
+                        alert('Please enter receipt ID for Visa payment');
+                        return;
+                    }
+                    splitData.receipt_id = receiptId;
+                }
+                
+                splits.push(splitData);
+            }
+            
+            if (Math.abs(totalAmount - currentTotalAmount) > 0.01 && totalAmount < currentTotalAmount) {
+                alert(`Total payment amount (${totalAmount.toFixed(2)}) is less than amount due (${currentTotalAmount.toFixed(2)}). Please add more payment splits or adjust amounts.`);
                 return;
             }
             
-            if (paidAmount < currentAmountDue) {
-                alert(`Payment amount (${paidAmount}) is less than amount due (${currentAmountDue}). Please enter the full amount.`);
+            if (totalAmount > currentTotalAmount) {
+                alert(`Total payment amount (${totalAmount.toFixed(2)}) exceeds amount due (${currentTotalAmount.toFixed(2)}). Please adjust amounts.`);
                 return;
             }
             
-            showLoading('Processing payment...');
+            showLoading('Processing payments...');
+            
+            const formData = new FormData();
+            formData.append('reservation_id', currentReservationId);
+            formData.append('total_amount', currentTotalAmount);
+            formData.append('splits', JSON.stringify(splits.map(s => ({
+                method: s.method,
+                amount: s.amount,
+                received_by: s.received_by || null,
+                receipt_id: s.receipt_id || null
+            }))));
+            
+            // Add files
+            let fileIndex = 0;
+            for (let item of splitItems) {
+                const method = item.querySelector('.payment-method').value;
+                if (method === 'cliq') {
+                    const fileInput = item.querySelector('.proof-file');
+                    if (fileInput.files[0]) {
+                        formData.append(`file_${fileIndex}`, fileInput.files[0]);
+                        fileIndex++;
+                    }
+                }
+            }
             
             try {
-                const response = await fetch('process_payment.php', {
+                const response = await fetch('process_split_payment.php', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        reservation_id: currentReservationId,
-                        paid_amount: paidAmount,
-                        payment_method: paymentMethod,
-                        amount_due: currentAmountDue
-                    })
+                    body: formData
                 });
                 
                 const data = await response.json();
                 hideLoading();
                 
                 if (data.success) {
-                    alert('✓ Payment processed successfully!\n\nReservation has been updated.');
+                    alert('✓ Payments processed successfully!\n\nReservation has been updated.');
                     closePaymentModal();
                     location.reload();
                 } else {
@@ -1131,9 +1314,8 @@ $conn->close();
                 hideLoading();
                 alert('Error: ' + error.message);
             }
-        });
+        }
 
-        // ========== DELETE WITH PASSWORD ==========
         function deleteReservation(reservationId, element) {
             const password = prompt('⚠️ SECURITY VERIFICATION REQUIRED\n\nEnter admin password to delete this reservation:\n(Default: AdminDelete2026)');
             
@@ -1174,7 +1356,6 @@ $conn->close();
             });
         }
 
-        // ========== SOUND NOTIFICATION ==========
         let soundEnabled = localStorage.getItem('soundEnabled') === 'true';
 
         function playNotificationSound() {
@@ -1229,7 +1410,6 @@ $conn->close();
                 .catch(error => console.log('Error checking new reservations:', error));
         }
 
-        // ========== OTHER FUNCTIONS ==========
         function applyFilters() {
             const search = document.getElementById('search').value;
             const status = document.getElementById('statusFilter').value;
@@ -1251,7 +1431,6 @@ $conn->close();
             document.getElementById('exportModal').style.display = 'none';
         }
 
-        // ========== DARK MODE ==========
         const darkModeToggle = document.getElementById('darkModeToggle');
         const isDarkMode = localStorage.getItem('darkMode') === 'true';
         if (isDarkMode) {
@@ -1265,7 +1444,6 @@ $conn->close();
             darkModeToggle.innerHTML = isDark ? '<i class="bi bi-sun-fill"></i>' : '<i class="bi bi-moon-fill"></i>';
         });
 
-        // ========== INITIALIZATION ==========
         document.addEventListener('DOMContentLoaded', function() {
             const soundBtn = document.getElementById('soundToggle');
             if (soundBtn) {
