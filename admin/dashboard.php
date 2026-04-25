@@ -572,6 +572,18 @@ $conn->close();
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
             max-width: 500px;
             width: 90%;
+            animation: modalSlideIn 0.3s ease;
+        }
+        
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
         
         body.dark-mode .modal-container {
@@ -596,12 +608,95 @@ $conn->close();
         .modal-close {
             background: none;
             border: none;
-            font-size: 24px;
+            font-size: 28px;
             cursor: pointer;
             color: white;
+            line-height: 1;
+            transition: transform 0.2s;
+        }
+        
+        .modal-close:hover {
+            transform: scale(1.1);
         }
         
         .modal-body { padding: 24px; }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #334155;
+            font-size: 14px;
+        }
+        
+        body.dark-mode .form-group label {
+            color: #cbd5e1;
+        }
+        
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        body.dark-mode .form-group input,
+        body.dark-mode .form-group select {
+            background: #0f172a;
+            border-color: #334155;
+            color: #e2e8f0;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        }
+        
+        .amount-due-display {
+            background: #f1f5f9;
+            padding: 15px;
+            border-radius: 12px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        body.dark-mode .amount-due-display {
+            background: #0f172a;
+        }
+        
+        .amount-due-display .label {
+            font-size: 14px;
+            color: #64748b;
+            margin-bottom: 5px;
+        }
+        
+        .amount-due-display .amount {
+            font-size: 28px;
+            font-weight: bold;
+            color: #4f46e5;
+        }
+        
+        .modal-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e2e8f0;
+        }
+        
+        body.dark-mode .modal-buttons {
+            border-top-color: #334155;
+        }
         
         /* RTL Support */
         [dir="rtl"] {
@@ -839,7 +934,7 @@ $conn->close();
                                         <i class="bi bi-pencil"></i>
                                     </a>
                                     <?php if ($res['status'] != 'paid' && $res['status'] != 'cancelled'): ?>
-                                        <button onclick="alert('Payment modal would open here')" class="btn btn-sm btn-success" title="<?php echo t('pay'); ?>">
+                                        <button onclick="openPaymentModal('<?php echo $res['reservation_id']; ?>', <?php echo $amountDue; ?>)" class="btn btn-sm btn-success" title="<?php echo t('pay'); ?>">
                                             <i class="bi bi-credit-card"></i>
                                         </button>
                                     <?php endif; ?>
@@ -865,6 +960,46 @@ $conn->close();
                     <?php endif; ?>
                 </tbody>
             </table>
+        </div>
+    </div>
+
+    <!-- Payment Modal -->
+    <div id="paymentModal" class="modal-overlay">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h3><i class="bi bi-credit-card"></i> Process Payment</h3>
+                <button onclick="closePaymentModal()" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="amount-due-display">
+                    <div class="label">Amount Due</div>
+                    <div class="amount" id="modalAmountDue">0.00 <?php echo $currency; ?></div>
+                </div>
+                
+                <form id="paymentForm">
+                    <input type="hidden" id="paymentReservationId" name="reservation_id">
+                    
+                    <div class="form-group">
+                        <label><i class="bi bi-wallet2"></i> Payment Method</label>
+                        <select name="payment_method" id="paymentMethod" required>
+                            <option value="cash">Cash</option>
+                            <option value="cliq">CliQ</option>
+                            <option value="visa">Visa/Mastercard</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label><i class="bi bi-cash"></i> Payment Amount</label>
+                        <input type="number" name="paid_amount" id="paidAmount" step="0.01" required placeholder="Enter amount">
+                        <small style="color: #64748b; display: block; margin-top: 5px;">Enter the amount being paid</small>
+                    </div>
+                    
+                    <div class="modal-buttons">
+                        <button type="button" onclick="closePaymentModal()" class="btn btn-secondary">Cancel</button>
+                        <button type="submit" class="btn btn-success"><i class="bi bi-check-circle"></i> Process Payment</button>
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
 
@@ -929,6 +1064,74 @@ $conn->close();
             const overlay = document.querySelector('.loading-overlay');
             if (overlay) overlay.classList.remove('active');
         }
+
+        // ========== PAYMENT MODAL FUNCTIONS ==========
+        let currentReservationId = '';
+        let currentAmountDue = 0;
+
+        function openPaymentModal(reservationId, amountDue) {
+            currentReservationId = reservationId;
+            currentAmountDue = amountDue;
+            
+            document.getElementById('paymentReservationId').value = reservationId;
+            document.getElementById('modalAmountDue').innerHTML = amountDue.toFixed(2) + ' <?php echo $currency; ?>';
+            document.getElementById('paidAmount').value = amountDue;
+            document.getElementById('paymentModal').style.display = 'flex';
+        }
+
+        function closePaymentModal() {
+            document.getElementById('paymentModal').style.display = 'none';
+            document.getElementById('paymentForm').reset();
+        }
+
+        // Handle payment form submission
+        document.getElementById('paymentForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const paidAmount = parseFloat(document.getElementById('paidAmount').value);
+            const paymentMethod = document.getElementById('paymentMethod').value;
+            
+            if (isNaN(paidAmount) || paidAmount <= 0) {
+                alert('Please enter a valid payment amount');
+                return;
+            }
+            
+            if (paidAmount < currentAmountDue) {
+                alert(`Payment amount (${paidAmount}) is less than amount due (${currentAmountDue}). Please enter the full amount.`);
+                return;
+            }
+            
+            showLoading('Processing payment...');
+            
+            try {
+                const response = await fetch('process_payment.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        reservation_id: currentReservationId,
+                        paid_amount: paidAmount,
+                        payment_method: paymentMethod,
+                        amount_due: currentAmountDue
+                    })
+                });
+                
+                const data = await response.json();
+                hideLoading();
+                
+                if (data.success) {
+                    alert('✓ Payment processed successfully!\n\nReservation has been updated.');
+                    closePaymentModal();
+                    location.reload();
+                } else {
+                    alert('Error: ' + (data.error || 'Payment failed. Please try again.'));
+                }
+            } catch (error) {
+                hideLoading();
+                alert('Error: ' + error.message);
+            }
+        });
 
         // ========== DELETE WITH PASSWORD ==========
         function deleteReservation(reservationId, element) {
@@ -1077,8 +1280,10 @@ $conn->close();
         });
 
         window.onclick = function(event) {
-            const modal = document.getElementById('exportModal');
-            if (event.target === modal) closeExportModal();
+            const exportModal = document.getElementById('exportModal');
+            const paymentModal = document.getElementById('paymentModal');
+            if (event.target === exportModal) closeExportModal();
+            if (event.target === paymentModal) closePaymentModal();
         }
     </script>
 </body>
