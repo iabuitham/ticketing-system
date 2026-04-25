@@ -20,9 +20,9 @@ $conn = getConnection();
 
 // Get reservation details with total paid from split payments
 $query = "SELECT r.*, 
-          COALESCE((SELECT SUM(amount) FROM split_payments WHERE reservation_id = r.reservation_id), 0) as total_paid
-          FROM reservations r 
-          WHERE r.reservation_id = ?";
+ COALESCE((SELECT SUM(amount) FROM split_payments WHERE reservation_id = r.reservation_id), 0) as total_paid
+ FROM reservations r 
+ WHERE r.reservation_id = ?";
 
 $stmt = $conn->prepare($query);
 $stmt->bind_param("s", $reservation_id);
@@ -51,27 +51,36 @@ $conn->close();
 ?>
 <!DOCTYPE html>
 <html lang="<?php echo $lang; ?>" dir="<?php echo getDirection(); ?>">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo t('view_reservation'); ?> - <?php echo t('ticketing_system'); ?></title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #f0f2f5;
             padding: 20px;
             transition: background 0.3s ease;
         }
-        
+
         body.dark-mode {
             background: #0f172a;
             color: #e2e8f0;
         }
-        
-        .container { max-width: 1200px; margin: 0 auto; }
-        
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
         /* Navigation */
         .navbar {
             background: white;
@@ -83,15 +92,20 @@ $conn->close();
             align-items: center;
             flex-wrap: wrap;
             gap: 15px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
         }
-        
+
         body.dark-mode .navbar {
             background: #1e293b;
         }
-        
-        .navbar h1 { font-size: 1.5rem; display: flex; align-items: center; gap: 8px; }
-        
+
+        .navbar h1 {
+            font-size: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
         .btn {
             padding: 8px 16px;
             border-radius: 10px;
@@ -105,18 +119,55 @@ $conn->close();
             font-size: 14px;
             transition: all 0.2s;
         }
-        
-        .btn-primary { background: #4f46e5; color: white; }
-        .btn-primary:hover { background: #4338ca; transform: translateY(-1px); }
-        .btn-secondary { background: #64748b; color: white; }
-        .btn-secondary:hover { background: #475569; }
-        .btn-success { background: #10b981; color: white; }
-        .btn-success:hover { background: #059669; }
-        .btn-warning { background: #f59e0b; color: white; }
-        .btn-danger { background: #ef4444; color: white; }
-        .btn-info { background: #0ea5e9; color: white; }
-        .btn-sm { padding: 6px 12px; font-size: 12px; }
-        
+
+        .btn-primary {
+            background: #4f46e5;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #4338ca;
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: #64748b;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #475569;
+        }
+
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #059669;
+        }
+
+        .btn-warning {
+            background: #f59e0b;
+            color: white;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-info {
+            background: #0ea5e9;
+            color: white;
+        }
+
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
         .btn-logout {
             background: #ef4444;
             color: white;
@@ -127,22 +178,24 @@ $conn->close();
             align-items: center;
             gap: 6px;
         }
-        
-        .btn-logout:hover { background: #dc2626; }
-        
+
+        .btn-logout:hover {
+            background: #dc2626;
+        }
+
         /* Cards */
         .card {
             background: white;
             border-radius: 20px;
             padding: 24px;
             margin-bottom: 20px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
         }
-        
+
         body.dark-mode .card {
             background: #1e293b;
         }
-        
+
         .card-header {
             display: flex;
             justify-content: space-between;
@@ -151,18 +204,18 @@ $conn->close();
             padding-bottom: 15px;
             border-bottom: 2px solid #e2e8f0;
         }
-        
+
         body.dark-mode .card-header {
             border-bottom-color: #334155;
         }
-        
+
         .card-header h2 {
             display: flex;
             align-items: center;
             gap: 10px;
             font-size: 1.3rem;
         }
-        
+
         /* Info Grid */
         .info-grid {
             display: grid;
@@ -170,17 +223,17 @@ $conn->close();
             gap: 20px;
             margin-bottom: 20px;
         }
-        
+
         .info-item {
             padding: 15px;
             background: #f8fafc;
             border-radius: 12px;
         }
-        
+
         body.dark-mode .info-item {
             background: #0f172a;
         }
-        
+
         .info-label {
             font-size: 12px;
             color: #64748b;
@@ -189,17 +242,17 @@ $conn->close();
             align-items: center;
             gap: 5px;
         }
-        
+
         .info-value {
             font-size: 18px;
             font-weight: 600;
             color: #1e293b;
         }
-        
+
         body.dark-mode .info-value {
             color: #e2e8f0;
         }
-        
+
         /* Status Badge */
         .status-badge {
             display: inline-flex;
@@ -210,11 +263,27 @@ $conn->close();
             font-size: 14px;
             font-weight: 600;
         }
-        .status-pending { background: #fef3c7; color: #92400e; }
-        .status-registered { background: #dbeafe; color: #1e40af; }
-        .status-paid { background: #d1fae5; color: #065f46; }
-        .status-cancelled { background: #fee2e2; color: #991b1b; }
-        
+
+        .status-pending {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .status-registered {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .status-paid {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .status-cancelled {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
         /* Payment Summary */
         .payment-summary {
             display: grid;
@@ -222,54 +291,55 @@ $conn->close();
             gap: 15px;
             margin-bottom: 25px;
         }
-        
+
         .summary-card {
             padding: 15px;
             border-radius: 12px;
             text-align: center;
         }
-        
+
         .summary-card .label {
             font-size: 12px;
             margin-bottom: 8px;
         }
-        
+
         .summary-card .amount {
             font-size: 24px;
             font-weight: bold;
         }
-        
+
         /* Table */
         .table-container {
             overflow-x: auto;
         }
-        
+
         table {
             width: 100%;
             border-collapse: collapse;
         }
-        
-        th, td {
+
+        th,
+        td {
             padding: 12px;
             text-align: left;
             border-bottom: 1px solid #e2e8f0;
         }
-        
+
         body.dark-mode th,
         body.dark-mode td {
             border-bottom-color: #334155;
         }
-        
+
         th {
             background: #f8fafc;
             font-weight: 600;
         }
-        
+
         body.dark-mode th {
             background: #0f172a;
             color: #94a3b8;
         }
-        
+
         /* Button Group */
         .button-group {
             display: flex;
@@ -279,11 +349,11 @@ $conn->close();
             padding-top: 20px;
             border-top: 1px solid #e2e8f0;
         }
-        
+
         body.dark-mode .button-group {
             border-top-color: #334155;
         }
-        
+
         /* Loading Overlay */
         .loading-overlay {
             position: fixed;
@@ -298,9 +368,11 @@ $conn->close();
             align-items: center;
             z-index: 99999;
         }
-        
-        .loading-overlay.active { display: flex; }
-        
+
+        .loading-overlay.active {
+            display: flex;
+        }
+
         .loading-spinner {
             width: 60px;
             height: 60px;
@@ -309,31 +381,39 @@ $conn->close();
             border-radius: 50%;
             animation: spin 1s linear infinite;
         }
-        
+
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
-        
+
         /* RTL Support */
         [dir="rtl"] {
             text-align: right;
         }
-        
+
         [dir="rtl"] .button-group {
             flex-direction: row-reverse;
         }
-        
+
         @media (max-width: 768px) {
             .payment-summary {
                 grid-template-columns: 1fr;
             }
+
             .info-grid {
                 grid-template-columns: 1fr;
             }
+
             .button-group {
                 flex-direction: column;
             }
+
             .button-group .btn {
                 width: 100%;
                 justify-content: center;
@@ -341,6 +421,7 @@ $conn->close();
         }
     </style>
 </head>
+
 <body>
     <div class="loading-overlay">
         <div style="text-align: center;">
@@ -368,7 +449,7 @@ $conn->close();
                     <?php echo ucfirst($reservation['status']); ?>
                 </span>
             </div>
-            
+
             <div class="info-grid">
                 <div class="info-item">
                     <div class="info-label"><i class="bi bi-upc-scan"></i> <?php echo t('reservation_id'); ?></div>
@@ -393,7 +474,7 @@ $conn->close();
                 <div class="info-item">
                     <div class="info-label"><i class="bi bi-people"></i> <?php echo t('Guests Breakdown'); ?></div>
                     <div class="info-value">
-                        <?php 
+                        <?php
                         $totalGuests = $reservation['adults'] + $reservation['teens'] + $reservation['kids'];
                         ?>
                         <strong><?php echo $totalGuests; ?></strong> total guests<br>
@@ -401,10 +482,10 @@ $conn->close();
                     </div>
                 </div>
                 <?php if (!empty($reservation['notes'])): ?>
-                <div class="info-item">
-                    <div class="info-label"><i class="bi bi-chat"></i> <?php echo t('notes'); ?></div>
-                    <div class="info-value"><?php echo nl2br(htmlspecialchars($reservation['notes'])); ?></div>
-                </div>
+                    <div class="info-item">
+                        <div class="info-label"><i class="bi bi-chat"></i> <?php echo t('notes'); ?></div>
+                        <div class="info-value"><?php echo nl2br(htmlspecialchars($reservation['notes'])); ?></div>
+                    </div>
                 <?php endif; ?>
             </div>
         </div>
@@ -419,7 +500,7 @@ $conn->close();
                     </a>
                 <?php endif; ?>
             </div>
-            
+
             <!-- Payment Summary Cards -->
             <div class="payment-summary">
                 <div class="summary-card" style="background: #f1f5f9;">
@@ -441,7 +522,7 @@ $conn->close();
                     </div>
                 </div>
             </div>
-            
+
             <?php if (empty($payments)): ?>
                 <div style="text-align: center; padding: 60px 20px;">
                     <i class="bi bi-inbox" style="font-size: 64px; opacity: 0.3; display: block; margin-bottom: 15px;"></i>
@@ -470,7 +551,7 @@ $conn->close();
                                         <?php echo date('M d, Y H:i:s', strtotime($payment['payment_date'])); ?>
                                     </td>
                                     <td>
-                                        <?php 
+                                        <?php
                                         $method_icon = [
                                             'cash' => 'bi-cash-stack',
                                             'cliq' => 'bi-phone',
@@ -587,7 +668,7 @@ $conn->close();
             `;
             notification.innerHTML = `<span>${type === 'success' ? '✓' : (type === 'error' ? '✗' : 'ℹ')}</span><span>${message}</span>`;
             document.body.appendChild(notification);
-            
+
             setTimeout(() => {
                 notification.style.animation = 'fadeOut 0.5s ease forwards';
                 setTimeout(() => notification.remove(), 500);
@@ -596,100 +677,111 @@ $conn->close();
 
         function cancelReservation(reservationId) {
             const password = prompt('⚠️ SECURITY VERIFICATION REQUIRED\n\nEnter admin password to cancel this reservation:\n(Default: AdminDelete2026)');
-            
+
             if (password === null) return;
-            
+
             if (password !== 'AdminDelete2026') {
                 showNotification('Invalid password!', 'error');
                 return;
             }
-            
+
             if (confirm('Are you sure you want to cancel this reservation? This action cannot be undone.')) {
                 showLoading('Cancelling reservation...');
-                
+
                 fetch('cancel_reservation.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ reservation_id: reservationId, password: password })
-                })
-                .then(response => response.json())
-                .then(data => {
-                    hideLoading();
-                    if (data.success) {
-                        showNotification('Reservation cancelled successfully!', 'success');
-                        setTimeout(() => {
-                            window.location.href = 'dashboard.php';
-                        }, 1500);
-                    } else {
-                        showNotification(data.error, 'error');
-                    }
-                })
-                .catch(error => {
-                    hideLoading();
-                    showNotification('Error: ' + error.message, 'error');
-                });
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            reservation_id: reservationId,
+                            password: password
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        hideLoading();
+                        if (data.success) {
+                            showNotification('Reservation cancelled successfully!', 'success');
+                            setTimeout(() => {
+                                window.location.href = 'dashboard.php';
+                            }, 1500);
+                        } else {
+                            showNotification(data.error, 'error');
+                        }
+                    })
+                    .catch(error => {
+                        hideLoading();
+                        showNotification('Error: ' + error.message, 'error');
+                    });
             }
         }
 
         function deleteReservation(reservationId) {
             const password = prompt('⚠️ SECURITY VERIFICATION REQUIRED\n\nEnter admin password to delete this reservation:\n(Default: AdminDelete2026)\n\nWARNING: This will permanently delete all data including payment records!');
-            
+
             if (password === null) return;
-            
+
             if (password !== 'AdminDelete2026') {
                 showNotification('Invalid password!', 'error');
                 return;
             }
-            
+
             if (confirm('⚠️ WARNING: This will permanently delete this reservation and ALL associated payment records. This action CANNOT be undone!\n\nAre you absolutely sure?')) {
                 showLoading('Deleting reservation...');
-                
+
                 fetch('delete_reservation.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ reservation_id: reservationId, password: password })
-                })
-                .then(response => response.json())
-                .then(data => {
-                    hideLoading();
-                    if (data.success) {
-                        showNotification('Reservation deleted successfully!', 'success');
-                        setTimeout(() => {
-                            window.location.href = 'dashboard.php';
-                        }, 1500);
-                    } else {
-                        showNotification(data.error, 'error');
-                    }
-                })
-                .catch(error => {
-                    hideLoading();
-                    showNotification('Error: ' + error.message, 'error');
-                });
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            reservation_id: reservationId,
+                            password: password
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        hideLoading();
+                        if (data.success) {
+                            showNotification('Reservation deleted successfully!', 'success');
+                            setTimeout(() => {
+                                window.location.href = 'dashboard.php';
+                            }, 1500);
+                        } else {
+                            showNotification(data.error, 'error');
+                        }
+                    })
+                    .catch(error => {
+                        hideLoading();
+                        showNotification('Error: ' + error.message, 'error');
+                    });
             }
         }
 
         // Add CSS animations
         const style = document.createElement('style');
         style.textContent = `
-            @keyframes slideInRight {
-                from {
-                    opacity: 0;
-                    transform: translateX(100%);
-                }
-                to {
-                    opacity: 1;
-                    transform: translateX(0);
-                }
-            }
-            
-            @keyframes fadeOut {
-                to {
-                    opacity: 0;
-                    transform: translateX(100%);
-                }
-            }
-        `;
+ @keyframes slideInRight {
+ from {
+  opacity: 0;
+  transform: translateX(100%);
+ }
+ to {
+  opacity: 1;
+  transform: translateX(0);
+ }
+ }
+ 
+ @keyframes fadeOut {
+ to {
+  opacity: 0;
+  transform: translateX(100%);
+ }
+ }
+ `;
         document.head.appendChild(style);
     </script>
 </body>
+
 </html>

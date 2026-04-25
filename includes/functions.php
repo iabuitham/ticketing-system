@@ -14,23 +14,6 @@ function formatPhoneNumber($phone) {
     return '+' . $phone;
 }
 
-// Get setting from database - ONLY DECLARED HERE
-function getSetting($key, $default = null) {
-    $conn = getConnection();
-    $stmt = $conn->prepare("SELECT setting_value FROM system_settings WHERE setting_key = ?");
-    $stmt->bind_param("s", $key);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    if ($result->num_rows > 0) {
-        $value = $result->fetch_assoc()['setting_value'];
-        $stmt->close();
-        $conn->close();
-        return $value;
-    }
-    $stmt->close();
-    $conn->close();
-    return $default;
-}
 
 // Generate random suffix (6 characters: letters and numbers)
 function generateRandomSuffix() {
@@ -142,5 +125,93 @@ function sendWhatsAppMessage($phone, $message) {
         return json_decode($response, true);
     }
     return ['success' => false, 'simulated' => true];
+}
+
+/**
+ * Get system setting value by key
+ */
+function getSetting($key, $default = null) {
+    global $conn;
+    
+    // Try to get from cache first
+    static $settings = null;
+    
+    if ($settings === null) {
+        $settings = [];
+        $result = $conn->query("SELECT setting_key, setting_value FROM system_settings");
+        while ($row = $result->fetch_assoc()) {
+            $settings[$row['setting_key']] = $row['setting_value'];
+        }
+    }
+    
+    return isset($settings[$key]) ? $settings[$key] : $default;
+}
+
+/**
+ * Clear settings cache
+ */
+function clearSettingsCache() {
+    // This function can be implemented if using file-based caching
+    // For now, it's just a placeholder
+    return true;
+}
+
+/**
+ * Get all system settings
+ */
+function getAllSettings() {
+    global $conn;
+    $settings = [];
+    $result = $conn->query("SELECT setting_key, setting_value, description FROM system_settings");
+    while ($row = $result->fetch_assoc()) {
+        $settings[$row['setting_key']] = [
+            'value' => $row['setting_value'],
+            'description' => $row['description']
+        ];
+    }
+    return $settings;
+}
+
+/**
+ * Update multiple settings at once
+ */
+function updateSettings($settings) {
+    global $conn;
+    
+    $success = true;
+    foreach ($settings as $key => $value) {
+        $stmt = $conn->prepare("INSERT INTO system_settings (setting_key, setting_value) 
+                                VALUES (?, ?) 
+                                ON DUPLICATE KEY UPDATE setting_value = ?");
+        $stmt->bind_param("sss", $key, $value, $value);
+        if (!$stmt->execute()) {
+            $success = false;
+        }
+        $stmt->close();
+    }
+    
+    clearSettingsCache();
+    return $success;
+}
+
+/**
+ * Get current event
+ */
+function getCurrentEvent() {
+    global $conn;
+    $result = $conn->query("SELECT * FROM event_settings WHERE status = 'upcoming' ORDER BY event_date ASC LIMIT 1");
+    return $result->fetch_assoc();
+}
+
+/**
+ * Get all upcoming events
+ */
+function getUpcomingEvents($limit = null) {
+    global $conn;
+    $query = "SELECT * FROM event_settings WHERE event_date >= CURDATE() AND status = 'upcoming' ORDER BY event_date ASC";
+    if ($limit) {
+        $query .= " LIMIT " . intval($limit);
+    }
+    return $conn->query($query)->fetch_all(MYSQLI_ASSOC);
 }
 ?>
