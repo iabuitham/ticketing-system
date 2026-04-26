@@ -75,10 +75,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Calculate new additional amount due
     $new_additional_due = max(0, $new_total_amount - $total_paid);
     
-    // Generate NEW reservation ID if guests changed
+    // Generate NEW reservation ID if guests changed (using function from functions.php)
     $new_reservation_id = $reservation_id;
     if ($guests_changed) {
-        // Regenerate ID keeping same sequential number and random suffix
         $new_reservation_id = regenerateReservationIdFromOld($reservation_id, $new_adults, $new_teens, $new_kids);
     }
     
@@ -273,23 +272,5 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 header('Location: dashboard.php');
 exit();
 
-/**
- * Regenerate reservation ID keeping the same sequential number and random suffix
- */
-function regenerateReservationIdFromOld($old_id, $new_adults, $new_teens, $new_kids) {
-    // Extract sequential number and random suffix from old ID
-    if (preg_match('/^RES(\d{4})-(\d+G\d+A\d+T\d+K)-([A-Z0-9]{5})$/', $old_id, $matches)) {
-        $sequential = $matches[1];
-        $randomSuffix = $matches[3];
-    } else {
-        // If pattern doesn't match, generate fresh
-        return generateReservationId($new_adults, $new_teens, $new_kids);
-    }
-    
-    $prefix = 'RES';
-    $totalGuests = $new_adults + $new_teens + $new_kids;
-    $breakdown = $totalGuests . 'G' . $new_adults . 'A' . $new_teens . 'T' . $new_kids . 'K';
-    
-    return $prefix . $sequential . '-' . $breakdown . '-' . $randomSuffix;
-}
+// DO NOT DECLARE regenerateReservationIdFromOld() HERE - It's already in functions.php
 ?>
