@@ -9,7 +9,6 @@ require_once __DIR__ . '/db.php';
 
 /**
  * Get system setting value by key
- * This function now caches settings for better performance
  */
 function getSetting($key, $default = null) {
     static $settings = null;
@@ -20,12 +19,10 @@ function getSetting($key, $default = null) {
         return 'RES';
     }
     
-    // If we already loaded settings in this request, use cache
     if ($settingsCache !== null && isset($settingsCache[$key])) {
         return $settingsCache[$key];
     }
     
-    // Load all settings if not loaded yet
     if ($settings === null) {
         $conn = getConnection();
         $settings = [];
@@ -38,7 +35,6 @@ function getSetting($key, $default = null) {
         $conn->close();
     }
     
-    // Cache for this request
     if ($settingsCache === null) {
         $settingsCache = $settings;
     }
@@ -47,7 +43,7 @@ function getSetting($key, $default = null) {
 }
 
 /**
- * Clear settings cache (call after updating settings)
+ * Clear settings cache
  */
 function clearSettingsCache() {
     global $settingsCache;
@@ -130,6 +126,120 @@ function sanitizeInput($data) {
 }
 
 /**
+ * Generate random string for the suffix (5 characters)
+ */
+function generateRandomString($length = 5) {
+    $characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    $charactersLength = strlen($characters);
+    $randomString = '';
+    for ($i = 0; $i < $length; $i++) {
+        $randomString .= $characters[random_int(0, $charactersLength - 1)];
+    }
+    return $randomString;
+}
+
+/**
+ * Get next sequential number for reservation (ensures never 0)
+ */
+function getNextSequentialNumber() {
+    $conn = getConnection();
+    
+    // Get the maximum sequential number, handling NULLs
+    $result = $conn->query("SELECT COALESCE(MAX(sequential_number), 0) as max_seq FROM reservations");
+    $row = $result->fetch_assoc();
+    $max_seq = intval($row['max_seq']);
+    $conn->close();
+    
+    // If no records or max is 0, start from 1
+    if ($max_seq <= 0) {
+        return 1;
+    }
+    
+    return $max_seq + 1;
+}
+
+/**
+ * Generate Reservation ID with pattern: RES0001-15G12A3T0K-AT54G
+ */
+function generateReservationId($adults, $teens, $kids) {
+    $prefix = 'RES';
+    $sequential = getNextSequentialNumber();
+    $sequentialFormatted = str_pad($sequential, 4, '0', STR_PAD_LEFT);
+    $totalGuests = $adults + $teens + $kids;
+    $breakdown = $totalGuests . 'G' . $adults . 'A' . $teens . 'T' . $kids . 'K';
+    $randomSuffix = generateRandomString(5);
+    
+    return $prefix . $sequentialFormatted . '-' . $breakdown . '-' . $randomSuffix;
+}
+
+/**
+ * Generate Ticket ID for each attendee
+ */
+function generateTicketId($reservationId, $attendeeType, $attendeeNumber) {
+    $typeCode = '';
+    switch ($attendeeType) {
+        case 'adult':
+            $typeCode = 'A';
+            break;
+        case 'teen':
+            $typeCode = 'T';
+            break;
+        case 'kid':
+            $typeCode = 'K';
+            break;
+    }
+    
+    $numberFormatted = str_pad($attendeeNumber, 3, '0', STR_PAD_LEFT);
+    $ticketId = $reservationId . '-' . $typeCode . $numberFormatted;
+    
+    return $ticketId;
+}
+
+/**
+ * Regenerate reservation ID keeping the same sequential number and random suffix
+ */
+function regenerateReservationIdFromOld($old_id, $new_adults, $new_teens, $new_kids) {
+    // Extract sequential number and random suffix from old ID
+    if (preg_match('/^RES(\d{4})-(\d+G\d+A\d+T\d+K)-([A-Z0-9]{5})$/', $old_id, $matches)) {
+        $sequential = $matches[1];
+        $randomSuffix = $matches[3];
+    } else {
+        // If pattern doesn't match, generate fresh
+        return generateReservationId($new_adults, $new_teens, $new_kids);
+    }
+    
+    $prefix = 'RES';
+    $totalGuests = $new_adults + $new_teens + $new_kids;
+    $breakdown = $totalGuests . 'G' . $new_adults . 'A' . $new_teens . 'T' . $new_kids . 'K';
+    
+    return $prefix . $sequential . '-' . $breakdown . '-' . $randomSuffix;
+}
+
+/**
+ * Decode Reservation ID to get original data
+ */
+function decodeReservationId($reservationId) {
+    $pattern = '/^RES(\d{4})-(\d+G\d+A\d+T\d+K)-([A-Z0-9]{5})$/';
+    
+    if (preg_match($pattern, $reservationId, $matches)) {
+        // Parse the breakdown part
+        $breakdown = $matches[2];
+        preg_match('/(\d+)G(\d+)A(\d+)T(\d+)K/', $breakdown, $breakdown_matches);
+        
+        return [
+            'sequential' => intval($matches[1]),
+            'total_guests' => intval($breakdown_matches[1] ?? 0),
+            'adults' => intval($breakdown_matches[2] ?? 0),
+            'teens' => intval($breakdown_matches[3] ?? 0),
+            'kids' => intval($breakdown_matches[4] ?? 0),
+            'random_suffix' => $matches[3]
+        ];
+    }
+    
+    return null;
+}
+
+/**
  * Calculate ticket prices based on current settings
  */
 function calculateTicketPrice($type, $quantity = 1, $isEarlyBird = false, $groupSize = 0) {
@@ -151,7 +261,6 @@ function calculateTicketPrice($type, $quantity = 1, $isEarlyBird = false, $group
     
     $total = $price * $quantity;
     
-    // Apply early bird discount if applicable
     if ($isEarlyBird) {
         $earlyBirdDiscount = getSetting('early_bird_discount', 0);
         if ($earlyBirdDiscount > 0) {
@@ -159,7 +268,6 @@ function calculateTicketPrice($type, $quantity = 1, $isEarlyBird = false, $group
         }
     }
     
-    // Apply group discount if applicable
     $minGroupSize = getSetting('min_group_size', 10);
     if ($groupSize >= $minGroupSize) {
         $groupDiscount = getSetting('group_discount', 0);
@@ -169,6 +277,37 @@ function calculateTicketPrice($type, $quantity = 1, $isEarlyBird = false, $group
     }
     
     return max(0, $total);
+}
+
+/**
+ * Get total paid amount for a reservation
+ */
+function getTotalPaid($reservation_id) {
+    $conn = getConnection();
+    $stmt = $conn->prepare("SELECT COALESCE(SUM(amount), 0) as total_paid FROM split_payments WHERE reservation_id = ?");
+    $stmt->bind_param("s", $reservation_id);
+    $stmt->execute();
+    $result = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    $conn->close();
+    return floatval($result['total_paid']);
+}
+
+/**
+ * Get remaining amount due for a reservation
+ */
+function getRemainingDue($reservation_id) {
+    $conn = getConnection();
+    $stmt = $conn->prepare("SELECT total_amount FROM reservations WHERE reservation_id = ?");
+    $stmt->bind_param("s", $reservation_id);
+    $stmt->execute();
+    $result = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    
+    $totalPaid = getTotalPaid($reservation_id);
+    $conn->close();
+    
+    return max(0, floatval($result['total_amount']) - $totalPaid);
 }
 
 /**
@@ -209,8 +348,6 @@ function sendWhatsAppMessage($to, $message) {
     
     if (empty($apiKey) || empty($businessNumber)) return false;
     
-    // Implement your WhatsApp API call here
-    // This is a placeholder - integrate with your WhatsApp provider
     return true;
 }
 
@@ -228,8 +365,6 @@ function sendEmail($to, $subject, $body) {
     
     if (empty($smtpHost) || empty($smtpUser)) return false;
     
-    // Implement your email sending logic here
-    // This is a placeholder - integrate with PHPMailer or similar
     return true;
 }
 
@@ -317,172 +452,45 @@ function logActivity($userId, $action, $details = null) {
 }
 
 /**
- * Get reservation by ID with payment info
+ * Calculate days remaining until event
  */
-function getReservationWithPayments($reservation_id) {
-    $conn = getConnection();
+function getDaysRemaining($event_date) {
+    $today = new DateTime();
+    $event = new DateTime($event_date);
+    $interval = $today->diff($event);
     
-    $query = "SELECT r.*, 
-              COALESCE((SELECT SUM(amount) FROM split_payments WHERE reservation_id = r.reservation_id), 0) as total_paid
-              FROM reservations r 
-              WHERE r.reservation_id = ?";
+    $days = $interval->days;
     
-    $stmt = $conn->prepare($query);
-    $stmt->bind_param("s", $reservation_id);
-    $stmt->execute();
-    $reservation = $stmt->get_result()->fetch_assoc();
-    
-    if ($reservation) {
-        // Get payment splits
-        $stmt2 = $conn->prepare("SELECT * FROM split_payments WHERE reservation_id = ? ORDER BY payment_date DESC");
-        $stmt2->bind_param("s", $reservation_id);
-        $stmt2->execute();
-        $reservation['payments'] = $stmt2->get_result()->fetch_all(MYSQLI_ASSOC);
-        $stmt2->close();
+    if ($today > $event) {
+        return -$days;
     }
     
-    $stmt->close();
-    $conn->close();
-    
-    return $reservation;
+    return $days;
 }
 
 /**
- * Generate random string for the suffix (5 characters)
+ * Get days remaining text with appropriate styling
  */
-function generateRandomString($length = 5) {
-    $characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    $charactersLength = strlen($characters);
-    $randomString = '';
-    for ($i = 0; $i < $length; $i++) {
-        $randomString .= $characters[random_int(0, $charactersLength - 1)];
+function getDaysRemainingText($event_date) {
+    $days = getDaysRemaining($event_date);
+    
+    if ($days < 0) {
+        $abs_days = abs($days);
+        if ($abs_days == 1) {
+            return "Event was yesterday";
+        } else {
+            return "Event passed " . $abs_days . " days ago";
+        }
+    } elseif ($days == 0) {
+        return "🎉 TODAY IS THE EVENT DAY! 🎉";
+    } elseif ($days == 1) {
+        return "🔥 TOMORROW! 1 day remaining 🔥";
+    } elseif ($days <= 7) {
+        return "⚠️ Only " . $days . " days remaining! ⚠️";
+    } elseif ($days <= 30) {
+        return "📅 " . $days . " days remaining";
+    } else {
+        return "🗓️ " . $days . " days until the event";
     }
-    return $randomString;
-}
-
-/**
- * Get next sequential number for reservation (4 digits with leading zeros)
- */
-function getNextSequentialNumber() {
-    $conn = getConnection();
-    $result = $conn->query("SELECT COALESCE(MAX(sequential_number), 0) + 1 as next_num FROM reservations");
-    $next = $result->fetch_assoc()['next_num'];
-    $conn->close();
-    return $next;
-}
-
-/**
- * Generate Reservation ID with pattern: RES0001-15G12A3T0K-A2DD3
- * Where:
- * - RES is the fixed prefix (not from settings)
- * - 0001 is sequential number (4 digits with leading zeros)
- * - 15G is total guest count
- * - 12A is adults, 3T is teens, 0K is kids
- * - A2DD3 is random 5-character string
- */
-function generateReservationId($adults, $teens, $kids) {
-    // Fixed prefix - always RES (ignore settings)
-    $prefix = 'RES';
-    
-    // Get next sequential number (4 digits with leading zeros)
-    $sequential = getNextSequentialNumber();
-    $sequentialFormatted = str_pad($sequential, 4, '0', STR_PAD_LEFT);
-    
-    // Calculate total guests
-    $totalGuests = $adults + $teens + $kids;
-    
-    // Create breakdown part: {total}G{adults}A{teens}T{kids}K
-    $breakdown = $totalGuests . 'G' . $adults . 'A' . $teens . 'T' . $kids . 'K';
-    
-    // Generate random suffix (5 characters)
-    $randomSuffix = generateRandomString(5);
-    
-    // Combine all parts: RES + sequential + breakdown + random
-    $reservationId = $prefix . $sequentialFormatted . '-' . $breakdown . '-' . $randomSuffix;
-    
-    return $reservationId;
-}
-
-/**
- * Generate Ticket ID for each attendee
- * Pattern: RES0001-15G12A3T0K-A2DD3-A001
- * Where:
- * - First part: Full reservation ID
- * - A001: Type code (A=Adult, T=Teen, K=Kid) + 3-digit number
- */
-function generateTicketId($reservationId, $attendeeType, $attendeeNumber) {
-    $typeCode = '';
-    switch ($attendeeType) {
-        case 'adult':
-            $typeCode = 'A';
-            break;
-        case 'teen':
-            $typeCode = 'T';
-            break;
-        case 'kid':
-            $typeCode = 'K';
-            break;
-    }
-    
-    // Format number as 3 digits (001, 002, etc.)
-    $numberFormatted = str_pad($attendeeNumber, 3, '0', STR_PAD_LEFT);
-    
-    // Combine: reservationId + typeCode + number
-    $ticketId = $reservationId . '-' . $typeCode . $numberFormatted;
-    
-    return $ticketId;
-}
-
-/**
- * Decode Reservation ID to get original data
- */
-function decodeReservationId($reservationId) {
-    $pattern = '/^RES(\d{4})-(\d+)G(\d+)A(\d+)T(\d+)K-([A-Z0-9]{5})$/';
-    
-    if (preg_match($pattern, $reservationId, $matches)) {
-        return [
-            'sequential' => intval($matches[1]),
-            'total_guests' => intval($matches[2]),
-            'adults' => intval($matches[3]),
-            'teens' => intval($matches[4]),
-            'kids' => intval($matches[5]),
-            'random_suffix' => $matches[6]
-        ];
-    }
-    
-    return null;
-}
-
-/**
- * Decode Ticket ID
- */
-function decodeTicketId($ticketId) {
-    // Ticket ID pattern: RES0001-15G12A3T0K-A2DD3-A001
-    $pattern = '/^(RES\d{4}-\d+G\d+A\d+T\d+K-[A-Z0-9]{5})-([ATK])(\d{3})$/';
-    
-    if (preg_match($pattern, $ticketId, $matches)) {
-        $typeMap = [
-            'A' => 'adult',
-            'T' => 'teen',
-            'K' => 'kid'
-        ];
-        
-        return [
-            'reservation_id' => $matches[1],
-            'attendee_type' => $typeMap[$matches[2]],
-            'attendee_number' => intval($matches[3])
-        ];
-    }
-    
-    return null;
-}
-
-/**
- * Override the old generateReservationId function to use the new pattern
- * This replaces any old function that might be using the settings prefix
- */
-function generateReservationIdOld($adults, $teens, $kids) {
-    // This is the old function - now calling the new one
-    return generateReservationId($adults, $teens, $kids);
 }
 ?>

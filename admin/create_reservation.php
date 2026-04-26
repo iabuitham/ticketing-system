@@ -58,54 +58,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Calculate total amount
     $total_amount = ($adults * $adultPrice) + ($teens * $teenPrice) + ($kids * $kidPrice);
     
-    // Generate new Reservation ID based on guest counts
-    $reservation_id = generateReservationId($adults, $teens, $kids);
+    // Get the NEXT sequential number correctly
+    $seq_result = $conn->query("SELECT MAX(sequential_number) as max_seq FROM reservations");
+    $max_seq_row = $seq_result->fetch_assoc();
+    $current_max = intval($max_seq_row['max_seq']);
+    $next_seq = $current_max + 1;
+    if ($next_seq <= 0) $next_seq = 1;
+    
+    // Generate new Reservation ID using the sequential number
+    $reservation_id = generateReservationIdWithSeq($adults, $teens, $kids, $next_seq);
     
     // Start transaction
     $conn->begin_transaction();
     
     try {
-        // Insert reservation
-        $stmt = $conn->prepare("INSERT INTO reservations (reservation_id, name, phone, table_id, adults, teens, kids, total_amount, additional_amount_due, notes, status, created_at) 
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())");
+        // Insert reservation with explicit sequential_number
+        $stmt = $conn->prepare("INSERT INTO reservations (reservation_id, sequential_number, name, phone, table_id, adults, teens, kids, total_amount, additional_amount_due, notes, status, created_at) 
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())");
         $additional_amount_due = $total_amount;
-        $stmt->bind_param("ssssiiidds", $reservation_id, $name, $phone, $table_id, $adults, $teens, $kids, $total_amount, $additional_amount_due, $notes);
-        $stmt->execute();
+        $stmt->bind_param("sisssiiidds", $reservation_id, $next_seq, $name, $phone, $table_id, $adults, $teens, $kids, $total_amount, $additional_amount_due, $notes);
+        
+        if (!$stmt->execute()) {
+            throw new Exception($conn->error);
+        }
         $stmt->close();
         
-        // Generate ticket codes for each attendee using correct column names
+        // Generate ticket codes for each attendee
         $adultCount = 0;
         $teenCount = 0;
         $kidCount = 0;
         
-        // Generate tickets for adults
-        for ($i = 1; $i <= $adults; $i++) {
-            $ticketCode = generateTicketId($reservation_id, 'adult', $i);
-            $stmt = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'adult', ?)");
-            $stmt->bind_param("ssi", $reservation_id, $ticketCode, $i);
-            $stmt->execute();
-            $stmt->close();
-            $adultCount++;
-        }
-        
-        // Generate tickets for teens
-        for ($i = 1; $i <= $teens; $i++) {
-            $ticketCode = generateTicketId($reservation_id, 'teen', $i);
-            $stmt = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'teen', ?)");
-            $stmt->bind_param("ssi", $reservation_id, $ticketCode, $i);
-            $stmt->execute();
-            $stmt->close();
-            $teenCount++;
-        }
-        
-        // Generate tickets for kids
-        for ($i = 1; $i <= $kids; $i++) {
-            $ticketCode = generateTicketId($reservation_id, 'kid', $i);
-            $stmt = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'kid', ?)");
-            $stmt->bind_param("ssi", $reservation_id, $ticketCode, $i);
-            $stmt->execute();
-            $stmt->close();
-            $kidCount++;
+        // Check if ticket_codes table exists
+        $table_check = $conn->query("SHOW TABLES LIKE 'ticket_codes'");
+        if ($table_check && $table_check->num_rows > 0) {
+            // Generate tickets for adults
+            for ($i = 1; $i <= $adults; $i++) {
+                $ticketCode = generateTicketId($reservation_id, 'adult', $i);
+                $stmt_ticket = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'adult', ?)");
+                $stmt_ticket->bind_param("ssi", $reservation_id, $ticketCode, $i);
+                $stmt_ticket->execute();
+                $stmt_ticket->close();
+                $adultCount++;
+            }
+            
+            // Generate tickets for teens
+            for ($i = 1; $i <= $teens; $i++) {
+                $ticketCode = generateTicketId($reservation_id, 'teen', $i);
+                $stmt_ticket = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'teen', ?)");
+                $stmt_ticket->bind_param("ssi", $reservation_id, $ticketCode, $i);
+                $stmt_ticket->execute();
+                $stmt_ticket->close();
+                $teenCount++;
+            }
+            
+            // Generate tickets for kids
+            for ($i = 1; $i <= $kids; $i++) {
+                $ticketCode = generateTicketId($reservation_id, 'kid', $i);
+                $stmt_ticket = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'kid', ?)");
+                $stmt_ticket->bind_param("ssi", $reservation_id, $ticketCode, $i);
+                $stmt_ticket->execute();
+                $stmt_ticket->close();
+                $kidCount++;
+            }
         }
         
         $conn->commit();
@@ -137,6 +151,16 @@ if (empty($tables)) {
 }
 
 $conn->close();
+
+// Helper function to generate reservation ID with specific sequential number
+function generateReservationIdWithSeq($adults, $teens, $kids, $sequential) {
+    $prefix = 'RES';
+    $sequentialFormatted = str_pad($sequential, 4, '0', STR_PAD_LEFT);
+    $totalGuests = $adults + $teens + $kids;
+    $breakdown = $totalGuests . 'G' . $adults . 'A' . $teens . 'T' . $kids . 'K';
+    $randomSuffix = generateRandomString(5);
+    return $prefix . $sequentialFormatted . '-' . $breakdown . '-' . $randomSuffix;
+}
 ?>
 <!DOCTYPE html>
 <html lang="<?php echo $lang; ?>" dir="<?php echo getDirection(); ?>">
