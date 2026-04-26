@@ -1165,6 +1165,7 @@ $conn->close();
                 <button onclick="openExportModal()" class="btn btn-info"><i class="bi bi-filetype-csv"></i> <?php echo t('export_csv'); ?></button>
                 <a href="print_statement.php" class="btn btn-secondary"><i class="bi bi-printer"></i> <?php echo t('print_statement'); ?></a>
                 <a href="manager_report.php" class="btn btn-secondary"><i class="bi bi-bar-chart-steps"></i> <?php echo t('analytics'); ?></a>
+                <a href="tables.php" class="btn btn-secondary"><i class="bi bi-grid-3x3-gap-fill"></i> Tables</a>
                 <a href="settings.php" class="btn btn-secondary"><i class="bi bi-gear"></i> <?php echo t('system_settings'); ?></a>
             </div>
         </div>

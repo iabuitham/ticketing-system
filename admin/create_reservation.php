@@ -139,15 +139,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Get available tables for dropdown
+// Get available tables from tables table
 $tables = [];
-$result = $conn->query("SELECT DISTINCT table_id FROM reservations WHERE status != 'cancelled' ORDER BY table_id");
+$result = $conn->query("SELECT table_number FROM tables WHERE status = 'available' AND is_active = 1 ORDER BY table_number");
 while ($row = $result->fetch_assoc()) {
-    $tables[] = $row['table_id'];
-}
-// Add some default tables if none exist
-if (empty($tables)) {
-    $tables = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'D1', 'D2'];
+    $tables[] = $row['table_number'];
 }
 
 $conn->close();
@@ -397,17 +393,22 @@ function generateReservationIdWithSeq($adults, $teens, $kids, $sequential) {
                     <input type="tel" name="phone" required value="<?php echo htmlspecialchars($_POST['phone'] ?? ''); ?>" placeholder="+962XXXXXXXXX">
                 </div>
                 
-                <div class="form-group">
-                    <label><i class="bi bi-grid-3x3-gap-fill"></i> Table Number *</label>
-                    <select name="table_id" required>
-                        <option value="">Select a table</option>
-                        <?php foreach ($tables as $table): ?>
-                            <option value="<?php echo htmlspecialchars($table); ?>" <?php echo (($_POST['table_id'] ?? '') == $table) ? 'selected' : ''; ?>>
-                                Table <?php echo htmlspecialchars($table); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
+<div class="form-group">
+    <label><i class="bi bi-grid-3x3-gap-fill"></i> Table Number *</label>
+    <select name="table_id" required>
+        <option value="">Select a table</option>
+        <?php
+        $tables_result = $conn->query("SELECT table_number, section FROM tables WHERE status = 'available' AND is_active = 1 ORDER BY table_number");
+        while ($table = $tables_result->fetch_assoc()):
+        ?>
+            <option value="<?php echo htmlspecialchars($table['table_number']); ?>" 
+                    <?php echo (($_POST['table_id'] ?? '') == $table['table_number']) ? 'selected' : ''; ?>>
+                Table <?php echo htmlspecialchars($table['table_number']); ?> 
+                <?php if ($table['section']): ?>(<?php echo htmlspecialchars($table['section']); ?>)<?php endif; ?>
+            </option>
+        <?php endwhile; ?>
+    </select>
+</div>
                 
                 <div class="card-header" style="margin-top: 20px;">
                     <h2><i class="bi bi-people"></i> Guest Information</h2>
