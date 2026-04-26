@@ -5,7 +5,6 @@ require_once '../includes/functions.php';
 
 header('Content-Type: application/json');
 
-// Check admin login
 if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
     echo json_encode(['success' => false, 'error' => 'Unauthorized']);
     exit();
@@ -25,9 +24,10 @@ $conn = getConnection();
 $conn->begin_transaction();
 
 try {
-    // Get current reservation and total paid
+    // Get current reservation and total paid from split_payments
     $stmt = $conn->prepare("SELECT total_amount, 
-        COALESCE((SELECT SUM(amount) FROM split_payments WHERE reservation_id = ?), 0) as total_paid 
+        COALESCE((SELECT SUM(amount) FROM split_payments WHERE reservation_id = ?), 0) as total_paid,
+        additional_amount_due
         FROM reservations WHERE reservation_id = ?");
     $stmt->bind_param("ss", $reservation_id, $reservation_id);
     $stmt->execute();
@@ -40,6 +40,7 @@ try {
     
     $dbTotalAmount = floatval($result['total_amount']);
     $totalPaid = floatval($result['total_paid']);
+    $currentAdditionalDue = floatval($result['additional_amount_due']);
     $remainingDue = $dbTotalAmount - $totalPaid;
     
     // Calculate total payment from splits
@@ -105,12 +106,14 @@ try {
         $stmt->close();
     }
     
-    // Update reservation status
+    // Calculate new totals
     $newTotalPaid = $totalPaid + $paymentTotal;
+    $newAdditionalDue = max(0, $dbTotalAmount - $newTotalPaid);
     $newStatus = ($newTotalPaid >= $dbTotalAmount - 0.01) ? 'paid' : 'registered';
     
-    $update = $conn->prepare("UPDATE reservations SET status = ? WHERE reservation_id = ?");
-    $update->bind_param("ss", $newStatus, $reservation_id);
+    // Update reservation: status AND additional_amount_due
+    $update = $conn->prepare("UPDATE reservations SET status = ?, additional_amount_due = ? WHERE reservation_id = ?");
+    $update->bind_param("sds", $newStatus, $newAdditionalDue, $reservation_id);
     
     if (!$update->execute()) {
         throw new Exception('Failed to update reservation status');
@@ -123,6 +126,7 @@ try {
         'success' => true,
         'message' => 'Payments processed successfully',
         'total_paid' => $newTotalPaid,
+        'remaining_due' => $newAdditionalDue,
         'status' => $newStatus
     ]);
     

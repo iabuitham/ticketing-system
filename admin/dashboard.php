@@ -78,9 +78,30 @@ $reservations = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
 // Calculate actual amount due for each reservation
+// At the top of dashboard.php, after getting reservations, add this:
+
+// Calculate actual amount due for each reservation using total_paid from split_payments
 foreach ($reservations as &$res) {
- $totalPaid = floatval($res['total_paid'] ?? 0);
- $res['actual_amount_due'] = max(0, floatval($res['total_amount'] ?? 0) - $totalPaid);
+    // Get total paid from split_payments for this reservation
+    $stmt = $conn->prepare("SELECT COALESCE(SUM(amount), 0) as total_paid FROM split_payments WHERE reservation_id = ?");
+    $stmt->bind_param("s", $res['reservation_id']);
+    $stmt->execute();
+    $paidResult = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    
+    $totalPaid = floatval($paidResult['total_paid']);
+    $totalAmount = floatval($res['total_amount']);
+    
+    // Calculate actual amount due
+    $res['actual_amount_due'] = max(0, $totalAmount - $totalPaid);
+    
+    // Also update the additional_amount_due in the database if it's incorrect
+    if ($res['actual_amount_due'] != floatval($res['additional_amount_due'])) {
+        $updateStmt = $conn->prepare("UPDATE reservations SET additional_amount_due = ? WHERE reservation_id = ?");
+        $updateStmt->bind_param("ds", $res['actual_amount_due'], $res['reservation_id']);
+        $updateStmt->execute();
+        $updateStmt->close();
+    }
 }
 
 // Get statistics with null handling
@@ -1483,112 +1504,121 @@ $conn->close();
   }
 
   async function processSplitPayments() {
-   const splits = [];
-   const splitItems = document.querySelectorAll('.payment-split-item');
-   let totalAmount = 0;
-
-   for (let item of splitItems) {
-     const method = item.querySelector('.payment-method').value;
-     const amount = parseFloat(item.querySelector('.payment-amount').value);
-
-     if (!method) {
-        alert('Please select a payment method for all splits');
+    const splits = [];
+    const splitItems = document.querySelectorAll('.payment-split-item');
+    let totalAmount = 0;
+    
+    for (let item of splitItems) {
+        const method = item.querySelector('.payment-method').value;
+        const amount = parseFloat(item.querySelector('.payment-amount').value);
+        
+        if (!method) {
+            alert('Please select a payment method for all splits');
+            return;
+        }
+        
+        if (isNaN(amount) || amount <= 0) {
+            alert('Please enter valid amount for all splits');
+            return;
+        }
+        
+        totalAmount += amount;
+        
+        const splitData = {
+            method: method,
+            amount: amount
+        };
+        
+        if (method === 'cash') {
+            const receivedBy = item.querySelector('.received-by')?.value;
+            if (!receivedBy) {
+                alert('Please enter who received the cash payment');
+                return;
+            }
+            splitData.received_by = receivedBy;
+        } else if (method === 'cliq') {
+            const fileInput = item.querySelector('.proof-file');
+            if (!fileInput.files[0]) {
+                alert('Please upload a screenshot for CliQ payment');
+                return;
+            }
+            splitData.hasFile = true;
+        } else if (method === 'visa') {
+            const receiptId = item.querySelector('.receipt-id')?.value;
+            if (!receiptId) {
+                alert('Please enter receipt ID for Visa payment');
+                return;
+            }
+            splitData.receipt_id = receiptId;
+        }
+        
+        splits.push(splitData);
+    }
+    
+    // Calculate remaining amount from the current reservation
+    const currentAmountDue = currentTotalAmount;
+    
+    if (Math.abs(totalAmount - currentAmountDue) > 0.01 && totalAmount < currentAmountDue) {
+        alert(`Total payment amount (${totalAmount.toFixed(2)}) is less than amount due (${currentAmountDue.toFixed(2)}). Please add more payment splits or adjust amounts.`);
         return;
-     }
-
-     if (isNaN(amount) || amount <= 0) {
-        alert('Please enter valid amount for all splits');
+    }
+    
+    if (totalAmount > currentAmountDue) {
+        alert(`Total payment amount (${totalAmount.toFixed(2)}) exceeds amount due (${currentAmountDue.toFixed(2)}). Please adjust amounts.`);
         return;
-     }
-
-     totalAmount += amount;
-
-     const splitData = {
-        method: method,
-        amount: amount
-     };
-
-     if (method === 'cash') {
-        const receivedBy = item.querySelector('.received-by')?.value;
-        if (!receivedBy) {
-             alert('Please enter who received the cash payment');
-             return;
+    }
+    
+    showLoading('Processing payments...');
+    
+    const formData = new FormData();
+    formData.append('reservation_id', currentReservationId);
+    formData.append('total_amount', currentAmountDue);
+    formData.append('splits', JSON.stringify(splits.map(s => ({
+        method: s.method,
+        amount: s.amount,
+        received_by: s.received_by || null,
+        receipt_id: s.receipt_id || null
+    }))));
+    
+    let fileIndex = 0;
+    for (let item of splitItems) {
+        const method = item.querySelector('.payment-method').value;
+        if (method === 'cliq') {
+            const fileInput = item.querySelector('.proof-file');
+            if (fileInput.files[0]) {
+                formData.append(`file_${fileIndex}`, fileInput.files[0]);
+                fileIndex++;
+            }
         }
-        splitData.received_by = receivedBy;
-     } else if (method === 'cliq') {
-        const fileInput = item.querySelector('.proof-file');
-        if (!fileInput.files[0]) {
-             alert('Please upload a screenshot for CliQ payment');
-             return;
+    }
+    
+    try {
+        const response = await fetch('process_split_payment.php', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        hideLoading();
+        
+        if (data.success) {
+            // Show success with new remaining amount
+            const remainingText = data.remaining_due > 0 
+                ? `Remaining due: ${data.remaining_due.toFixed(2)} ${currencySymbol}`
+                : 'Reservation is now fully paid!';
+            
+            alert(`✓ Payments processed successfully!\n\n${remainingText}`);
+            closePaymentModal();
+            // Force refresh the page to update all displays
+            location.reload();
+        } else {
+            alert('Error: ' + (data.error || 'Payment failed. Please try again.'));
         }
-        splitData.hasFile = true;
-     } else if (method === 'visa') {
-        const receiptId = item.querySelector('.receipt-id')?.value;
-        if (!receiptId) {
-             alert('Please enter receipt ID for Visa payment');
-             return;
-        }
-        splitData.receipt_id = receiptId;
-     }
-
-     splits.push(splitData);
-   }
-
-   if (Math.abs(totalAmount - currentTotalAmount) > 0.01 && totalAmount < currentTotalAmount) {
-     alert(`Total payment amount (${totalAmount.toFixed(2)}) is less than amount due (${currentTotalAmount.toFixed(2)}). Please add more payment splits or adjust amounts.`);
-     return;
-   }
-
-   if (totalAmount > currentTotalAmount) {
-     alert(`Total payment amount (${totalAmount.toFixed(2)}) exceeds amount due (${currentTotalAmount.toFixed(2)}). Please adjust amounts.`);
-     return;
-   }
-
-   showLoading('Processing payments...');
-
-   const formData = new FormData();
-   formData.append('reservation_id', currentReservationId);
-   formData.append('total_amount', currentTotalAmount);
-   formData.append('splits', JSON.stringify(splits.map(s => ({
-     method: s.method,
-     amount: s.amount,
-     received_by: s.received_by || null,
-     receipt_id: s.receipt_id || null
-   }))));
-
-   let fileIndex = 0;
-   for (let item of splitItems) {
-     const method = item.querySelector('.payment-method').value;
-     if (method === 'cliq') {
-        const fileInput = item.querySelector('.proof-file');
-        if (fileInput.files[0]) {
-             formData.append(`file_${fileIndex}`, fileInput.files[0]);
-             fileIndex++;
-        }
-     }
-   }
-
-   try {
-     const response = await fetch('process_split_payment.php', {
-        method: 'POST',
-        body: formData
-     });
-
-     const data = await response.json();
-     hideLoading();
-
-     if (data.success) {
-        alert('✓ Payments processed successfully!\n\nReservation has been updated.');
-        closePaymentModal();
-        location.reload();
-     } else {
-        alert('Error: ' + (data.error || 'Payment failed. Please try again.'));
-     }
-   } catch (error) {
-     hideLoading();
-     alert('Error: ' + error.message);
-   }
-  }
+    } catch (error) {
+        hideLoading();
+        alert('Error: ' + error.message);
+    }
+}
 
   function deleteReservation(reservationId, element) {
    const password = prompt('⚠️ SECURITY VERIFICATION REQUIRED\n\nEnter admin password to delete this reservation:\n(Default: AdminDelete2026)');
