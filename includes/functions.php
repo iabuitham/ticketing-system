@@ -15,6 +15,11 @@ function getSetting($key, $default = null) {
     static $settings = null;
     static $settingsCache = null;
     
+    // Special handling for reservation_prefix - always return 'RES' for the new pattern
+    if ($key == 'reservation_prefix') {
+        return 'RES';
+    }
+    
     // If we already loaded settings in this request, use cache
     if ($settingsCache !== null && isset($settingsCache[$key])) {
         return $settingsCache[$key];
@@ -122,16 +127,6 @@ function sanitizeInput($data) {
     $data = stripslashes($data);
     $data = htmlspecialchars($data);
     return $data;
-}
-
-/**
- * Generate unique reservation ID
- */
-function generateReservationId() {
-    $prefix = getSetting('reservation_prefix', 'TKT');
-    $date = date('Ymd');
-    $random = strtoupper(substr(uniqid(), -6));
-    return $prefix . '-' . $date . '-' . $random;
 }
 
 /**
@@ -353,7 +348,7 @@ function getReservationWithPayments($reservation_id) {
 }
 
 /**
- * Generate random string for ID
+ * Generate random string for the suffix (5 characters)
  */
 function generateRandomString($length = 5) {
     $characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -366,7 +361,7 @@ function generateRandomString($length = 5) {
 }
 
 /**
- * Get next sequential number for reservation
+ * Get next sequential number for reservation (4 digits with leading zeros)
  */
 function getNextSequentialNumber() {
     $conn = getConnection();
@@ -377,19 +372,43 @@ function getNextSequentialNumber() {
 }
 
 /**
- * Generate Reservation ID with pattern: RES0001-15G12A3T0K-AT54G
+ * Generate Reservation ID with pattern: RES0001-15G12A3T0K-A2DD3
  * Where:
- * - RES0001: Sequential number (RES + 4 digits)
- * - 15G12A3T0K: Total guests + breakdown (15G = 15 guests, 12A = 12 adults, 3T = 3 teens, 0K = 0 kids)
- * - AT54G: Random 5 characters
+ * - RES is the fixed prefix (not from settings)
+ * - 0001 is sequential number (4 digits with leading zeros)
+ * - 15G is total guest count
+ * - 12A is adults, 3T is teens, 0K is kids
+ * - A2DD3 is random 5-character string
  */
+function generateReservationId($adults, $teens, $kids) {
+    // Fixed prefix - always RES (ignore settings)
+    $prefix = 'RES';
+    
+    // Get next sequential number (4 digits with leading zeros)
+    $sequential = getNextSequentialNumber();
+    $sequentialFormatted = str_pad($sequential, 4, '0', STR_PAD_LEFT);
+    
+    // Calculate total guests
+    $totalGuests = $adults + $teens + $kids;
+    
+    // Create breakdown part: {total}G{adults}A{teens}T{kids}K
+    $breakdown = $totalGuests . 'G' . $adults . 'A' . $teens . 'T' . $kids . 'K';
+    
+    // Generate random suffix (5 characters)
+    $randomSuffix = generateRandomString(5);
+    
+    // Combine all parts: RES + sequential + breakdown + random
+    $reservationId = $prefix . $sequentialFormatted . '-' . $breakdown . '-' . $randomSuffix;
+    
+    return $reservationId;
+}
 
 /**
  * Generate Ticket ID for each attendee
- * Pattern: RES0001-15G12A3T0K-AT54G-A001
+ * Pattern: RES0001-15G12A3T0K-A2DD3-A001
  * Where:
- * - First part: Same as reservation ID
- * - A001: Ticket type (A=Adult, T=Teen, K=Kid) + sequential number for that type
+ * - First part: Full reservation ID
+ * - A001: Type code (A=Adult, T=Teen, K=Kid) + 3-digit number
  */
 function generateTicketId($reservationId, $attendeeType, $attendeeNumber) {
     $typeCode = '';
@@ -438,7 +457,7 @@ function decodeReservationId($reservationId) {
  * Decode Ticket ID
  */
 function decodeTicketId($ticketId) {
-    // Ticket ID pattern: RES0001-15G12A3T0K-AT54G-A001
+    // Ticket ID pattern: RES0001-15G12A3T0K-A2DD3-A001
     $pattern = '/^(RES\d{4}-\d+G\d+A\d+T\d+K-[A-Z0-9]{5})-([ATK])(\d{3})$/';
     
     if (preg_match($pattern, $ticketId, $matches)) {
@@ -456,5 +475,14 @@ function decodeTicketId($ticketId) {
     }
     
     return null;
+}
+
+/**
+ * Override the old generateReservationId function to use the new pattern
+ * This replaces any old function that might be using the settings prefix
+ */
+function generateReservationIdOld($adults, $teens, $kids) {
+    // This is the old function - now calling the new one
+    return generateReservationId($adults, $teens, $kids);
 }
 ?>

@@ -528,11 +528,16 @@ $themeColor = $systemSettings['theme_color']['setting_value'] ?? '#4f46e5';
                             <input type="text" name="setting_site_name" value="<?php echo htmlspecialchars($systemSettings['site_name']['setting_value'] ?? 'Ticketing System'); ?>">
                             <div class="text-muted">Name displayed throughout the system</div>
                         </div>
-                        <div class="form-group">
-                            <label><i class="bi bi-tag"></i> Reservation ID Prefix</label>
-                            <input type="text" name="setting_reservation_prefix" value="<?php echo htmlspecialchars($systemSettings['reservation_prefix']['setting_value'] ?? 'TKT'); ?>">
-                            <div class="text-muted">Example: TKT-20240315-ABC123</div>
-                        </div>
+<!-- In settings.php, find the reservation prefix field and replace it with this: -->
+<div class="form-group">
+    <label><i class="bi bi-tag"></i> Reservation ID Pattern</label>
+    <input type="text" class="form-control" value="RES0001-15G12A3T0K-XXXXX" disabled style="background: #f1f5f9;">
+    <div class="text-muted">
+        Fixed pattern: <strong>RES{number}-{total}G{adults}A{teens}T{kids}K-{random}</strong><br>
+        Example: RES0001-15G12A3T0K-A2DD3
+    </div>
+    <input type="hidden" name="setting_reservation_prefix" value="RES">
+</div>
                         <div class="form-group">
                             <label><i class="bi bi-currency-exchange"></i> Currency Code</label>
                             <select name="setting_currency">
