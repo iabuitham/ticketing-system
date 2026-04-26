@@ -610,29 +610,34 @@ $conn->close();
         </div>
 
         <!-- Action Buttons -->
-        <div class="button-group">
-            <a href="edit_reservation.php?id=<?php echo urlencode($reservation_id); ?>" class="btn btn-warning">
-                <i class="bi bi-pencil"></i> <?php echo t('Edit Reservation'); ?>
-            </a>
-            <?php if ($reservation['status'] == 'paid'): ?>
-                <a href="print_ticket.php?reservation_id=<?php echo urlencode($reservation_id); ?>" class="btn btn-primary" target="_blank">
-                    <i class="bi bi-ticket-perforated"></i> <?php echo t('Print Ticket'); ?>
-                </a>
-            <?php endif; ?>
-            <a href="print_statement.php?id=<?php echo urlencode($reservation_id); ?>" class="btn btn-info" target="_blank">
-                <i class="bi bi-printer"></i> <?php echo t('Print Statement'); ?>
-            </a>
-            <?php if ($reservation['status'] != 'cancelled' && $reservation['status'] != 'paid'): ?>
-                <button onclick="cancelReservation('<?php echo $reservation_id; ?>')" class="btn btn-danger">
-                    <i class="bi bi-x-circle"></i> <?php echo t('Cancel Reservation'); ?>
-                </button>
-            <?php endif; ?>
-            <button onclick="deleteReservation('<?php echo $reservation_id; ?>')" class="btn btn-danger">
-                <i class="bi bi-trash"></i> <?php echo t('Delete Reservation'); ?>
-            </button>
-            <a href="dashboard.php" class="btn btn-secondary">
-                <i class="bi bi-arrow-left"></i> <?php echo t('Back To Dashboard'); ?>
-            </a>
+<div class="button-group">
+    <a href="edit_reservation.php?id=<?php echo urlencode($reservation_id); ?>" class="btn btn-warning">
+        <i class="bi bi-pencil"></i> <?php echo t('edit_reservation'); ?>
+    </a>
+    <!-- NEW: View Tickets Button -->
+    <a href="view_tickets.php?id=<?php echo urlencode($reservation_id); ?>" class="btn btn-info">
+        <i class="bi bi-ticket-perforated"></i> View Tickets
+    </a>
+    <?php if ($reservation['status'] == 'paid'): ?>
+        <a href="print_ticket.php?reservation_id=<?php echo urlencode($reservation_id); ?>" class="btn btn-primary" target="_blank">
+            <i class="bi bi-ticket-perforated"></i> <?php echo t('print_ticket'); ?>
+        </a>
+    <?php endif; ?>
+    <a href="print_statement.php?id=<?php echo urlencode($reservation_id); ?>" class="btn btn-info" target="_blank">
+        <i class="bi bi-printer"></i> <?php echo t('print_statement'); ?>
+    </a>
+    <?php if ($reservation['status'] != 'cancelled' && $reservation['status'] != 'paid'): ?>
+        <button onclick="cancelReservation('<?php echo $reservation_id; ?>')" class="btn btn-danger">
+            <i class="bi bi-x-circle"></i> <?php echo t('cancel_reservation'); ?>
+        </button>
+    <?php endif; ?>
+    <button onclick="deleteReservation('<?php echo $reservation_id; ?>')" class="btn btn-danger">
+        <i class="bi bi-trash"></i> <?php echo t('delete_reservation'); ?>
+    </button>
+    <a href="dashboard.php" class="btn btn-secondary">
+        <i class="bi bi-arrow-left"></i> <?php echo t('back_to_dashboard'); ?>
+    </a>
+</div>
         </div>
     </div>
 

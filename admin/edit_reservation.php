@@ -338,14 +338,18 @@ $conn->close();
                     </div>
 
                     <div class="actions">
-                        <a href="dashboard.php" class="btn btn-secondary">Back to Dashboard</a>
-                        <?php if (!$isCancelled): ?>
-                            <button type="submit" class="btn btn-primary">Save Changes</button>
-                            <button type="button" class="btn btn-danger" onclick="confirmCancel('<?php echo $reservation['reservation_id']; ?>')">❌ Cancel Reservation</button>
-                        <?php else: ?>
-                            <button type="submit" class="btn btn-primary">Restore Reservation</button>
-                        <?php endif; ?>
-                    </div>
+    <a href="dashboard.php" class="btn btn-secondary">Back to Dashboard</a>
+    <!-- NEW: View Tickets Button -->
+    <a href="view_tickets.php?id=<?php echo htmlspecialchars($reservation['reservation_id']); ?>" class="btn btn-info">
+        <i class="bi bi-ticket-perforated"></i> View Tickets
+    </a>
+    <?php if (!$isCancelled): ?>
+        <button type="submit" class="btn btn-primary">Save Changes</button>
+        <button type="button" class="btn btn-danger" onclick="confirmCancel('<?php echo $reservation['reservation_id']; ?>')">❌ Cancel Reservation</button>
+    <?php else: ?>
+        <button type="submit" class="btn btn-primary">Restore Reservation</button>
+    <?php endif; ?>
+</div>
                 </form>
             </div>
         </div>

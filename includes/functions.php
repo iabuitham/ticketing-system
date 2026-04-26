@@ -351,4 +351,110 @@ function getReservationWithPayments($reservation_id) {
     
     return $reservation;
 }
+
+/**
+ * Generate random string for ID
+ */
+function generateRandomString($length = 5) {
+    $characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    $charactersLength = strlen($characters);
+    $randomString = '';
+    for ($i = 0; $i < $length; $i++) {
+        $randomString .= $characters[random_int(0, $charactersLength - 1)];
+    }
+    return $randomString;
+}
+
+/**
+ * Get next sequential number for reservation
+ */
+function getNextSequentialNumber() {
+    $conn = getConnection();
+    $result = $conn->query("SELECT COALESCE(MAX(sequential_number), 0) + 1 as next_num FROM reservations");
+    $next = $result->fetch_assoc()['next_num'];
+    $conn->close();
+    return $next;
+}
+
+/**
+ * Generate Reservation ID with pattern: RES0001-15G12A3T0K-AT54G
+ * Where:
+ * - RES0001: Sequential number (RES + 4 digits)
+ * - 15G12A3T0K: Total guests + breakdown (15G = 15 guests, 12A = 12 adults, 3T = 3 teens, 0K = 0 kids)
+ * - AT54G: Random 5 characters
+ */
+
+/**
+ * Generate Ticket ID for each attendee
+ * Pattern: RES0001-15G12A3T0K-AT54G-A001
+ * Where:
+ * - First part: Same as reservation ID
+ * - A001: Ticket type (A=Adult, T=Teen, K=Kid) + sequential number for that type
+ */
+function generateTicketId($reservationId, $attendeeType, $attendeeNumber) {
+    $typeCode = '';
+    switch ($attendeeType) {
+        case 'adult':
+            $typeCode = 'A';
+            break;
+        case 'teen':
+            $typeCode = 'T';
+            break;
+        case 'kid':
+            $typeCode = 'K';
+            break;
+    }
+    
+    // Format number as 3 digits (001, 002, etc.)
+    $numberFormatted = str_pad($attendeeNumber, 3, '0', STR_PAD_LEFT);
+    
+    // Combine: reservationId + typeCode + number
+    $ticketId = $reservationId . '-' . $typeCode . $numberFormatted;
+    
+    return $ticketId;
+}
+
+/**
+ * Decode Reservation ID to get original data
+ */
+function decodeReservationId($reservationId) {
+    $pattern = '/^RES(\d{4})-(\d+)G(\d+)A(\d+)T(\d+)K-([A-Z0-9]{5})$/';
+    
+    if (preg_match($pattern, $reservationId, $matches)) {
+        return [
+            'sequential' => intval($matches[1]),
+            'total_guests' => intval($matches[2]),
+            'adults' => intval($matches[3]),
+            'teens' => intval($matches[4]),
+            'kids' => intval($matches[5]),
+            'random_suffix' => $matches[6]
+        ];
+    }
+    
+    return null;
+}
+
+/**
+ * Decode Ticket ID
+ */
+function decodeTicketId($ticketId) {
+    // Ticket ID pattern: RES0001-15G12A3T0K-AT54G-A001
+    $pattern = '/^(RES\d{4}-\d+G\d+A\d+T\d+K-[A-Z0-9]{5})-([ATK])(\d{3})$/';
+    
+    if (preg_match($pattern, $ticketId, $matches)) {
+        $typeMap = [
+            'A' => 'adult',
+            'T' => 'teen',
+            'K' => 'kid'
+        ];
+        
+        return [
+            'reservation_id' => $matches[1],
+            'attendee_type' => $typeMap[$matches[2]],
+            'attendee_number' => intval($matches[3])
+        ];
+    }
+    
+    return null;
+}
 ?>

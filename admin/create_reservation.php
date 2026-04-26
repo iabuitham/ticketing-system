@@ -46,6 +46,7 @@ $kidPrice = $event_ticket_prices['kid'] ?? getSetting('ticket_price_kid', 0);
 $currencySymbol = getCurrencySymbol();
 
 // Handle form submission
+// Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $name = sanitizeInput($_POST['name']);
     $phone = sanitizeInput($_POST['phone']);
@@ -58,27 +59,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Calculate total amount
     $total_amount = ($adults * $adultPrice) + ($teens * $teenPrice) + ($kids * $kidPrice);
     
-    // Generate unique reservation ID
-    $reservation_id = generateReservationId();
+    // Generate new Reservation ID based on guest counts
+    $reservation_id = generateReservationId($adults, $teens, $kids);
     
-    // Insert reservation - FIXED: Added email column and fixed column count
-    $stmt = $conn->prepare("INSERT INTO reservations (reservation_id, name, phone, table_id, adults, teens, kids, total_amount, additional_amount_due, notes, status, created_at) 
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())");
-    $additional_amount_due = $total_amount; // Full amount due initially
-    $status = 'pending';
-    $stmt->bind_param("ssssiiiddss", $reservation_id, $name, $phone, $table_id, $adults, $teens, $kids, $total_amount, $additional_amount_due, $notes, $status);
+    // Start transaction
+    $conn->begin_transaction();
     
-    if ($stmt->execute()) {
-        $message = "Reservation created successfully! Reservation ID: " . $reservation_id;
+    try {
+        // Insert reservation
+        $stmt = $conn->prepare("INSERT INTO reservations (reservation_id, name, phone, table_id, adults, teens, kids, total_amount, additional_amount_due, notes, status, created_at) 
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())");
+        $additional_amount_due = $total_amount;
+        $stmt->bind_param("ssssiiidds", $reservation_id, $name, $phone, $table_id, $adults, $teens, $kids, $total_amount, $additional_amount_due, $notes);
+        $stmt->execute();
+        $stmt->close();
+        
+        // Generate ticket codes for each attendee
+        $adultCount = 0;
+        $teenCount = 0;
+        $kidCount = 0;
+        
+        // Generate tickets for adults
+        for ($i = 1; $i <= $adults; $i++) {
+            $ticketId = generateTicketId($reservation_id, 'adult', $i);
+            $stmt = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_id, attendee_type, attendee_number) VALUES (?, ?, 'adult', ?)");
+            $stmt->bind_param("ssi", $reservation_id, $ticketId, $i);
+            $stmt->execute();
+            $stmt->close();
+            $adultCount++;
+        }
+        
+        // Generate tickets for teens
+        for ($i = 1; $i <= $teens; $i++) {
+            $ticketId = generateTicketId($reservation_id, 'teen', $i);
+            $stmt = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_id, attendee_type, attendee_number) VALUES (?, ?, 'teen', ?)");
+            $stmt->bind_param("ssi", $reservation_id, $ticketId, $i);
+            $stmt->execute();
+            $stmt->close();
+            $teenCount++;
+        }
+        
+        // Generate tickets for kids
+        for ($i = 1; $i <= $kids; $i++) {
+            $ticketId = generateTicketId($reservation_id, 'kid', $i);
+            $stmt = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_id, attendee_type, attendee_number) VALUES (?, ?, 'kid', ?)");
+            $stmt->bind_param("ssi", $reservation_id, $ticketId, $i);
+            $stmt->execute();
+            $stmt->close();
+            $kidCount++;
+        }
+        
+        $conn->commit();
+        
+        $message = "Reservation created successfully!<br>";
+        $message .= "Reservation ID: <strong>" . $reservation_id . "</strong><br>";
+        $message .= "Tickets generated: " . $adultCount . " Adult, " . $teenCount . " Teen, " . $kidCount . " Kid";
         $messageType = "success";
         
         // Clear form
         $_POST = array();
-    } else {
-        $message = "Error creating reservation: " . $conn->error;
+        
+    } catch (Exception $e) {
+        $conn->rollback();
+        $message = "Error creating reservation: " . $e->getMessage();
         $messageType = "error";
     }
-    $stmt->close();
 }
 
 // Get available tables for dropdown
