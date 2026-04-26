@@ -30,6 +30,27 @@ if ($result->num_rows === 0) {
 $reservation = $result->fetch_assoc();
 $stmt->close();
 
+// Get total paid from split_payments
+$stmt_paid = $conn->prepare("SELECT COALESCE(SUM(amount), 0) as total_paid FROM split_payments WHERE reservation_id = ?");
+$stmt_paid->bind_param("s", $reservation_id);
+$stmt_paid->execute();
+$paidResult = $stmt_paid->get_result()->fetch_assoc();
+$stmt_paid->close();
+$total_paid = floatval($paidResult['total_paid']);
+
+// Calculate correct amount due
+$total_amount = floatval($reservation['total_amount']);
+$correct_amount_due = max(0, $total_amount - $total_paid);
+
+// Update the reservation if the amount due is wrong
+if ($correct_amount_due != floatval($reservation['additional_amount_due'])) {
+    $update_due = $conn->prepare("UPDATE reservations SET additional_amount_due = ? WHERE reservation_id = ?");
+    $update_due->bind_param("ds", $correct_amount_due, $reservation_id);
+    $update_due->execute();
+    $update_due->close();
+    $reservation['additional_amount_due'] = $correct_amount_due;
+}
+
 // Get selected event info for ticket prices
 $selected_event_id = $_SESSION['selected_event_id'] ?? 0;
 $event_ticket_prices = $_SESSION['event_ticket_prices'] ?? null;
@@ -74,9 +95,8 @@ $conn->close();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="theme-color" content="#667eea">
     <title>Edit Reservation - Ticketing System</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -101,7 +121,6 @@ $conn->close();
         .header p { opacity: 0.9; font-size: 14px; }
         .content { padding: 30px; }
         
-        /* Cancelled text styling - strikethrough */
         .cancelled-text {
             text-decoration: line-through;
             text-decoration-thickness: 2px;
@@ -188,6 +207,11 @@ $conn->close();
             font-weight: bold;
             color: #10b981;
         }
+        .amount-due {
+            font-size: 18px;
+            font-weight: bold;
+            color: #f59e0b;
+        }
         .actions {
             display: flex;
             gap: 10px;
@@ -195,6 +219,7 @@ $conn->close();
             margin-top: 30px;
             padding-top: 20px;
             border-top: 1px solid #e2e8f0;
+            flex-wrap: wrap;
         }
         .btn {
             padding: 12px 24px;
@@ -204,39 +229,21 @@ $conn->close();
             font-size: 14px;
             font-weight: 600;
             text-decoration: none;
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
             transition: all 0.2s;
         }
-        .btn-primary {
-            background: #6366f1;
-            color: white;
-        }
-        .btn-primary:hover {
-            background: #4f46e5;
-            transform: translateY(-2px);
-        }
-        .btn-secondary {
-            background: #64748b;
-            color: white;
-        }
-        .btn-secondary:hover {
-            background: #475569;
-        }
-        .btn-danger {
-            background: #dc2626;
-            color: white;
-        }
-        .btn-danger:hover {
-            background: #b91c1c;
-            transform: translateY(-2px);
-        }
-        .btn-warning {
-            background: #f59e0b;
-            color: white;
-        }
-        .btn-warning:hover {
-            background: #d97706;
-        }
+        .btn-primary { background: #6366f1; color: white; }
+        .btn-primary:hover { background: #4f46e5; transform: translateY(-2px); }
+        .btn-success { background: #10b981; color: white; }
+        .btn-success:hover { background: #059669; transform: translateY(-2px); }
+        .btn-secondary { background: #64748b; color: white; }
+        .btn-secondary:hover { background: #475569; }
+        .btn-danger { background: #dc2626; color: white; }
+        .btn-danger:hover { background: #b91c1c; transform: translateY(-2px); }
+        .btn-info { background: #0ea5e9; color: white; }
+        .btn-info:hover { background: #0284c7; }
         small {
             display: block;
             margin-top: 5px;
@@ -247,7 +254,7 @@ $conn->close();
             .content { padding: 20px; }
             .form-row { grid-template-columns: 1fr; gap: 0; }
             .actions { flex-direction: column; }
-            .btn { text-align: center; }
+            .btn { text-align: center; justify-content: center; }
         }
     </style>
 </head>
@@ -268,15 +275,23 @@ $conn->close();
                     <p class="<?php echo $cancelledClass; ?>"><strong>📅 Created:</strong> <?php echo date('F j, Y g:i A', strtotime($reservation['created_at'])); ?></p>
                     <p class="<?php echo $cancelledClass; ?>"><strong>👥 Current Guests:</strong> <?php echo $totalGuests; ?> total (<?php echo $reservation['adults']; ?> Adults, <?php echo $reservation['teens']; ?> Teens, <?php echo $reservation['kids']; ?> Kids)</p>
                     <p class="<?php echo $cancelledClass; ?>"><strong>💰 Total Amount:</strong> <span class="total-amount <?php echo $cancelledClass; ?>"><?php echo number_format($currentTotal, 2); ?> <?php echo $currencySymbol; ?></span></p>
-                    <?php if ($additionalDue > 0): ?>
-                    <p style="color: #d97706;" class="<?php echo $cancelledClass; ?>"><strong>⚠️ Additional Amount Due:</strong> <?php echo number_format($additionalDue, 2); ?> <?php echo $currencySymbol; ?></p>
+                    <p><strong>💵 Total Paid:</strong> <?php echo number_format($total_paid, 2); ?> <?php echo $currencySymbol; ?></p>
+                    <?php if ($correct_amount_due > 0): ?>
+                    <p style="color: #d97706;" class="<?php echo $cancelledClass; ?>">
+                        <strong>⚠️ Additional Amount Due:</strong> <span class="amount-due"><?php echo number_format($correct_amount_due, 2); ?> <?php echo $currencySymbol; ?></span>
+                    </p>
+                    <?php else: ?>
+                    <p style="color: #10b981;">
+                        <strong>✅ Fully Paid!</strong>
+                    </p>
                     <?php endif; ?>
                 </div>
 
-                <?php if ($additionalDue > 0 && !$isCancelled): ?>
+                <?php if ($correct_amount_due > 0 && !$isCancelled): ?>
                 <div class="warning-box">
                     <p><strong>⚠️ Warning: Additional Payment Required</strong></p>
-                    <p>This reservation has unpaid guests. If you increase guest count further, additional payment will be required.</p>
+                    <p>This reservation has an outstanding balance of <?php echo number_format($correct_amount_due, 2); ?> <?php echo $currencySymbol; ?>.</p>
+                    <p>If you increase guest count, the amount due will increase accordingly.</p>
                 </div>
                 <?php endif; ?>
 
@@ -287,7 +302,7 @@ $conn->close();
                 </div>
                 <?php endif; ?>
 
-                <form action="update_reservation.php" method="POST">
+                <form action="update_reservation.php" method="POST" id="editForm">
                     <input type="hidden" name="reservation_id" value="<?php echo htmlspecialchars($reservation['reservation_id']); ?>">
 
                     <div class="form-group">
@@ -302,15 +317,15 @@ $conn->close();
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label>Adults (<?php echo $currencySymbol; ?> <?php echo number_format($adultPrice, 2); ?>)</label>
+                            <label>Adults (<?php echo $currencySymbol; ?> <?php echo number_format($adultPrice, 2); ?> each)</label>
                             <input type="number" name="adults" id="adults" value="<?php echo $reservation['adults']; ?>" min="0" onchange="updatePrice()" <?php echo $isCancelled ? 'disabled' : ''; ?>>
                         </div>
                         <div class="form-group">
-                            <label>Teens (<?php echo $currencySymbol; ?> <?php echo number_format($teenPrice, 2); ?>)</label>
+                            <label>Teens (<?php echo $currencySymbol; ?> <?php echo number_format($teenPrice, 2); ?> each)</label>
                             <input type="number" name="teens" id="teens" value="<?php echo $reservation['teens']; ?>" min="0" onchange="updatePrice()" <?php echo $isCancelled ? 'disabled' : ''; ?>>
                         </div>
                         <div class="form-group">
-                            <label>Kids (<?php echo $currencySymbol; ?> <?php echo number_format($kidPrice, 2); ?>)</label>
+                            <label>Kids (<?php echo $currencySymbol; ?> <?php echo number_format($kidPrice, 2); ?> each)</label>
                             <input type="number" name="kids" id="kids" value="<?php echo $reservation['kids']; ?>" min="0" onchange="updatePrice()" <?php echo $isCancelled ? 'disabled' : ''; ?>>
                         </div>
                     </div>
@@ -338,18 +353,22 @@ $conn->close();
                     </div>
 
                     <div class="actions">
-    <a href="dashboard.php" class="btn btn-secondary">Back to Dashboard</a>
-    <!-- NEW: View Tickets Button -->
-    <a href="view_tickets.php?id=<?php echo htmlspecialchars($reservation['reservation_id']); ?>" class="btn btn-info">
-        <i class="bi bi-ticket-perforated"></i> View Tickets
-    </a>
-    <?php if (!$isCancelled): ?>
-        <button type="submit" class="btn btn-primary">Save Changes</button>
-        <button type="button" class="btn btn-danger" onclick="confirmCancel('<?php echo $reservation['reservation_id']; ?>')">❌ Cancel Reservation</button>
-    <?php else: ?>
-        <button type="submit" class="btn btn-primary">Restore Reservation</button>
-    <?php endif; ?>
-</div>
+                        <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Back to Dashboard</a>
+                        <a href="view_tickets.php?id=<?php echo htmlspecialchars($reservation['reservation_id']); ?>" class="btn btn-info">
+                            <i class="bi bi-ticket-perforated"></i> View Tickets
+                        </a>
+                        <?php if ($correct_amount_due > 0 && !$isCancelled): ?>
+                            <a href="dashboard.php?pay_reservation=<?php echo urlencode($reservation['reservation_id']); ?>" class="btn btn-success">
+                                <i class="bi bi-credit-card"></i> Pay <?php echo number_format($correct_amount_due, 2); ?> <?php echo $currencySymbol; ?>
+                            </a>
+                        <?php endif; ?>
+                        <?php if (!$isCancelled): ?>
+                            <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save Changes</button>
+                            <button type="button" class="btn btn-danger" onclick="confirmCancel('<?php echo $reservation['reservation_id']; ?>')"><i class="bi bi-x-circle"></i> Cancel Reservation</button>
+                        <?php else: ?>
+                            <button type="submit" class="btn btn-primary"><i class="bi bi-arrow-repeat"></i> Restore Reservation</button>
+                        <?php endif; ?>
+                    </div>
                 </form>
             </div>
         </div>
@@ -360,8 +379,10 @@ $conn->close();
         const teenPrice = <?php echo $teenPrice; ?>;
         const kidPrice = <?php echo $kidPrice; ?>;
         const currencySymbol = '<?php echo $currencySymbol; ?>';
-        const currentPaid = <?php echo $currentTotal; ?>;
-        const currentAdditionalDue = <?php echo $additionalDue; ?>;
+        const totalPaid = <?php echo $total_paid; ?>;
+        let currentAdults = <?php echo $reservation['adults']; ?>;
+        let currentTeens = <?php echo $reservation['teens']; ?>;
+        let currentKids = <?php echo $reservation['kids']; ?>;
 
         function updatePrice() {
             let adults = parseInt(document.getElementById('adults').value) || 0;
@@ -370,13 +391,17 @@ $conn->close();
 
             let newSubtotal = (adults * adultPrice) + (teens * teenPrice) + (kids * kidPrice);
             let newTotal = newSubtotal;
-            let additionalDue = newTotal - currentPaid;
-            if (additionalDue < 0) additionalDue = 0;
+            let newAdditionalDue = newTotal - totalPaid;
+            if (newAdditionalDue < 0) newAdditionalDue = 0;
 
             let warningHtml = '';
-            if (additionalDue > 0) {
+            if (newAdditionalDue > 0) {
                 warningHtml = `<div style="background: #fef3c7; padding: 10px; border-radius: 8px; margin-top: 10px; color: #92400e;">
-                    ⚠️ Additional payment required: ${additionalDue.toFixed(2)} ${currencySymbol}
+                    ⚠️ Additional payment required: ${newAdditionalDue.toFixed(2)} ${currencySymbol}
+                </div>`;
+            } else if (newAdditionalDue === 0) {
+                warningHtml = `<div style="background: #d1fae5; padding: 10px; border-radius: 8px; margin-top: 10px; color: #065f46;">
+                    ✅ Fully paid! No additional payment needed.
                 </div>`;
             }
 
@@ -387,7 +412,7 @@ $conn->close();
                 Kids: ${kids} × ${kidPrice.toFixed(2)} = ${(kids * kidPrice).toFixed(2)} ${currencySymbol}<br>
                 <hr>
                 <strong>New Total: ${newTotal.toFixed(2)} ${currencySymbol}</strong><br>
-                <strong>Already Paid: ${currentPaid.toFixed(2)} ${currencySymbol}</strong>
+                <strong>Already Paid: ${totalPaid.toFixed(2)} ${currencySymbol}</strong>
                 ${warningHtml}
             `;
         }

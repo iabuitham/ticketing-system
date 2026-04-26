@@ -78,8 +78,8 @@ $reservations = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
 // Calculate actual amount due for each reservation
-foreach ($reservations as $key => &$res) {
-    // Get total paid from split_payments for this reservation
+foreach ($reservations as &$res) {
+    // Get total paid from split_payments
     $stmt_paid = $conn->prepare("SELECT COALESCE(SUM(amount), 0) as total_paid FROM split_payments WHERE reservation_id = ?");
     $stmt_paid->bind_param("s", $res['reservation_id']);
     $stmt_paid->execute();
@@ -88,10 +88,8 @@ foreach ($reservations as $key => &$res) {
     
     $totalPaid = floatval($paidResult['total_paid']);
     $totalAmount = floatval($res['total_amount']);
-    $actualAmountDue = max(0, $totalAmount - $totalPaid);
-    
+    $res['actual_amount_due'] = max(0, $totalAmount - $totalPaid);
     $res['total_paid'] = $totalPaid;
-    $res['actual_amount_due'] = $actualAmountDue;
 }
 unset($res);
 
@@ -1229,11 +1227,11 @@ $conn->close();
                                         <i class="bi bi-ticket-perforated"></i>
                                     </a>
                                     
-                                    <?php if ($showPayButton): ?>
-                                        <button onclick="openPaymentModal('<?php echo $res['reservation_id']; ?>', <?php echo floatval($res['total_amount']); ?>, <?php echo $amountDue; ?>)" class="btn btn-sm btn-success" title="Pay">
-                                            <i class="bi bi-credit-card"></i> Pay <?php echo number_format($amountDue, 2); ?>
-                                        </button>
-                                    <?php endif; ?>
+                                    <?php if ($res['status'] != 'cancelled' && $res['actual_amount_due'] > 0): ?>
+    <button onclick="openPaymentModal('<?php echo $res['reservation_id']; ?>', <?php echo floatval($res['total_amount']); ?>, <?php echo $res['actual_amount_due']; ?>)" class="btn btn-sm btn-success" title="Pay">
+        <i class="bi bi-credit-card"></i> Pay <?php echo number_format($res['actual_amount_due'], 2); ?>
+    </button>
+<?php endif; ?>
                                     
                                     <button onclick="deleteReservation('<?php echo $res['reservation_id']; ?>', this)" class="btn btn-sm btn-danger" title="Delete">
                                         <i class="bi bi-trash3"></i>
