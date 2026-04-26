@@ -337,21 +337,6 @@ function getUpcomingEvents($limit = null) {
 }
 
 /**
- * Send WhatsApp notification (if enabled)
- */
-function sendWhatsAppMessage($to, $message) {
-    $enabled = getSetting('enable_whatsapp', '1') == '1';
-    if (!$enabled) return false;
-    
-    $apiKey = getSetting('whatsapp_api_key', '');
-    $businessNumber = getSetting('whatsapp_number', '');
-    
-    if (empty($apiKey) || empty($businessNumber)) return false;
-    
-    return true;
-}
-
-/**
  * Send email notification (if enabled)
  */
 function sendEmail($to, $subject, $body) {
@@ -492,5 +477,116 @@ function getDaysRemainingText($event_date) {
     } else {
         return "🗓️ " . $days . " days until the event";
     }
+}
+
+/**
+ * Send WhatsApp message using Ultramsg
+ */
+/**
+ * Send WhatsApp message using Ultramsg
+ */
+function sendWhatsAppMessage($to, $message) {
+    // Check if enabled
+    $enabled = getSetting('enable_whatsapp', '0') == '1';
+    if (!$enabled) return false;
+    
+    // Get credentials
+    $instanceId = getSetting('ultramsg_instance_id', '');
+    $token = getSetting('ultramsg_token', '');
+    
+    if (empty($instanceId) || empty($token)) {
+        error_log("Ultramsg: Missing credentials");
+        return false;
+    }
+    
+    // Clean phone number - remove ALL non-digits
+    $to = preg_replace('/[^0-9]/', '', $to);
+    
+    // Remove leading zeros
+    $to = ltrim($to, '0');
+    
+    // Remove country code if already there (962)
+    if (substr($to, 0, 3) == '962') {
+        $to = substr($to, 3);
+    }
+    
+    // Now add the country code correctly
+    $to = '962' . $to;
+    
+    // Final validation - number should be 12 digits (962 + 9 digits)
+    if (strlen($to) != 12) {
+        error_log("Ultramsg: Invalid phone number length: " . strlen($to) . " - Number: " . $to);
+        return false;
+    }
+    
+    // Prepare data
+    $data = [
+        'token' => $token,
+        'to' => $to,
+        'body' => $message,
+        'priority' => 1
+    ];
+    
+    // Send request
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, "https://api.ultramsg.com/{$instanceId}/messages/chat");
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    // Log result
+    $responseData = json_decode($response, true);
+    if ($httpCode == 200 && isset($responseData['sent']) && $responseData['sent']) {
+        error_log("WhatsApp sent successfully to: {$to}");
+        return true;
+    } else {
+        error_log("WhatsApp failed: " . $response);
+        return false;
+    }
+}
+
+/**
+ * Send WhatsApp image (for tickets, receipts)
+ */
+function sendWhatsAppImage($to, $imageUrl, $caption = '') {
+    $enabled = getSetting('enable_whatsapp', '0') == '1';
+    if (!$enabled) return false;
+    
+    $instanceId = getSetting('ultramsg_instance_id', '');
+    $token = getSetting('ultramsg_token', '');
+    
+    if (empty($instanceId) || empty($token)) return false;
+    
+    $to = preg_replace('/[^0-9]/', '', $to);
+    if (substr($to, 0, 2) != '962') {
+        $to = '962' . $to;
+    }
+    if (substr($to, 0, 1) == '0') {
+        $to = '962' . substr($to, 1);
+    }
+    
+    $data = [
+        'token' => $token,
+        'to' => $to,
+        'image' => $imageUrl,
+        'caption' => $caption
+    ];
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, "https://api.ultramsg.com/{$instanceId}/messages/image");
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    
+    $response = curl_exec($ch);
+    curl_close($ch);
+    
+    return true;
 }
 ?>

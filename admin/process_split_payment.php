@@ -3,6 +3,10 @@ session_start();
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
 
+// Disable error display for JSON response
+error_reporting(0);
+ini_set('display_errors', 0);
+
 header('Content-Type: application/json');
 
 if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
@@ -11,7 +15,6 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
 }
 
 $reservation_id = $_POST['reservation_id'] ?? '';
-$total_amount = floatval($_POST['total_amount'] ?? 0);
 $splits_json = $_POST['splits'] ?? '[]';
 $splits = json_decode($splits_json, true);
 
@@ -24,10 +27,9 @@ $conn = getConnection();
 $conn->begin_transaction();
 
 try {
-    // Get current reservation and total paid from split_payments
-    $stmt = $conn->prepare("SELECT total_amount, 
-        COALESCE((SELECT SUM(amount) FROM split_payments WHERE reservation_id = ?), 0) as total_paid,
-        additional_amount_due
+    // Get current reservation and total paid
+    $stmt = $conn->prepare("SELECT total_amount, additional_amount_due, 
+        COALESCE((SELECT SUM(amount) FROM split_payments WHERE reservation_id = ?), 0) as total_paid 
         FROM reservations WHERE reservation_id = ?");
     $stmt->bind_param("ss", $reservation_id, $reservation_id);
     $stmt->execute();
@@ -38,10 +40,9 @@ try {
         throw new Exception('Reservation not found');
     }
     
-    $dbTotalAmount = floatval($result['total_amount']);
+    $totalAmount = floatval($result['total_amount']);
     $totalPaid = floatval($result['total_paid']);
-    $currentAdditionalDue = floatval($result['additional_amount_due']);
-    $remainingDue = $dbTotalAmount - $totalPaid;
+    $remainingDue = $totalAmount - $totalPaid;
     
     // Calculate total payment from splits
     $paymentTotal = 0;
@@ -49,7 +50,6 @@ try {
         $paymentTotal += floatval($split['amount']);
     }
     
-    // Validate payment total
     if (abs($paymentTotal - $remainingDue) > 0.01 && $paymentTotal < $remainingDue) {
         throw new Exception('Payment total does not match amount due');
     }
@@ -80,7 +80,7 @@ try {
             $allowedExts = ['jpg', 'jpeg', 'png', 'gif', 'pdf'];
             
             if (!in_array($fileExt, $allowedExts)) {
-                throw new Exception('Invalid file type for CliQ evidence. Allowed: JPG, PNG, GIF, PDF');
+                throw new Exception('Invalid file type for CliQ evidence');
             }
             
             $fileName = time() . '_' . $reservation_id . '_' . $fileIndex . '.' . $fileExt;
@@ -101,31 +101,61 @@ try {
         $stmt->bind_param("ssdsss", $reservation_id, $method, $amount, $receipt_id, $proof_path, $received_by);
         
         if (!$stmt->execute()) {
-            throw new Exception('Failed to save payment split: ' . $stmt->error);
+            throw new Exception('Failed to save payment split');
         }
         $stmt->close();
     }
     
     // Calculate new totals
     $newTotalPaid = $totalPaid + $paymentTotal;
-    $newAdditionalDue = max(0, $dbTotalAmount - $newTotalPaid);
-    $newStatus = ($newTotalPaid >= $dbTotalAmount - 0.01) ? 'paid' : 'registered';
+    $newAdditionalDue = max(0, $totalAmount - $newTotalPaid);
     
-    // Update reservation: status AND additional_amount_due
-    $update = $conn->prepare("UPDATE reservations SET status = ?, additional_amount_due = ? WHERE reservation_id = ?");
+    // Determine new status
+    if ($newAdditionalDue <= 0) {
+        $newStatus = 'paid';
+    } else {
+        $newStatus = 'registered';
+    }
+    
+    // Update reservation
+    $update = $conn->prepare("UPDATE reservations SET status = ?, additional_amount_due = ?, updated_at = NOW() WHERE reservation_id = ?");
     $update->bind_param("sds", $newStatus, $newAdditionalDue, $reservation_id);
     
     if (!$update->execute()) {
-        throw new Exception('Failed to update reservation status');
+        throw new Exception('Failed to update reservation');
     }
     $update->close();
     
+    // Get customer phone for WhatsApp
+    $customerStmt = $conn->prepare("SELECT name, phone FROM reservations WHERE reservation_id = ?");
+    $customerStmt->bind_param("s", $reservation_id);
+    $customerStmt->execute();
+    $customer = $customerStmt->get_result()->fetch_assoc();
+    $customerStmt->close();
+    
     $conn->commit();
+    
+    // Send WhatsApp confirmation (don't let it break the JSON response)
+    $currencySymbol = getCurrencySymbol();
+    $paymentMessage = "💰 *Payment Received!*\n\n";
+    $paymentMessage .= "Dear {$customer['name']},\n\n";
+    $paymentMessage .= "We have received your payment.\n\n";
+    $paymentMessage .= "💵 *Amount:* {$currencySymbol} " . number_format($paymentTotal, 2) . "\n";
+    
+    if ($newAdditionalDue > 0) {
+        $paymentMessage .= "⚠️ *Remaining Balance:* {$currencySymbol} " . number_format($newAdditionalDue, 2) . "\n\n";
+    } else {
+        $paymentMessage .= "✅ *Status:* Fully Paid\n\n";
+    }
+    
+    $paymentMessage .= "Thank you for your payment! 🙏";
+    
+    // Try to send WhatsApp but don't fail if it doesn't work
+    @sendWhatsAppMessage($customer['phone'], $paymentMessage);
     
     echo json_encode([
         'success' => true,
-        'message' => 'Payments processed successfully',
-        'total_paid' => $newTotalPaid,
+        'message' => 'Payment processed successfully',
         'remaining_due' => $newAdditionalDue,
         'status' => $newStatus
     ]);

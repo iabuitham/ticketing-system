@@ -123,7 +123,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         
         $conn->commit();
+        $message = "Reservation created successfully!<br>";
+        $message .= "Reservation ID: <strong>" . $reservation_id . "</strong><br>";
+        $message .= "Tickets generated: " . $adultCount . " Adult, " . $teenCount . " Teen, " . $kidCount . " Kid";
+        $messageType = "success";
         
+        // ========== SEND WHATSAPP CONFIRMATION ==========
+        // This is where the WhatsApp code should go - INSIDE the POST submission block
+        $whatsappMessage = "🎫 *Reservation Confirmed!*\n\n";
+        $whatsappMessage .= "Dear {$name},\n\n";
+        $whatsappMessage .= "Your reservation has been confirmed.\n\n";
+        $whatsappMessage .= "📋 *Reservation ID:* {$reservation_id}\n";
+        $whatsappMessage .= "👥 *Guests:* " . ($adults + $teens + $kids) . "\n";
+        $whatsappMessage .= "🍽️ *Table:* {$table_id}\n";
+        $whatsappMessage .= "💰 *Total Amount:* {$currencySymbol} " . number_format($total_amount, 2) . "\n\n";
+        $whatsappMessage .= "We look forward to serving you! 🎉\n";
+        $whatsappMessage .= "_Thank you for choosing us_";
+        
+        // Send the message
+        $whatsappSent = sendWhatsAppMessage($phone, $whatsappMessage);
+        if ($whatsappSent) {
+            $message .= "<br>📱 WhatsApp confirmation sent to customer!";
+        } else {
+            $message .= "<br>⚠️ WhatsApp could not be sent (check credentials)";
+        }
+        // ========== END WHATSAPP CODE ==========
         $message = "Reservation created successfully!<br>";
         $message .= "Reservation ID: <strong>" . $reservation_id . "</strong><br>";
         $message .= "Tickets generated: " . $adultCount . " Adult, " . $teenCount . " Teen, " . $kidCount . " Kid";
@@ -393,22 +417,17 @@ function generateReservationIdWithSeq($adults, $teens, $kids, $sequential) {
                     <input type="tel" name="phone" required value="<?php echo htmlspecialchars($_POST['phone'] ?? ''); ?>" placeholder="+962XXXXXXXXX">
                 </div>
                 
-<div class="form-group">
-    <label><i class="bi bi-grid-3x3-gap-fill"></i> Table Number *</label>
-    <select name="table_id" required>
-        <option value="">Select a table</option>
-        <?php
-        $tables_result = $conn->query("SELECT table_number, section FROM tables WHERE status = 'available' AND is_active = 1 ORDER BY table_number");
-        while ($table = $tables_result->fetch_assoc()):
-        ?>
-            <option value="<?php echo htmlspecialchars($table['table_number']); ?>" 
-                    <?php echo (($_POST['table_id'] ?? '') == $table['table_number']) ? 'selected' : ''; ?>>
-                Table <?php echo htmlspecialchars($table['table_number']); ?> 
-                <?php if ($table['section']): ?>(<?php echo htmlspecialchars($table['section']); ?>)<?php endif; ?>
-            </option>
-        <?php endwhile; ?>
-    </select>
-</div>
+                <div class="form-group">
+                    <label><i class="bi bi-grid-3x3-gap-fill"></i> Table Number *</label>
+                    <select name="table_id" required>
+                        <option value="">Select a table</option>
+                        <?php foreach ($tables as $table): ?>
+                            <option value="<?php echo htmlspecialchars($table); ?>" <?php echo (($_POST['table_id'] ?? '') == $table) ? 'selected' : ''; ?>>
+                                Table <?php echo htmlspecialchars($table); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
                 
                 <div class="card-header" style="margin-top: 20px;">
                     <h2><i class="bi bi-people"></i> Guest Information</h2>
