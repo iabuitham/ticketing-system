@@ -11,6 +11,36 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
 
 $conn = getConnection();
 
+// Get selected event info
+$selected_event_id = $_SESSION['selected_event_id'] ?? 0;
+$selected_event_name = $_SESSION['selected_event_name'] ?? 'No Event Selected';
+$selected_event_date = $_SESSION['selected_event_date'] ?? '';
+
+// Get event-specific ticket prices
+$event_ticket_prices = $_SESSION['event_ticket_prices'] ?? null;
+
+if (!$event_ticket_prices && $selected_event_id > 0) {
+    $stmt = $conn->prepare("SELECT ticket_price_adult, ticket_price_teen, ticket_price_kid FROM event_settings WHERE id = ?");
+    $stmt->bind_param("i", $selected_event_id);
+    $stmt->execute();
+    $event_prices = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    
+    if ($event_prices) {
+        $event_ticket_prices = [
+            'adult' => $event_prices['ticket_price_adult'],
+            'teen' => $event_prices['ticket_price_teen'],
+            'kid' => $event_prices['ticket_price_kid']
+        ];
+        $_SESSION['event_ticket_prices'] = $event_ticket_prices;
+    }
+}
+
+// Use event-specific prices or fall back to system settings
+$adultPrice = $event_ticket_prices['adult'] ?? getSetting('ticket_price_adult', 10);
+$teenPrice = $event_ticket_prices['teen'] ?? getSetting('ticket_price_teen', 10);
+$kidPrice = $event_ticket_prices['kid'] ?? getSetting('ticket_price_kid', 0);
+
 // Get filters
 $status_filter = isset($_GET['status']) ? $_GET['status'] : '';
 $search = isset($_GET['search']) ? sanitizeInput($_GET['search']) : '';
@@ -50,53 +80,79 @@ $stmt->close();
 // Calculate actual amount due for each reservation
 foreach ($reservations as &$res) {
     $totalPaid = floatval($res['total_paid'] ?? 0);
-    $res['actual_amount_due'] = max(0, floatval($res['total_amount']) - $totalPaid);
+    $res['actual_amount_due'] = max(0, floatval($res['total_amount'] ?? 0) - $totalPaid);
 }
 
-// Get statistics
-$stats = $conn->query("SELECT 
+// Get statistics with null handling
+$statsResult = $conn->query("SELECT 
     COUNT(*) as total,
     SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
     SUM(CASE WHEN status = 'registered' THEN 1 ELSE 0 END) as registered,
     SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid,
     SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
     SUM(additional_amount_due) as total_additional_due
-FROM reservations")->fetch_assoc();
+FROM reservations");
 
-// Get attendee stats
-$attendeeStats = $conn->query("SELECT 
+$stats = $statsResult->fetch_assoc();
+// Set default values if null
+$stats = [
+    'total' => $stats['total'] ?? 0,
+    'pending' => $stats['pending'] ?? 0,
+    'registered' => $stats['registered'] ?? 0,
+    'paid' => $stats['paid'] ?? 0,
+    'cancelled' => $stats['cancelled'] ?? 0,
+    'total_additional_due' => $stats['total_additional_due'] ?? 0
+];
+
+// Get attendee stats with null handling
+$attendeeResult = $conn->query("SELECT 
     SUM(CASE WHEN status = 'paid' THEN adults ELSE 0 END) as total_adults,
     SUM(CASE WHEN status = 'paid' THEN teens ELSE 0 END) as total_teens,
     SUM(CASE WHEN status = 'paid' THEN kids ELSE 0 END) as total_kids,
     SUM(CASE WHEN status = 'paid' THEN adults + teens + kids ELSE 0 END) as total_attendees,
     SUM(CASE WHEN status IN ('pending', 'registered') THEN adults + teens + kids ELSE 0 END) as pending_attendees
-FROM reservations")->fetch_assoc();
+FROM reservations");
 
-// Get revenue by payment method from split_payments
-$revenue = $conn->query("SELECT 
+$attendeeStats = $attendeeResult->fetch_assoc();
+// Set default values if null
+$attendeeStats = [
+    'total_adults' => $attendeeStats['total_adults'] ?? 0,
+    'total_teens' => $attendeeStats['total_teens'] ?? 0,
+    'total_kids' => $attendeeStats['total_kids'] ?? 0,
+    'total_attendees' => $attendeeStats['total_attendees'] ?? 0,
+    'pending_attendees' => $attendeeStats['pending_attendees'] ?? 0
+];
+
+// Get revenue by payment method from split_payments with null handling
+$revenueResult = $conn->query("SELECT 
     SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END) as cash,
     SUM(CASE WHEN payment_method = 'cliq' THEN amount ELSE 0 END) as cliq,
     SUM(CASE WHEN payment_method = 'visa' THEN amount ELSE 0 END) as visa,
     SUM(amount) as total
-FROM split_payments")->fetch_assoc();
+FROM split_payments");
 
-// Get cancelled revenue
+$revenue = $revenueResult->fetch_assoc();
+// Set default values if null
+$revenue = [
+    'cash' => $revenue['cash'] ?? 0,
+    'cliq' => $revenue['cliq'] ?? 0,
+    'visa' => $revenue['visa'] ?? 0,
+    'total' => $revenue['total'] ?? 0
+];
+
+// Get cancelled revenue with null handling
 $cancelledResult = $conn->query("SELECT SUM(total_amount) as total FROM reservations WHERE status = 'cancelled' AND total_amount > 0");
-$cancelledRevenue = $cancelledResult->fetch_assoc()['total'] ?? 0;
+$cancelledRow = $cancelledResult->fetch_assoc();
+$cancelledRevenue = $cancelledRow['total'] ?? 0;
 
-$adultPrice = getSetting('ticket_price_adult', 10);
-$teenPrice = getSetting('ticket_price_teen', 10);
-$kidPrice = getSetting('ticket_price_kid', 0);
 $currency = getSetting('currency', 'JOD');
-
-// Get today's stats for sound notification
-$todayCount = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE DATE(created_at) = CURDATE()")->fetch_assoc()['count'];
-
-// At the top of dashboard.php, after getting settings
+$currencySymbol = getCurrencySymbol();
 $siteName = getSetting('site_name', 'Ticketing System');
 $themeColor = getSetting('theme_color', '#4f46e5');
-$currencySymbol = getCurrencySymbol();
-$darkModeEnabled = isDarkModeEnabled();
+
+// Get today's stats for sound notification with null handling
+$todayResult = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE DATE(created_at) = CURDATE()");
+$todayCount = $todayResult->fetch_assoc()['count'] ?? 0;
 
 $conn->close();
 ?>
@@ -105,7 +161,7 @@ $conn->close();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
-    <title><?php echo t('dashboard'); ?> - <?php echo t('ticketing_system'); ?></title>
+    <title><?php echo t('dashboard'); ?> - <?php echo htmlspecialchars($siteName); ?></title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -134,7 +190,6 @@ $conn->close();
             flex-wrap: wrap;
             gap: 15px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            transition: all 0.3s ease;
         }
         
         body.dark-mode .navbar {
@@ -142,7 +197,19 @@ $conn->close();
         }
         
         .navbar h1 { font-size: 1.5rem; display: flex; align-items: center; gap: 8px; }
-        body.dark-mode .navbar h1 { color: #e2e8f0; }
+        
+        .event-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #f1f5f9;
+            padding: 8px 16px;
+            border-radius: 40px;
+        }
+        
+        body.dark-mode .event-info {
+            background: #0f172a;
+        }
         
         .nav-links { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
         
@@ -204,7 +271,7 @@ $conn->close();
         }
         
         .language-switcher button.active {
-            background: #4f46e5;
+            background: <?php echo $themeColor; ?>;
             color: white;
         }
         
@@ -214,7 +281,6 @@ $conn->close();
             padding: 8px 20px;
             border-radius: 40px;
             text-decoration: none;
-            transition: all 0.2s;
             display: inline-flex;
             align-items: center;
             gap: 6px;
@@ -243,17 +309,10 @@ $conn->close();
             background: #1e293b;
         }
         
-        .stat-card.primary { background: linear-gradient(135deg, #4f46e5, #4338ca); color: white; }
+        .stat-card.primary { background: linear-gradient(135deg, <?php echo $themeColor; ?>, <?php echo $themeColor; ?>cc); color: white; }
         .stat-card.success { background: linear-gradient(135deg, #10b981, #059669); color: white; }
         .stat-card.warning { background: linear-gradient(135deg, #f59e0b, #d97706); color: white; }
         .stat-card.info { background: linear-gradient(135deg, #0ea5e9, #0284c7); color: white; }
-        
-        body.dark-mode .stat-card.primary,
-        body.dark-mode .stat-card.success,
-        body.dark-mode .stat-card.warning,
-        body.dark-mode .stat-card.info {
-            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-        }
         
         .stat-number { font-size: 32px; font-weight: bold; margin-bottom: 8px; }
         .stat-label { font-size: 14px; opacity: 0.9; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
@@ -289,7 +348,6 @@ $conn->close();
             flex-wrap: wrap;
             gap: 15px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            transition: all 0.3s ease;
         }
         
         body.dark-mode .filters-bar {
@@ -309,7 +367,6 @@ $conn->close();
             border-radius: 40px;
             font-size: 14px;
             background: white;
-            transition: all 0.3s ease;
         }
         
         .search-box input {
@@ -346,8 +403,8 @@ $conn->close();
             transition: all 0.2s;
         }
         
-        .btn-primary { background: #4f46e5; color: white; }
-        .btn-primary:hover { background: #4338ca; transform: translateY(-1px); }
+        .btn-primary { background: <?php echo $themeColor; ?>; color: white; }
+        .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
         .btn-success { background: #10b981; color: white; }
         .btn-success:hover { background: #059669; }
         .btn-secondary { background: #64748b; color: white; }
@@ -363,7 +420,6 @@ $conn->close();
             border-radius: 20px;
             overflow-x: auto;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            transition: all 0.3s ease;
         }
         
         body.dark-mode .table-container {
@@ -484,9 +540,14 @@ $conn->close();
             width: 60px;
             height: 60px;
             border: 4px solid rgba(255, 255, 255, 0.3);
-            border-top: 4px solid #667eea;
+            border-top: 4px solid <?php echo $themeColor; ?>;
             border-radius: 50%;
             animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
         
         .loading-text {
@@ -494,11 +555,6 @@ $conn->close();
             margin-top: 15px;
             font-size: 14px;
             text-align: center;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
         }
         
         .sound-notification {
@@ -564,6 +620,8 @@ $conn->close();
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
             max-width: 600px;
             width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
             animation: modalSlideIn 0.3s ease;
         }
         
@@ -584,16 +642,12 @@ $conn->close();
         
         .modal-header {
             padding: 20px 24px;
-            background: linear-gradient(135deg, #4f46e5, #4338ca);
+            background: <?php echo $themeColor; ?>;
             color: white;
             border-radius: 24px 24px 0 0;
             display: flex;
             justify-content: space-between;
             align-items: center;
-        }
-        
-        body.dark-mode .modal-header {
-            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
         }
         
         .modal-header h3 { margin: 0; font-size: 1.25rem; display: flex; align-items: center; gap: 8px; }
@@ -636,7 +690,6 @@ $conn->close();
             border: 1px solid #cbd5e1;
             border-radius: 8px;
             font-size: 14px;
-            transition: all 0.2s;
         }
         
         body.dark-mode .form-group input,
@@ -644,13 +697,6 @@ $conn->close();
             background: #0f172a;
             border-color: #334155;
             color: #e2e8f0;
-        }
-        
-        .form-group input:focus,
-        .form-group select:focus {
-            outline: none;
-            border-color: #4f46e5;
-            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
         }
         
         .amount-due-display {
@@ -674,7 +720,7 @@ $conn->close();
         .amount-due-display .amount {
             font-size: 28px;
             font-weight: bold;
-            color: #4f46e5;
+            color: <?php echo $themeColor; ?>;
         }
         
         .payment-split-item {
@@ -756,7 +802,6 @@ $conn->close();
             .table-container { overflow-x: auto; }
             table { min-width: 850px; }
             .btn-group { flex-wrap: nowrap; }
-            .modal-container { width: 95%; }
         }
     </style>
 </head>
@@ -772,8 +817,19 @@ $conn->close();
         <div class="navbar">
             <h1><i class="bi bi-ticket-perforated"></i> <?php echo htmlspecialchars($siteName); ?></h1>
             <div class="nav-links">
+                <div class="event-info">
+                    <i class="bi bi-calendar-event"></i>
+                    <div>
+                        <strong><?php echo htmlspecialchars($selected_event_name); ?></strong>
+                        <br>
+                        <small><?php echo $selected_event_date ? date('M d, Y', strtotime($selected_event_date)) : ''; ?></small>
+                    </div>
+                    <a href="logout.php?switch_event=1" class="btn btn-sm btn-secondary" style="padding: 4px 8px;">
+                        <i class="bi bi-arrow-repeat"></i> Switch
+                    </a>
+                </div>
                 <div class="header-controls">
-                    <button id="darkModeToggle" class="dark-mode-toggle" title="Toggle Dark Mode"><i class="bi bi-moon-fill"></i></button>
+                    <button id="darkModeToggle" class="dark-mode-toggle"><i class="bi bi-moon-fill"></i></button>
                     <div class="language-switcher">
                         <button onclick="setLanguage('en')" class="<?php echo $lang == 'en' ? 'active' : ''; ?>">EN</button>
                         <button onclick="setLanguage('ar')" class="<?php echo $lang == 'ar' ? 'active' : ''; ?>">AR</button>
@@ -787,81 +843,81 @@ $conn->close();
 
         <div class="stats-grid">
             <div class="stat-card primary">
-                <div class="stat-number"><?php echo number_format($attendeeStats['total_attendees']); ?></div>
+                <div class="stat-number"><?php echo number_format(floatval($attendeeStats['total_attendees'])); ?></div>
                 <div class="stat-label"><i class="bi bi-people-fill"></i> <?php echo t('total_attendees'); ?></div>
                 <div class="stat-details">
                     <div class="detail-item">
                         <span><i class="bi bi-gender-male"></i> <?php echo t('adults'); ?></span>
-                        <span><?php echo number_format($attendeeStats['total_adults']); ?></span>
+                        <span><?php echo number_format(floatval($attendeeStats['total_adults'])); ?></span>
                     </div>
                     <div class="detail-item">
                         <span><i class="bi bi-gender-female"></i> <?php echo t('teens'); ?></span>
-                        <span><?php echo number_format($attendeeStats['total_teens']); ?></span>
+                        <span><?php echo number_format(floatval($attendeeStats['total_teens'])); ?></span>
                     </div>
                     <div class="detail-item">
                         <span><i class="bi bi-egg-fried"></i> <?php echo t('kids'); ?></span>
-                        <span><?php echo number_format($attendeeStats['total_kids']); ?></span>
+                        <span><?php echo number_format(floatval($attendeeStats['total_kids'])); ?></span>
                     </div>
                 </div>
             </div>
 
             <div class="stat-card warning">
-                <div class="stat-number"><?php echo number_format($attendeeStats['pending_attendees']); ?></div>
+                <div class="stat-number"><?php echo number_format(floatval($attendeeStats['pending_attendees'])); ?></div>
                 <div class="stat-label"><i class="bi bi-hourglass-split"></i> <?php echo t('pending_attendees'); ?></div>
                 <div class="stat-details">
                     <div class="detail-item">
                         <span><i class="bi bi-currency-dollar"></i> <?php echo t('amount_due'); ?></span>
-                        <span><?php echo number_format($stats['total_additional_due'], 2); ?> <?php echo $currency; ?></span>
+                        <span><?php echo number_format(floatval($stats['total_additional_due']), 2); ?> <?php echo $currencySymbol; ?></span>
                     </div>
                     <div class="detail-item">
                         <span><i class="bi bi-clock-history"></i> <?php echo t('pending'); ?></span>
-                        <span><?php echo $stats['pending'] + $stats['registered']; ?> <?php echo t('reservations'); ?></span>
+                        <span><?php echo intval($stats['pending']) + intval($stats['registered']); ?> <?php echo t('reservations'); ?></span>
                     </div>
                 </div>
             </div>
 
             <div class="stat-card success">
-                <div class="stat-number"><?php echo number_format($revenue['total'] ?? 0, 2); ?> <?php echo $currency; ?></div>
+                <div class="stat-number"><?php echo number_format(floatval($revenue['total']), 2); ?> <?php echo $currencySymbol; ?></div>
                 <div class="stat-label"><i class="bi bi-graph-up"></i> <?php echo t('total_revenue'); ?></div>
                 <div class="stat-details">
                     <div class="detail-item">
                         <span><i class="bi bi-cash-stack"></i> <?php echo t('cash'); ?></span>
-                        <span><?php echo number_format($revenue['cash'] ?? 0, 2); ?> <?php echo $currency; ?></span>
+                        <span><?php echo number_format(floatval($revenue['cash']), 2); ?> <?php echo $currencySymbol; ?></span>
                     </div>
                     <div class="detail-item">
                         <span><i class="bi bi-phone"></i> <?php echo t('cliq'); ?></span>
-                        <span><?php echo number_format($revenue['cliq'] ?? 0, 2); ?> <?php echo $currency; ?></span>
+                        <span><?php echo number_format(floatval($revenue['cliq']), 2); ?> <?php echo $currencySymbol; ?></span>
                     </div>
                     <div class="detail-item">
                         <span><i class="bi bi-credit-card"></i> <?php echo t('visa'); ?></span>
-                        <span><?php echo number_format($revenue['visa'] ?? 0, 2); ?> <?php echo $currency; ?></span>
+                        <span><?php echo number_format(floatval($revenue['visa']), 2); ?> <?php echo $currencySymbol; ?></span>
                     </div>
                     <div class="detail-item">
                         <span><i class="bi bi-x-circle"></i> <?php echo t('cancelled'); ?></span>
-                        <span class="detail-value" style="color: #fecaca;">- <?php echo number_format($cancelledRevenue, 2); ?> <?php echo $currency; ?></span>
+                        <span class="detail-value" style="color: #fecaca;">- <?php echo number_format(floatval($cancelledRevenue), 2); ?> <?php echo $currencySymbol; ?></span>
                     </div>
                 </div>
             </div>
 
             <div class="stat-card info">
-                <div class="stat-number"><?php echo $stats['total']; ?></div>
+                <div class="stat-number"><?php echo intval($stats['total']); ?></div>
                 <div class="stat-label"><i class="bi bi-calendar-check"></i> <?php echo t('total_reservations'); ?></div>
                 <div class="stat-details">
                     <div class="detail-item">
                         <span><i class="bi bi-hourglass-top"></i> <?php echo t('pending'); ?></span>
-                        <span><?php echo $stats['pending']; ?></span>
+                        <span><?php echo intval($stats['pending']); ?></span>
                     </div>
                     <div class="detail-item">
                         <span><i class="bi bi-check-circle"></i> <?php echo t('registered'); ?></span>
-                        <span><?php echo $stats['registered']; ?></span>
+                        <span><?php echo intval($stats['registered']); ?></span>
                     </div>
                     <div class="detail-item">
                         <span><i class="bi bi-check-circle-fill"></i> <?php echo t('paid'); ?></span>
-                        <span><?php echo $stats['paid']; ?></span>
+                        <span><?php echo intval($stats['paid']); ?></span>
                     </div>
                     <div class="detail-item">
                         <span><i class="bi bi-slash-circle"></i> <?php echo t('cancelled'); ?></span>
-                        <span><?php echo $stats['cancelled']; ?></span>
+                        <span><?php echo intval($stats['cancelled']); ?></span>
                     </div>
                 </div>
             </div>
@@ -887,6 +943,7 @@ $conn->close();
                 <button onclick="openExportModal()" class="btn btn-info"><i class="bi bi-filetype-csv"></i> <?php echo t('export_csv'); ?></button>
                 <a href="print_statement.php" class="btn btn-secondary"><i class="bi bi-printer"></i> <?php echo t('print_statement'); ?></a>
                 <a href="manager_report.php" class="btn btn-secondary"><i class="bi bi-bar-chart-steps"></i> <?php echo t('analytics'); ?></a>
+                <a href="settings.php" class="btn btn-secondary"><i class="bi bi-gear"></i> <?php echo t('system_settings'); ?></a>
             </div>
         </div>
 
@@ -907,34 +964,34 @@ $conn->close();
                 </thead>
                 <tbody>
                     <?php foreach ($reservations as $res): 
-                        $totalGuests = $res['adults'] + $res['teens'] + $res['kids'];
-                        $amountDue = $res['actual_amount_due'];
+                        $totalGuests = ($res['adults'] ?? 0) + ($res['teens'] ?? 0) + ($res['kids'] ?? 0);
+                        $amountDue = $res['actual_amount_due'] ?? 0;
                     ?>
                         <tr>
-                            <td><strong><?php echo htmlspecialchars($res['reservation_id']); ?></strong></d>
-                            <td><?php echo htmlspecialchars($res['name']); ?></d>
-                            <td><?php echo htmlspecialchars($res['phone']); ?></d>
-                            <td style="text-align: center;"><span class="badge-table"><?php echo htmlspecialchars($res['table_id']); ?></span></d>
+                            <td><strong><?php echo htmlspecialchars($res['reservation_id']); ?></strong></td>
+                            <td><?php echo htmlspecialchars($res['name']); ?></td>
+                            <td><?php echo htmlspecialchars($res['phone']); ?></td>
+                            <td style="text-align: center;"><span class="badge-table"><?php echo htmlspecialchars($res['table_id']); ?></span></td>
                             <td>
                                 <span class="guest-badge">
                                     <?php echo $totalGuests; ?> 
-                                    <small>(<?php echo $res['adults']; ?>A, <?php echo $res['teens']; ?>T, <?php echo $res['kids']; ?>K)</small>
+                                    <small>(<?php echo intval($res['adults'] ?? 0); ?>A, <?php echo intval($res['teens'] ?? 0); ?>T, <?php echo intval($res['kids'] ?? 0); ?>K)</small>
                                 </span>
-                            </d>
+                            </td>
                             <td>
                                 <span class="status-badge status-<?php echo $res['status']; ?>">
                                     <i class="bi <?php echo $res['status'] == 'paid' ? 'bi-check-circle-fill' : ($res['status'] == 'pending' ? 'bi-hourglass-split' : ($res['status'] == 'registered' ? 'bi-check-circle' : 'bi-slash-circle')); ?>"></i>
                                     <?php echo ucfirst($res['status']); ?>
                                 </span>
-                            </d>
+                            </td>
                             <td>
                                 <?php if ($amountDue > 0): ?>
-                                    <span class="amount-due-badge"><i class="bi bi-exclamation-triangle-fill"></i> <?php echo number_format($amountDue, 2); ?> <?php echo $currency; ?></span>
+                                    <span class="amount-due-badge"><i class="bi bi-exclamation-triangle-fill"></i> <?php echo number_format(floatval($amountDue), 2); ?> <?php echo $currencySymbol; ?></span>
                                 <?php else: ?>
                                     <span class="text-muted">-</span>
                                 <?php endif; ?>
-                            </d>
-                            <td><?php echo date('M d, H:i', strtotime($res['created_at'])); ?></d>
+                            </td>
+                            <td><?php echo date('M d, H:i', strtotime($res['created_at'])); ?></td>
                             <td class="actions">
                                 <div class="btn-group">
                                     <a href="view_reservation.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-secondary" title="<?php echo t('view'); ?>">
@@ -944,7 +1001,7 @@ $conn->close();
                                         <i class="bi bi-pencil"></i>
                                     </a>
                                     <?php if ($res['status'] != 'paid' && $res['status'] != 'cancelled' && $amountDue > 0): ?>
-                                        <button onclick="openPaymentModal('<?php echo $res['reservation_id']; ?>', <?php echo $res['total_amount']; ?>)" class="btn btn-sm btn-success" title="<?php echo t('pay'); ?>">
+                                        <button onclick="openPaymentModal('<?php echo $res['reservation_id']; ?>', <?php echo floatval($res['total_amount'] ?? 0); ?>)" class="btn btn-sm btn-success" title="<?php echo t('pay'); ?>">
                                             <i class="bi bi-credit-card"></i>
                                         </button>
                                     <?php endif; ?>
@@ -957,7 +1014,7 @@ $conn->close();
                                         </a>
                                     <?php endif; ?>
                                 </div>
-                            </d>
+                            </td>
                         </tr>
                     <?php endforeach; ?>
                     <?php if (empty($reservations)): ?>
@@ -965,7 +1022,7 @@ $conn->close();
                             <td colspan="9" style="text-align: center; padding: 60px;">
                                 <i class="bi bi-inbox" style="font-size: 48px; opacity: 0.5;"></i>
                                 <p style="margin-top: 10px;"><?php echo t('no_reservations'); ?></p>
-                            </d>
+                            </td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -977,17 +1034,17 @@ $conn->close();
     <div id="paymentModal" class="modal-overlay">
         <div class="modal-container">
             <div class="modal-header">
-                <h3><i class="bi bi-credit-card"></i> Split Payment</h3>
+                <h3><i class="bi bi-credit-card"></i> Process Payment</h3>
                 <button onclick="closePaymentModal()" class="modal-close">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="amount-due-display">
                     <div class="label">Total Amount Due</div>
-                    <div class="amount" id="modalTotalAmountDue">0.00 <?php echo $currency; ?></div>
+                    <div class="amount" id="modalTotalAmountDue">0.00 <?php echo $currencySymbol; ?></div>
                 </div>
                 
                 <div id="remainingAmountDisplay" style="background: #fef3c7; padding: 10px; border-radius: 8px; margin-bottom: 15px; text-align: center;">
-                    <small>Remaining to pay: <strong id="remainingAmount">0.00</strong> <?php echo $currency; ?></small>
+                    <small>Remaining to pay: <strong id="remainingAmount">0.00</strong> <?php echo $currencySymbol; ?></small>
                 </div>
                 
                 <div id="paymentSplits"></div>
@@ -1050,7 +1107,7 @@ $conn->close();
                     
                     <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
                         <button type="button" onclick="closeExportModal()" style="padding: 10px 20px; background: #64748b; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 500;"><i class="bi bi-x-lg"></i> <?php echo t('cancel'); ?></button>
-                        <button type="submit" style="padding: 10px 20px; background: #4f46e5; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 500;"><i class="bi bi-download"></i> <?php echo t('export_csv'); ?></button>
+                        <button type="submit" style="padding: 10px 20px; background: <?php echo $themeColor; ?>; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 500;"><i class="bi bi-download"></i> <?php echo t('export_csv'); ?></button>
                     </div>
                 </form>
             </div>
@@ -1079,10 +1136,9 @@ $conn->close();
             currentTotalAmount = parseFloat(totalAmount);
             
             document.getElementById('paymentReservationId').value = reservationId;
-            document.getElementById('modalTotalAmountDue').innerHTML = totalAmount.toFixed(2) + ' <?php echo $currency; ?>';
+            document.getElementById('modalTotalAmountDue').innerHTML = totalAmount.toFixed(2) + ' <?php echo $currencySymbol; ?>';
             document.getElementById('totalAmountDue').value = totalAmount;
             
-            // Reset splits
             document.getElementById('paymentSplits').innerHTML = '';
             paymentSplitCount = 0;
             addPaymentSplit();
@@ -1114,7 +1170,7 @@ $conn->close();
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>Amount (${'<?php echo $currency; ?>'})</label>
+                        <label>Amount (<?php echo $currencySymbol; ?>)</label>
                         <input type="number" class="payment-amount" step="0.01" placeholder="0.00" onkeyup="updateRemainingAmount()">
                     </div>
                     <div class="form-group">
@@ -1287,7 +1343,6 @@ $conn->close();
                 receipt_id: s.receipt_id || null
             }))));
             
-            // Add files
             let fileIndex = 0;
             for (let item of splitItems) {
                 const method = item.querySelector('.payment-method').value;

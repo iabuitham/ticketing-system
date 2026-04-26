@@ -2,6 +2,7 @@
 session_start();
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
+require_once '../includes/language.php';
 
 if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
     header('Location: login.php');
@@ -9,197 +10,439 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
 }
 
 $conn = getConnection();
+$message = '';
+$messageType = '';
 
-// Get prices
-$adultPrice = getSetting('ticket_price_adult', 10);
-$teenPrice = getSetting('ticket_price_teen', 10);
-$kidPrice = getSetting('ticket_price_kid', 0);
-$currency = getSetting('currency', 'JOD');
+// Get selected event info
+$selected_event_id = $_SESSION['selected_event_id'] ?? 0;
+$selected_event_name = $_SESSION['selected_event_name'] ?? 'No Event Selected';
 
+// Get event-specific ticket prices
+$event_ticket_prices = $_SESSION['event_ticket_prices'] ?? null;
+
+if (!$event_ticket_prices && $selected_event_id > 0) {
+    $stmt = $conn->prepare("SELECT ticket_price_adult, ticket_price_teen, ticket_price_kid, event_name FROM event_settings WHERE id = ?");
+    $stmt->bind_param("i", $selected_event_id);
+    $stmt->execute();
+    $event_data = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    
+    if ($event_data) {
+        $event_ticket_prices = [
+            'adult' => $event_data['ticket_price_adult'],
+            'teen' => $event_data['ticket_price_teen'],
+            'kid' => $event_data['ticket_price_kid']
+        ];
+        $_SESSION['event_ticket_prices'] = $event_ticket_prices;
+        $_SESSION['selected_event_name'] = $event_data['event_name'];
+    }
+}
+
+// Use event-specific prices or fall back to system settings
+$adultPrice = $event_ticket_prices['adult'] ?? getSetting('ticket_price_adult', 10);
+$teenPrice = $event_ticket_prices['teen'] ?? getSetting('ticket_price_teen', 10);
+$kidPrice = $event_ticket_prices['kid'] ?? getSetting('ticket_price_kid', 0);
+
+$currencySymbol = getCurrencySymbol();
+
+// Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $name = sanitizeInput($_POST['name']);
     $phone = sanitizeInput($_POST['phone']);
+    $email = sanitizeInput($_POST['email'] ?? '');
+    $table_id = sanitizeInput($_POST['table_id']);
     $adults = intval($_POST['adults']);
     $teens = intval($_POST['teens']);
     $kids = intval($_POST['kids']);
-    $table_id = sanitizeInput($_POST['table_id']);
-    $notes = sanitizeInput($_POST['notes']);
-    $status = sanitizeInput($_POST['status']);
+    $notes = sanitizeInput($_POST['notes'] ?? '');
     
-    // Validate unique name
-    $check = $conn->prepare("SELECT COUNT(*) as count FROM reservations WHERE name = ?");
-    $check->bind_param("s", $name);
-    $check->execute();
-    if ($check->get_result()->fetch_assoc()['count'] > 0) {
-        $_SESSION['error'] = "Name '$name' already exists.";
-        header('Location: create_reservation.php');
-        exit();
+    // Calculate total amount
+    $total_amount = ($adults * $adultPrice) + ($teens * $teenPrice) + ($kids * $kidPrice);
+    
+    // Generate unique reservation ID
+    $reservation_id = generateReservationId();
+    
+    // Insert reservation
+    $stmt = $conn->prepare("INSERT INTO reservations (reservation_id, name, phone, email, table_id, adults, teens, kids, total_amount, additional_amount_due, notes, status, created_at) 
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())");
+    $additional_amount_due = $total_amount; // Full amount due initially
+    $status = 'pending';
+    $stmt->bind_param("ssssiiiddss", $reservation_id, $name, $phone, $email, $table_id, $adults, $teens, $kids, $total_amount, $additional_amount_due, $notes);
+    
+    if ($stmt->execute()) {
+        $message = "Reservation created successfully! Reservation ID: " . $reservation_id;
+        $messageType = "success";
+        
+        // Clear form
+        $_POST = array();
+    } else {
+        $message = "Error creating reservation: " . $conn->error;
+        $messageType = "error";
     }
-    $check->close();
-    
-    // Validate unique table
-    $check = $conn->prepare("SELECT COUNT(*) as count FROM reservations WHERE table_id = ? AND status != 'cancelled'");
-    $check->bind_param("s", $table_id);
-    $check->execute();
-    if ($check->get_result()->fetch_assoc()['count'] > 0) {
-        $_SESSION['error'] = "Table '$table_id' is already assigned.";
-        header('Location: create_reservation.php');
-        exit();
-    }
-    $check->close();
-    
-    // Calculate total
-    $total = ($adults * $adultPrice) + ($teens * $teenPrice) + ($kids * $kidPrice);
-    
-    // Generate new reservation ID
-    $reservation_id = generateReservationId($adults, $teens, $kids);
-    $phone = formatPhoneNumber($phone);
-    
-    $conn->begin_transaction();
-    try {
-        $stmt = $conn->prepare("INSERT INTO reservations (reservation_id, name, phone, adults, teens, kids, table_id, notes, status, total_amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->bind_param("sssiissssd", $reservation_id, $name, $phone, $adults, $teens, $kids, $table_id, $notes, $status, $total);
-        $stmt->execute();
-        $stmt->close();
-        
-        // Generate and insert ticket codes
-        $tickets = generateTicketCodes($reservation_id, $adults, $teens, $kids);
-        $ticketStmt = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, ?, ?)");
-        foreach ($tickets as $t) {
-            $ticketStmt->bind_param("sssi", $reservation_id, $t['code'], $t['type'], $t['num']);
-            $ticketStmt->execute();
-        }
-        $ticketStmt->close();
-        
-        $conn->commit();
-        
-        // ========== SEND WHATSAPP PAYMENT INSTRUCTIONS ==========
-        sendPaymentInstructions($phone, $name, $reservation_id, $total, $adults, $teens, $kids, $currency);
-        
-        $_SESSION['success'] = "Reservation created! ID: $reservation_id | Total: " . number_format($total, 2) . " $currency<br>Payment instructions sent via WhatsApp.";
-    } catch (Exception $e) {
-        $conn->rollback();
-        $_SESSION['error'] = "Error: " . $e->getMessage();
-    }
-    $conn->close();
-    header('Location: dashboard.php');
-    exit();
+    $stmt->close();
 }
 
-// Function to send WhatsApp payment instructions
-function sendPaymentInstructions($phone, $name, $reservationId, $total, $adults, $teens, $kids, $currency) {
-    $baseUrl = getBaseUrl();
-    $ticketLink = $baseUrl . "admin/print_ticket.php?reservation_id=" . urlencode($reservationId);
-    
-    $message = "🎟️ *RESERVATION CONFIRMATION* 🎟️\n\n";
-    $message .= "Dear $name,\n\n";
-    $message .= "Thank you for choosing our event! Your reservation has been created successfully.\n\n";
-    $message .= "📋 *Reservation Details:*\n";
-    $message .= "• Reservation ID: $reservationId\n";
-    $message .= "• Guests: " . ($adults + $teens + $kids) . " ($adults Adults, $teens Teens, $kids Kids)\n";
-    $message .= "• Total Amount: " . number_format($total, 2) . " $currency\n\n";
-    
-    $message .= "💰 *Payment Instructions:*\n";
-    $message .= "To complete your booking, please send the payment to:\n";
-    $message .= "🏦 Bank: XYZ Bank\n";
-    $message .= "📊 Account Number: 1234-5678-9012\n";
-    $message .= "👤 Account Name: Event Company\n";
-    $message .= "🔢 Reference: $reservationId\n\n";
-    
-    $message .= "📱 *Payment Methods:*\n";
-    $message .= "• Cash: Pay at our office\n";
-    $message .= "• CliQ: Screenshot required\n";
-    $message .= "• Visa: Receipt ID required\n\n";
-    
-    $message .= "✅ *After Payment:*\n";
-    $message .= "1. Send payment proof via WhatsApp\n";
-    $message .= "2. We will verify and send your e-ticket\n";
-    $message .= "3. Your tickets will be available at the link below:\n";
-    $message .= "$ticketLink\n\n";
-    
-    $message .= "⚠️ *Important:*\n";
-    $message .= "• Tickets are only valid after payment confirmation\n";
-    $message .= "• Please keep this message for reference\n";
-    $message .= "• Contact us for any questions\n\n";
-    
-    $message .= "🎉 Thank you for choosing us! We look forward to seeing you at the event! 🎉";
-    
-    sendWhatsAppMessage($phone, $message);
+// Get available tables for dropdown
+$tables = [];
+$result = $conn->query("SELECT DISTINCT table_id FROM reservations WHERE status != 'cancelled' ORDER BY table_id");
+while ($row = $result->fetch_assoc()) {
+    $tables[] = $row['table_id'];
 }
+// Add some default tables if none exist
+if (empty($tables)) {
+    $tables = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'D1', 'D2'];
+}
+
+$conn->close();
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="<?php echo $lang; ?>" dir="<?php echo getDirection(); ?>">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Create Reservation</title>
+    <title><?php echo t('new_reservation'); ?> - <?php echo t('ticketing_system'); ?></title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
+            background: #f0f2f5;
             padding: 20px;
         }
-        .container { max-width: 600px; margin: 0 auto; }
+        
+        body.dark-mode {
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+        
+        .container { max-width: 800px; margin: 0 auto; }
+        
+        .navbar {
+            background: white;
+            border-radius: 24px;
+            padding: 16px 24px;
+            margin-bottom: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        body.dark-mode .navbar {
+            background: #1e293b;
+        }
+        
         .card {
             background: white;
-            border-radius: 20px;
-            padding: 30px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            border-radius: 24px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
-        h1 { margin-bottom: 10px; }
-        .form-group { margin-bottom: 20px; }
-        label { display: block; margin-bottom: 8px; font-weight: 600; }
-        input, select, textarea {
+        
+        body.dark-mode .card {
+            background: #1e293b;
+        }
+        
+        .card-header {
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        
+        body.dark-mode .card-header {
+            border-bottom-color: #334155;
+        }
+        
+        .event-badge {
+            background: linear-gradient(135deg, #4f46e5, #4338ca);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 40px;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            font-size: 14px;
+            color: #334155;
+        }
+        
+        body.dark-mode .form-group label {
+            color: #cbd5e1;
+        }
+        
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
             width: 100%;
             padding: 12px;
-            border: 1px solid #ddd;
-            border-radius: 8px;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            font-size: 14px;
+            transition: all 0.2s;
         }
-        .form-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 20px; }
-        .price-breakdown { background: #f0f4ff; padding: 15px; border-radius: 8px; margin: 15px 0; }
-        .btn { padding: 12px 24px; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: 600; }
-        .btn-primary { background: #667eea; color: white; width: 100%; }
-        .btn-secondary { background: #6c757d; color: white; text-decoration: none; display: inline-block; }
-        .actions { display: flex; gap: 10px; margin-top: 20px; }
-        .alert-error { background: #f8d7da; color: #721c24; padding: 12px; border-radius: 8px; margin-bottom: 20px; }
-        @media (max-width: 600px) { .form-row { grid-template-columns: 1fr; gap: 0; } }
+        
+        body.dark-mode .form-group input,
+        body.dark-mode .form-group select,
+        body.dark-mode .form-group textarea {
+            background: #0f172a;
+            border-color: #334155;
+            color: #e2e8f0;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        }
+        
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+        }
+        
+        .price-display {
+            background: #f1f5f9;
+            padding: 15px;
+            border-radius: 12px;
+            margin-top: 10px;
+        }
+        
+        body.dark-mode .price-display {
+            background: #0f172a;
+        }
+        
+        .total-amount {
+            font-size: 24px;
+            font-weight: bold;
+            color: #4f46e5;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border-radius: 10px;
+            border: none;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 500;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .btn-primary { background: #4f46e5; color: white; }
+        .btn-primary:hover { background: #4338ca; transform: translateY(-1px); }
+        .btn-secondary { background: #64748b; color: white; }
+        .btn-secondary:hover { background: #475569; }
+        
+        .form-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e2e8f0;
+        }
+        
+        body.dark-mode .form-actions {
+            border-top-color: #334155;
+        }
+        
+        .alert {
+            padding: 12px 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .alert-success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .alert-error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+            .navbar {
+                flex-direction: column;
+                text-align: center;
+            }
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="card">
-            <h1>➕ Create Reservation</h1>
-            <?php if (isset($_SESSION['error'])): ?>
-                <div class="alert-error">⚠️ <?php echo $_SESSION['error']; unset($_SESSION['error']); ?></div>
-            <?php endif; ?>
-            <form method="POST">
-                <div class="form-group"><label>Customer Name *</label><input type="text" name="name" required></div>
-                <div class="form-group"><label>Phone Number *</label><input type="tel" name="phone" placeholder="0791234567" required></div>
-                <div class="form-row">
-                    <div class="form-group"><label>Adults (<?php echo $adultPrice; ?> <?php echo $currency; ?>)</label><input type="number" name="adults" id="adults" min="0" value="0" onchange="updatePrice()"></div>
-                    <div class="form-group"><label>Teens (<?php echo $teenPrice; ?> <?php echo $currency; ?>)</label><input type="number" name="teens" id="teens" min="0" value="0" onchange="updatePrice()"></div>
-                    <div class="form-group"><label>Kids (<?php echo $kidPrice; ?> <?php echo $currency; ?>)</label><input type="number" name="kids" id="kids" min="0" value="0" onchange="updatePrice()"></div>
+        <div class="navbar">
+            <h1><i class="bi bi-plus-circle"></i> <?php echo t('new_reservation'); ?></h1>
+            <div>
+                <div class="event-badge">
+                    <i class="bi bi-calendar-event"></i>
+                    <?php echo htmlspecialchars($selected_event_name); ?>
                 </div>
-                <div class="price-breakdown" id="priceBreakdown"></div>
-                <div class="form-group"><label>Table ID *</label><input type="text" name="table_id" placeholder="A1" required></div>
-                <div class="form-group"><label>Notes</label><textarea name="notes" rows="3"></textarea></div>
-                <div class="form-group"><label>Status</label><select name="status"><option value="pending">Pending</option><option value="registered">Registered</option></select></div>
-                <div class="actions"><a href="dashboard.php" class="btn-secondary">Cancel</a><button type="submit" class="btn-primary">Create</button></div>
+                <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> <?php echo t('back_to_dashboard'); ?></a>
+            </div>
+        </div>
+        
+        <?php if ($message): ?>
+            <div class="alert alert-<?php echo $messageType; ?>">
+                <i class="bi bi-<?php echo $messageType == 'success' ? 'check-circle' : 'exclamation-circle'; ?>"></i>
+                <?php echo $message; ?>
+            </div>
+        <?php endif; ?>
+        
+        <div class="card">
+            <div class="card-header">
+                <h2><i class="bi bi-person-plus"></i> Customer Information</h2>
+            </div>
+            
+            <form method="POST" onsubmit="return validateForm()">
+                <div class="form-group">
+                    <label><i class="bi bi-person"></i> Full Name *</label>
+                    <input type="text" name="name" required value="<?php echo htmlspecialchars($_POST['name'] ?? ''); ?>" placeholder="Enter customer name">
+                </div>
+                
+                <div class="form-group">
+                    <label><i class="bi bi-telephone"></i> Phone Number *</label>
+                    <input type="tel" name="phone" required value="<?php echo htmlspecialchars($_POST['phone'] ?? ''); ?>" placeholder="+962XXXXXXXXX">
+                </div>
+                
+                <div class="form-group">
+                    <label><i class="bi bi-envelope"></i> Email</label>
+                    <input type="email" name="email" value="<?php echo htmlspecialchars($_POST['email'] ?? ''); ?>" placeholder="customer@example.com">
+                </div>
+                
+                <div class="form-group">
+                    <label><i class="bi bi-grid-3x3-gap-fill"></i> Table Number *</label>
+                    <select name="table_id" required>
+                        <option value="">Select a table</option>
+                        <?php foreach ($tables as $table): ?>
+                            <option value="<?php echo htmlspecialchars($table); ?>" <?php echo (($_POST['table_id'] ?? '') == $table) ? 'selected' : ''; ?>>
+                                Table <?php echo htmlspecialchars($table); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                
+                <div class="card-header" style="margin-top: 20px;">
+                    <h2><i class="bi bi-people"></i> Guest Information</h2>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label><i class="bi bi-gender-male"></i> Adults (<?php echo $currencySymbol; ?> <?php echo number_format($adultPrice, 2); ?> each)</label>
+                        <input type="number" name="adults" id="adults" min="0" value="<?php echo $_POST['adults'] ?? 0; ?>" onchange="calculateTotal()">
+                    </div>
+                    <div class="form-group">
+                        <label><i class="bi bi-gender-female"></i> Teens (<?php echo $currencySymbol; ?> <?php echo number_format($teenPrice, 2); ?> each)</label>
+                        <input type="number" name="teens" id="teens" min="0" value="<?php echo $_POST['teens'] ?? 0; ?>" onchange="calculateTotal()">
+                    </div>
+                    <div class="form-group">
+                        <label><i class="bi bi-egg-fried"></i> Kids (<?php echo $currencySymbol; ?> <?php echo number_format($kidPrice, 2); ?> each)</label>
+                        <input type="number" name="kids" id="kids" min="0" value="<?php echo $_POST['kids'] ?? 0; ?>" onchange="calculateTotal()">
+                    </div>
+                </div>
+                
+                <div class="price-display">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span><strong>Total Amount:</strong></span>
+                        <span class="total-amount" id="totalAmount">0.00 <?php echo $currencySymbol; ?></span>
+                    </div>
+                    <div style="font-size: 12px; color: #64748b; margin-top: 5px;">
+                        * This amount will be due upon arrival
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label><i class="bi bi-chat"></i> Special Notes</label>
+                    <textarea name="notes" rows="3" placeholder="Any special requests or notes..."><?php echo htmlspecialchars($_POST['notes'] ?? ''); ?></textarea>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="button" onclick="window.location.href='dashboard.php'" class="btn btn-secondary">
+                        <i class="bi bi-x-circle"></i> Cancel
+                    </button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-circle"></i> Create Reservation
+                    </button>
+                </div>
             </form>
         </div>
     </div>
+    
     <script>
-        const adultPrice = <?php echo $adultPrice; ?>, teenPrice = <?php echo $teenPrice; ?>, kidPrice = <?php echo $kidPrice; ?>, currency = '<?php echo $currency; ?>';
-        function updatePrice() {
-            let a = parseInt(document.getElementById('adults').value) || 0;
-            let t = parseInt(document.getElementById('teens').value) || 0;
-            let k = parseInt(document.getElementById('kids').value) || 0;
-            let total = (a * adultPrice) + (t * teenPrice) + (k * kidPrice);
-            document.getElementById('priceBreakdown').innerHTML = `<strong>💰 Price Breakdown:</strong><br>Adults: ${a} × ${adultPrice} = ${a * adultPrice} ${currency}<br>Teens: ${t} × ${teenPrice} = ${t * teenPrice} ${currency}<br>Kids: ${k} × ${kidPrice} = ${k * kidPrice} ${currency}<br><hr><strong>Total: ${total.toFixed(2)} ${currency}</strong>`;
+        const adultPrice = <?php echo $adultPrice; ?>;
+        const teenPrice = <?php echo $teenPrice; ?>;
+        const kidPrice = <?php echo $kidPrice; ?>;
+        const currencySymbol = '<?php echo $currencySymbol; ?>';
+        
+        function calculateTotal() {
+            const adults = parseInt(document.getElementById('adults').value) || 0;
+            const teens = parseInt(document.getElementById('teens').value) || 0;
+            const kids = parseInt(document.getElementById('kids').value) || 0;
+            
+            const total = (adults * adultPrice) + (teens * teenPrice) + (kids * kidPrice);
+            document.getElementById('totalAmount').innerHTML = total.toFixed(2) + ' ' + currencySymbol;
         }
-        updatePrice();
+        
+        function validateForm() {
+            const name = document.querySelector('input[name="name"]').value.trim();
+            const phone = document.querySelector('input[name="phone"]').value.trim();
+            const table = document.querySelector('select[name="table_id"]').value;
+            const adults = parseInt(document.getElementById('adults').value) || 0;
+            const teens = parseInt(document.getElementById('teens').value) || 0;
+            const kids = parseInt(document.getElementById('kids').value) || 0;
+            
+            if (!name) {
+                alert('Please enter customer name');
+                return false;
+            }
+            
+            if (!phone) {
+                alert('Please enter phone number');
+                return false;
+            }
+            
+            if (!table) {
+                alert('Please select a table');
+                return false;
+            }
+            
+            if (adults === 0 && teens === 0 && kids === 0) {
+                alert('Please add at least one guest');
+                return false;
+            }
+            
+            return true;
+        }
+        
+        // Calculate total on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            calculateTotal();
+        });
     </script>
 </body>
 </html>

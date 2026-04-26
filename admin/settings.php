@@ -55,24 +55,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $description = sanitizeInput($_POST['description']);
         $capacity = !empty($_POST['capacity']) ? intval($_POST['capacity']) : null;
         $status = sanitizeInput($_POST['status']);
+        $ticket_price_adult = floatval($_POST['ticket_price_adult'] ?? 10);
+        $ticket_price_teen = floatval($_POST['ticket_price_teen'] ?? 10);
+        $ticket_price_kid = floatval($_POST['ticket_price_kid'] ?? 0);
         
         if ($event_id > 0) {
             // Update existing event
             $stmt = $conn->prepare("UPDATE event_settings 
                                     SET event_name = ?, event_date = ?, event_time = ?, 
-                                        venue = ?, description = ?, capacity = ?, status = ?
+                                        venue = ?, description = ?, capacity = ?, status = ?,
+                                        ticket_price_adult = ?, ticket_price_teen = ?, ticket_price_kid = ?
                                     WHERE id = ?");
-            $stmt->bind_param("sssssisi", $event_name, $event_date, $event_time, 
-                              $venue, $description, $capacity, $status, $event_id);
+            $stmt->bind_param("sssssisdddi", $event_name, $event_date, $event_time, 
+                              $venue, $description, $capacity, $status,
+                              $ticket_price_adult, $ticket_price_teen, $ticket_price_kid, $event_id);
             $stmt->execute();
             $stmt->close();
             $message = "Event updated successfully!";
         } else {
             // Add new event
-            $stmt = $conn->prepare("INSERT INTO event_settings (event_name, event_date, event_time, venue, description, capacity, status) 
-                                    VALUES (?, ?, ?, ?, ?, ?, ?)");
-            $stmt->bind_param("sssssis", $event_name, $event_date, $event_time, 
-                              $venue, $description, $capacity, $status);
+            $stmt = $conn->prepare("INSERT INTO event_settings 
+                                    (event_name, event_date, event_time, venue, description, capacity, status,
+                                     ticket_price_adult, ticket_price_teen, ticket_price_kid) 
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("sssssisddd", $event_name, $event_date, $event_time, 
+                              $venue, $description, $capacity, $status,
+                              $ticket_price_adult, $ticket_price_teen, $ticket_price_kid);
             $stmt->execute();
             $stmt->close();
             $message = "Event added successfully!";
@@ -106,6 +114,9 @@ if ($result) {
         $row['capacity'] = $row['capacity'] ?? 0;
         $row['tickets_sold'] = $row['tickets_sold'] ?? 0;
         $row['status'] = $row['status'] ?? 'upcoming';
+        $row['ticket_price_adult'] = $row['ticket_price_adult'] ?? 10;
+        $row['ticket_price_teen'] = $row['ticket_price_teen'] ?? 10;
+        $row['ticket_price_kid'] = $row['ticket_price_kid'] ?? 0;
         $events[] = $row;
     }
 }
@@ -376,7 +387,7 @@ $themeColor = $systemSettings['theme_color']['setting_value'] ?? '#4f46e5';
         .modal-container {
             background: white;
             border-radius: 24px;
-            max-width: 600px;
+            max-width: 700px;
             width: 90%;
             max-height: 90vh;
             overflow-y: auto;
@@ -491,7 +502,7 @@ $themeColor = $systemSettings['theme_color']['setting_value'] ?? '#4f46e5';
                 <i class="bi bi-sliders2"></i> General Settings
             </button>
             <button class="tab-btn" onclick="switchTab('pricing')">
-                <i class="bi bi-ticket-perforated"></i> Ticket Pricing
+                <i class="bi bi-ticket-perforated"></i> Global Pricing
             </button>
             <button class="tab-btn" onclick="switchTab('events')">
                 <i class="bi bi-calendar-event"></i> Events
@@ -572,12 +583,13 @@ $themeColor = $systemSettings['theme_color']['setting_value'] ?? '#4f46e5';
             </form>
         </div>
         
-        <!-- Ticket Pricing Tab -->
+        <!-- Global Pricing Tab (Fallback when no event selected) -->
         <div id="pricingTab" class="tab-content">
             <form method="POST">
                 <div class="card">
                     <div class="card-header">
-                        <h2><i class="bi bi-ticket-perforated"></i> Ticket Prices</h2>
+                        <h2><i class="bi bi-ticket-perforated"></i> Global Ticket Prices (Fallback)</h2>
+                        <div class="text-muted">These are used when no event is selected</div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
@@ -628,7 +640,7 @@ $themeColor = $systemSettings['theme_color']['setting_value'] ?? '#4f46e5';
                 
                 <div class="form-actions">
                     <button type="submit" name="save_system_settings" class="btn btn-primary">
-                        <i class="bi bi-save"></i> Save Pricing Settings
+                        <i class="bi bi-save"></i> Save Global Pricing
                     </button>
                 </div>
             </form>
@@ -657,6 +669,7 @@ $themeColor = $systemSettings['theme_color']['setting_value'] ?? '#4f46e5';
                                     <th>Event Name</th>
                                     <th>Date & Time</th>
                                     <th>Venue</th>
+                                    <th>Ticket Prices</th>
                                     <th>Capacity</th>
                                     <th>Tickets Sold</th>
                                     <th>Status</th>
@@ -672,6 +685,11 @@ $themeColor = $systemSettings['theme_color']['setting_value'] ?? '#4f46e5';
                                             <small><?php echo date('h:i A', strtotime($event['event_time'])); ?></small>
                                         </td>
                                         <td><?php echo htmlspecialchars($event['venue']); ?></td>
+                                        <td style="font-size: 12px;">
+                                            Adult: <?php echo $currencySymbol; ?> <?php echo number_format($event['ticket_price_adult'], 2); ?><br>
+                                            Teen: <?php echo $currencySymbol; ?> <?php echo number_format($event['ticket_price_teen'], 2); ?><br>
+                                            Kid: <?php echo $currencySymbol; ?> <?php echo number_format($event['ticket_price_kid'], 2); ?>
+                                        </td>
                                         <td><?php echo number_format(floatval($event['capacity'])); ?></td>
                                         <td><?php echo number_format(floatval($event['tickets_sold'])); ?></td>
                                         <td>
@@ -849,6 +867,22 @@ $themeColor = $systemSettings['theme_color']['setting_value'] ?? '#4f46e5';
                         <label>Description</label>
                         <textarea name="description" id="description" rows="3" class="form-control"></textarea>
                     </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Adult Ticket Price (<?php echo $currencySymbol; ?>)</label>
+                            <input type="number" name="ticket_price_adult" id="ticketPriceAdult" step="0.01" class="form-control" value="10.00">
+                        </div>
+                        <div class="form-group">
+                            <label>Teen Ticket Price (<?php echo $currencySymbol; ?>)</label>
+                            <input type="number" name="ticket_price_teen" id="ticketPriceTeen" step="0.01" class="form-control" value="10.00">
+                        </div>
+                        <div class="form-group">
+                            <label>Kid Ticket Price (<?php echo $currencySymbol; ?>)</label>
+                            <input type="number" name="ticket_price_kid" id="ticketPriceKid" step="0.01" class="form-control" value="0.00">
+                        </div>
+                    </div>
+                    
                     <div class="form-row">
                         <div class="form-group">
                             <label>Capacity</label>
@@ -911,6 +945,9 @@ $themeColor = $systemSettings['theme_color']['setting_value'] ?? '#4f46e5';
             document.getElementById('description').value = '';
             document.getElementById('capacity').value = '0';
             document.getElementById('status').value = 'upcoming';
+            document.getElementById('ticketPriceAdult').value = '10.00';
+            document.getElementById('ticketPriceTeen').value = '10.00';
+            document.getElementById('ticketPriceKid').value = '0.00';
             document.getElementById('eventModal').classList.add('active');
         }
         
@@ -928,6 +965,9 @@ $themeColor = $systemSettings['theme_color']['setting_value'] ?? '#4f46e5';
                         document.getElementById('description').value = data.event.description || '';
                         document.getElementById('capacity').value = data.event.capacity || 0;
                         document.getElementById('status').value = data.event.status || 'upcoming';
+                        document.getElementById('ticketPriceAdult').value = data.event.ticket_price_adult || 10;
+                        document.getElementById('ticketPriceTeen').value = data.event.ticket_price_teen || 10;
+                        document.getElementById('ticketPriceKid').value = data.event.ticket_price_kid || 0;
                         document.getElementById('eventModal').classList.add('active');
                     }
                 })
