@@ -36,7 +36,7 @@ if (empty($reservation_id)) {
     }
     
     // Get all tickets for this reservation
-    $stmt = $conn->prepare("SELECT * FROM ticket_codes WHERE reservation_id = ? ORDER BY attendee_type, attendee_number");
+    $stmt = $conn->prepare("SELECT * FROM ticket_codes WHERE reservation_id = ? ORDER BY guest_type, guest_number");
     $stmt->bind_param("s", $reservation_id);
     $stmt->execute();
     $tickets = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -105,7 +105,7 @@ $typeLabels = [
         .ticket-body {
             padding: 20px;
         }
-        .ticket-id {
+        .ticket-code {
             font-family: monospace;
             font-size: 14px;
             background: #f1f5f9;
@@ -129,8 +129,8 @@ $typeLabels = [
             font-size: 12px;
             font-weight: 600;
         }
-        .status-used { background: #fee2e2; color: #991b1b; }
-        .status-unused { background: #d1fae5; color: #065f46; }
+        .status-scanned { background: #fee2e2; color: #991b1b; }
+        .status-unscanned { background: #d1fae5; color: #065f46; }
         .btn {
             padding: 8px 16px;
             border-radius: 8px;
@@ -156,7 +156,7 @@ $typeLabels = [
     <div class="container">
         <div class="header no-print">
             <div style="display: flex; justify-content: space-between; align-items: center;">
-                <h1><i class="bi bi-ticket-perforated"></i> Reservation Tickets</h1>
+                <h1><i class="bi bi-ticket-perforated"></i> <?php echo $title; ?></h1>
                 <div>
                     <button onclick="window.print()" class="btn btn-print"><i class="bi bi-printer"></i> Print All</button>
                     <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Back</a>
@@ -164,6 +164,7 @@ $typeLabels = [
             </div>
         </div>
         
+        <?php if ($reservation): ?>
         <div class="reservation-info">
             <h2><i class="bi bi-receipt"></i> <?php echo htmlspecialchars($reservation['name']); ?></h2>
             <p><strong>Reservation ID:</strong> <?php echo htmlspecialchars($reservation['reservation_id']); ?></p>
@@ -172,33 +173,34 @@ $typeLabels = [
             <p><strong>Guests:</strong> <?php echo $reservation['adults'] + $reservation['teens'] + $reservation['kids']; ?> 
                (<?php echo $reservation['adults']; ?> Adults, <?php echo $reservation['teens']; ?> Teens, <?php echo $reservation['kids']; ?> Kids)</p>
         </div>
+        <?php endif; ?>
         
         <div class="ticket-grid">
             <?php foreach ($tickets as $ticket): ?>
             <div class="ticket-card">
                 <div class="ticket-header">
                     <i class="bi bi-ticket-perforated" style="font-size: 24px;"></i>
-                    <h3><?php echo $typeLabels[$ticket['attendee_type']]; ?> Ticket</h3>
+                    <h3><?php echo $typeLabels[$ticket['guest_type']]; ?> Ticket</h3>
                 </div>
                 <div class="ticket-body">
-                    <div class="ticket-id">
-                        <strong>Ticket ID:</strong><br>
-                        <?php echo htmlspecialchars($ticket['ticket_id']); ?>
+                    <div class="ticket-code">
+                        <strong>Ticket Code:</strong><br>
+                        <?php echo htmlspecialchars($ticket['ticket_code']); ?>
                     </div>
                     <div class="ticket-detail">
-                        <span>Ticket Number:</span>
-                        <strong>#<?php echo str_pad($ticket['attendee_number'], 3, '0', STR_PAD_LEFT); ?></strong>
+                        <span>Guest Number:</span>
+                        <strong>#<?php echo str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT); ?></strong>
                     </div>
                     <div class="ticket-detail">
                         <span>Status:</span>
-                        <span class="status-badge status-<?php echo $ticket['is_used'] ? 'used' : 'unused'; ?>">
-                            <?php echo $ticket['is_used'] ? 'Used' : 'Available'; ?>
+                        <span class="status-badge status-<?php echo $ticket['is_scanned'] ? 'scanned' : 'unscanned'; ?>">
+                            <?php echo $ticket['is_scanned'] ? 'Scanned/Used' : 'Available'; ?>
                         </span>
                     </div>
-                    <?php if ($ticket['used_at']): ?>
+                    <?php if ($ticket['scanned_at']): ?>
                     <div class="ticket-detail">
-                        <span>Used at:</span>
-                        <span><?php echo date('M d, Y H:i', strtotime($ticket['used_at'])); ?></span>
+                        <span>Scanned at:</span>
+                        <span><?php echo date('M d, Y H:i', strtotime($ticket['scanned_at'])); ?></span>
                     </div>
                     <?php endif; ?>
                 </div>

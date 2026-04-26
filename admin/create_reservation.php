@@ -46,7 +46,6 @@ $kidPrice = $event_ticket_prices['kid'] ?? getSetting('ticket_price_kid', 0);
 $currencySymbol = getCurrencySymbol();
 
 // Handle form submission
-// Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $name = sanitizeInput($_POST['name']);
     $phone = sanitizeInput($_POST['phone']);
@@ -74,16 +73,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute();
         $stmt->close();
         
-        // Generate ticket codes for each attendee
+        // Generate ticket codes for each attendee using correct column names
         $adultCount = 0;
         $teenCount = 0;
         $kidCount = 0;
         
         // Generate tickets for adults
         for ($i = 1; $i <= $adults; $i++) {
-            $ticketId = generateTicketId($reservation_id, 'adult', $i);
-            $stmt = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_id, attendee_type, attendee_number) VALUES (?, ?, 'adult', ?)");
-            $stmt->bind_param("ssi", $reservation_id, $ticketId, $i);
+            $ticketCode = generateTicketId($reservation_id, 'adult', $i);
+            $stmt = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'adult', ?)");
+            $stmt->bind_param("ssi", $reservation_id, $ticketCode, $i);
             $stmt->execute();
             $stmt->close();
             $adultCount++;
@@ -91,9 +90,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         // Generate tickets for teens
         for ($i = 1; $i <= $teens; $i++) {
-            $ticketId = generateTicketId($reservation_id, 'teen', $i);
-            $stmt = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_id, attendee_type, attendee_number) VALUES (?, ?, 'teen', ?)");
-            $stmt->bind_param("ssi", $reservation_id, $ticketId, $i);
+            $ticketCode = generateTicketId($reservation_id, 'teen', $i);
+            $stmt = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'teen', ?)");
+            $stmt->bind_param("ssi", $reservation_id, $ticketCode, $i);
             $stmt->execute();
             $stmt->close();
             $teenCount++;
@@ -101,9 +100,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         // Generate tickets for kids
         for ($i = 1; $i <= $kids; $i++) {
-            $ticketId = generateTicketId($reservation_id, 'kid', $i);
-            $stmt = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_id, attendee_type, attendee_number) VALUES (?, ?, 'kid', ?)");
-            $stmt->bind_param("ssi", $reservation_id, $ticketId, $i);
+            $ticketCode = generateTicketId($reservation_id, 'kid', $i);
+            $stmt = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'kid', ?)");
+            $stmt->bind_param("ssi", $reservation_id, $ticketCode, $i);
             $stmt->execute();
             $stmt->close();
             $kidCount++;
