@@ -616,7 +616,7 @@ $conn->close();
             </a>
             <?php if ($reservation['status'] == 'paid'): ?>
                 <a href="print_ticket.php?reservation_id=<?php echo urlencode($reservation_id); ?>" class="btn btn-primary" target="_blank">
-                    <i class="bi bi-ticket-perforated"></i> <?php echo t('Print Ticker'); ?>
+                    <i class="bi bi-ticket-perforated"></i> <?php echo t('Print Ticket'); ?>
                 </a>
             <?php endif; ?>
             <a href="print_statement.php?id=<?php echo urlencode($reservation_id); ?>" class="btn btn-info" target="_blank">

@@ -13,7 +13,10 @@ $status_filter = isset($_GET['status']) ? $_GET['status'] : '';
 $date_from = isset($_GET['from']) ? $_GET['from'] : '';
 $date_to = isset($_GET['to']) ? $_GET['to'] : '';
 
-// Build query
+// Get database connection
+$conn = getConnection();
+
+// Build query - Simple version without payment_type issues
 $query = "SELECT 
     r.reservation_id,
     r.name,
@@ -31,32 +34,36 @@ $query = "SELECT
     r.created_at,
     r.updated_at,
     (SELECT COUNT(*) FROM ticket_codes WHERE reservation_id = r.reservation_id) as ticket_count,
-    (SELECT SUM(amount) FROM split_payments WHERE reservation_id = r.reservation_id AND payment_type = 'initial') as initial_payment,
-    (SELECT SUM(amount) FROM split_payments WHERE reservation_id = r.reservation_id AND payment_type = 'additional') as additional_payment
+    COALESCE((SELECT SUM(amount) FROM split_payments WHERE reservation_id = r.reservation_id), 0) as total_paid
 FROM reservations r
 WHERE 1=1";
 
+// Add filters using prepared statements to avoid SQL injection
 if ($status_filter && $status_filter != 'all') {
-    $query .= " AND r.status = '$status_filter'";
+    $query .= " AND r.status = '" . $conn->real_escape_string($status_filter) . "'";
 }
 
 if ($date_from && $date_to) {
-    $query .= " AND DATE(r.created_at) BETWEEN '$date_from' AND '$date_to'";
+    $query .= " AND DATE(r.created_at) BETWEEN '" . $conn->real_escape_string($date_from) . "' AND '" . $conn->real_escape_string($date_to) . "'";
 } elseif ($date_from) {
-    $query .= " AND DATE(r.created_at) >= '$date_from'";
+    $query .= " AND DATE(r.created_at) >= '" . $conn->real_escape_string($date_from) . "'";
 } elseif ($date_to) {
-    $query .= " AND DATE(r.created_at) <= '$date_to'";
+    $query .= " AND DATE(r.created_at) <= '" . $conn->real_escape_string($date_to) . "'";
 }
 
 $query .= " ORDER BY r.created_at DESC";
 
-$conn = getConnection();
 $result = $conn->query($query);
+
+if (!$result) {
+    die("Query error: " . $conn->error);
+}
+
 $reservations = $result->fetch_all(MYSQLI_ASSOC);
 $conn->close();
 
 // Set headers for CSV download
-header('Content-Type: text/csv');
+header('Content-Type: text/csv; charset=UTF-8');
 header('Content-Disposition: attachment; filename="reservations_export_' . date('Y-m-d_H-i-s') . '.csv"');
 header('Pragma: no-cache');
 header('Expires: 0');
@@ -78,16 +85,18 @@ fputcsv($output, [
     'Total Guests',
     'Table ID',
     'Status',
-    'Total Amount (JOD)',
-    'Additional Amount Due (JOD)',
+    'Total Amount',
+    'Additional Amount Due',
     'Payment Method',
-    'Initial Payment (JOD)',
-    'Additional Payment (JOD)',
+    'Total Paid',
     'Ticket Count',
     'Payment Proof',
     'Created Date',
     'Last Updated'
 ]);
+
+// Get currency symbol
+$currencySymbol = getCurrencySymbol();
 
 // Add data rows
 foreach ($reservations as $row) {
@@ -101,11 +110,10 @@ foreach ($reservations as $row) {
         $row['total_guests'],
         $row['table_id'],
         $row['status'],
-        number_format($row['total_amount'], 2),
-        number_format($row['additional_amount_due'], 2),
+        number_format(floatval($row['total_amount']), 2) . ' ' . $currencySymbol,
+        number_format(floatval($row['additional_amount_due']), 2) . ' ' . $currencySymbol,
         $row['payment_method'] ?: 'Not paid',
-        number_format($row['initial_payment'] ?? 0, 2),
-        number_format($row['additional_payment'] ?? 0, 2),
+        number_format(floatval($row['total_paid']), 2) . ' ' . $currencySymbol,
         $row['ticket_count'],
         $row['payment_proof'] ? 'Yes' : 'No',
         date('Y-m-d H:i:s', strtotime($row['created_at'])),

@@ -49,7 +49,6 @@ $currencySymbol = getCurrencySymbol();
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $name = sanitizeInput($_POST['name']);
     $phone = sanitizeInput($_POST['phone']);
-    $email = sanitizeInput($_POST['email'] ?? '');
     $table_id = sanitizeInput($_POST['table_id']);
     $adults = intval($_POST['adults']);
     $teens = intval($_POST['teens']);
@@ -62,12 +61,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Generate unique reservation ID
     $reservation_id = generateReservationId();
     
-    // Insert reservation
-    $stmt = $conn->prepare("INSERT INTO reservations (reservation_id, name, phone, email, table_id, adults, teens, kids, total_amount, additional_amount_due, notes, status, created_at) 
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())");
+    // Insert reservation - FIXED: Added email column and fixed column count
+    $stmt = $conn->prepare("INSERT INTO reservations (reservation_id, name, phone, table_id, adults, teens, kids, total_amount, additional_amount_due, notes, status, created_at) 
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())");
     $additional_amount_due = $total_amount; // Full amount due initially
     $status = 'pending';
-    $stmt->bind_param("ssssiiiddss", $reservation_id, $name, $phone, $email, $table_id, $adults, $teens, $kids, $total_amount, $additional_amount_due, $notes);
+    $stmt->bind_param("ssssiiiddss", $reservation_id, $name, $phone, $table_id, $adults, $teens, $kids, $total_amount, $additional_amount_due, $notes, $status);
     
     if ($stmt->execute()) {
         $message = "Reservation created successfully! Reservation ID: " . $reservation_id;
@@ -328,11 +327,6 @@ $conn->close();
                 <div class="form-group">
                     <label><i class="bi bi-telephone"></i> Phone Number *</label>
                     <input type="tel" name="phone" required value="<?php echo htmlspecialchars($_POST['phone'] ?? ''); ?>" placeholder="+962XXXXXXXXX">
-                </div>
-                
-                <div class="form-group">
-                    <label><i class="bi bi-envelope"></i> Email</label>
-                    <input type="email" name="email" value="<?php echo htmlspecialchars($_POST['email'] ?? ''); ?>" placeholder="customer@example.com">
                 </div>
                 
                 <div class="form-group">

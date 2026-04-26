@@ -30,27 +30,42 @@ if ($result->num_rows === 0) {
 $reservation = $result->fetch_assoc();
 $stmt->close();
 
+// Get selected event info for ticket prices
+$selected_event_id = $_SESSION['selected_event_id'] ?? 0;
+$event_ticket_prices = $_SESSION['event_ticket_prices'] ?? null;
+
+if (!$event_ticket_prices && $selected_event_id > 0) {
+    $stmt = $conn->prepare("SELECT ticket_price_adult, ticket_price_teen, ticket_price_kid FROM event_settings WHERE id = ?");
+    $stmt->bind_param("i", $selected_event_id);
+    $stmt->execute();
+    $event_data = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    
+    if ($event_data) {
+        $event_ticket_prices = [
+            'adult' => $event_data['ticket_price_adult'],
+            'teen' => $event_data['ticket_price_teen'],
+            'kid' => $event_data['ticket_price_kid']
+        ];
+        $_SESSION['event_ticket_prices'] = $event_ticket_prices;
+    }
+}
+
+// Use event-specific prices or fall back to system settings
+$adultPrice = $event_ticket_prices['adult'] ?? getSetting('ticket_price_adult', 10);
+$teenPrice = $event_ticket_prices['teen'] ?? getSetting('ticket_price_teen', 10);
+$kidPrice = $event_ticket_prices['kid'] ?? getSetting('ticket_price_kid', 0);
+$currency = getSetting('currency', 'JOD');
+$currencySymbol = getCurrencySymbol();
+
 // Check if reservation is already cancelled
 $isCancelled = ($reservation['status'] == 'cancelled');
 
-// Get prices from settings
-$adultPrice = getSetting('ticket_price_adult', 10);
-$teenPrice = getSetting('ticket_price_teen', 10);
-$kidPrice = getSetting('ticket_price_kid', 0);
-$currency = getSetting('currency', 'JOD');
-
 // Calculate variables
-$totalGuests = $reservation['adults'] + $reservation['teens'] + $reservation['kids'];
-$currentTotal = $reservation['total_amount'];
-$additionalDue = $reservation['additional_amount_due'] ?? 0;
+$totalGuests = ($reservation['adults'] ?? 0) + ($reservation['teens'] ?? 0) + ($reservation['kids'] ?? 0);
+$currentTotal = floatval($reservation['total_amount'] ?? 0);
+$additionalDue = floatval($reservation['additional_amount_due'] ?? 0);
 $cancelledClass = $isCancelled ? 'cancelled-text' : '';
-
-// Decode reservation ID
-$decodedId = decodeReservationId($reservation['reservation_id']);
-$decodedString = '';
-if ($decodedId) {
-    $decodedString = "Seq #{$decodedId['sequential']} | {$decodedId['total_guests']} Total Guests | {$decodedId['adults']} Adults | {$decodedId['teens']} Teens | {$decodedId['kids']} Kids";
-}
 
 $conn->close();
 ?>
@@ -160,15 +175,6 @@ $conn->close();
             display: inline-block;
             word-break: break-all;
         }
-        .decoded-info {
-            background: #e0e7ff;
-            padding: 10px;
-            border-radius: 8px;
-            font-family: monospace;
-            font-size: 12px;
-            margin-top: 10px;
-            color: #3730a3;
-        }
         .price-breakdown {
             background: #e0e7ff;
             padding: 15px;
@@ -259,16 +265,11 @@ $conn->close();
                         <span class="cancelled-badge">CANCELLED</span>
                     <?php endif; ?>
                     </p>
-                    <?php if ($decodedString): ?>
-                    <div class="decoded-info <?php echo $cancelledClass; ?>">
-                        🔍 <strong>Decoded ID:</strong> <?php echo $decodedString; ?>
-                    </div>
-                    <?php endif; ?>
                     <p class="<?php echo $cancelledClass; ?>"><strong>📅 Created:</strong> <?php echo date('F j, Y g:i A', strtotime($reservation['created_at'])); ?></p>
                     <p class="<?php echo $cancelledClass; ?>"><strong>👥 Current Guests:</strong> <?php echo $totalGuests; ?> total (<?php echo $reservation['adults']; ?> Adults, <?php echo $reservation['teens']; ?> Teens, <?php echo $reservation['kids']; ?> Kids)</p>
-                    <p class="<?php echo $cancelledClass; ?>"><strong>💰 Amount Paid:</strong> <span class="total-amount <?php echo $cancelledClass; ?>"><?php echo number_format($currentTotal, 2); ?> <?php echo $currency; ?></span></p>
+                    <p class="<?php echo $cancelledClass; ?>"><strong>💰 Total Amount:</strong> <span class="total-amount <?php echo $cancelledClass; ?>"><?php echo number_format($currentTotal, 2); ?> <?php echo $currencySymbol; ?></span></p>
                     <?php if ($additionalDue > 0): ?>
-                    <p style="color: #d97706;" class="<?php echo $cancelledClass; ?>"><strong>⚠️ Additional Amount Due:</strong> <?php echo number_format($additionalDue, 2); ?> <?php echo $currency; ?></p>
+                    <p style="color: #d97706;" class="<?php echo $cancelledClass; ?>"><strong>⚠️ Additional Amount Due:</strong> <?php echo number_format($additionalDue, 2); ?> <?php echo $currencySymbol; ?></p>
                     <?php endif; ?>
                 </div>
 
@@ -301,15 +302,15 @@ $conn->close();
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label>Adults (<?php echo $adultPrice; ?> <?php echo $currency; ?>)</label>
+                            <label>Adults (<?php echo $currencySymbol; ?> <?php echo number_format($adultPrice, 2); ?>)</label>
                             <input type="number" name="adults" id="adults" value="<?php echo $reservation['adults']; ?>" min="0" onchange="updatePrice()" <?php echo $isCancelled ? 'disabled' : ''; ?>>
                         </div>
                         <div class="form-group">
-                            <label>Teens (<?php echo $teenPrice; ?> <?php echo $currency; ?>)</label>
+                            <label>Teens (<?php echo $currencySymbol; ?> <?php echo number_format($teenPrice, 2); ?>)</label>
                             <input type="number" name="teens" id="teens" value="<?php echo $reservation['teens']; ?>" min="0" onchange="updatePrice()" <?php echo $isCancelled ? 'disabled' : ''; ?>>
                         </div>
                         <div class="form-group">
-                            <label>Kids (<?php echo $kidPrice; ?> <?php echo $currency; ?>)</label>
+                            <label>Kids (<?php echo $currencySymbol; ?> <?php echo number_format($kidPrice, 2); ?>)</label>
                             <input type="number" name="kids" id="kids" value="<?php echo $reservation['kids']; ?>" min="0" onchange="updatePrice()" <?php echo $isCancelled ? 'disabled' : ''; ?>>
                         </div>
                     </div>
@@ -354,7 +355,7 @@ $conn->close();
         const adultPrice = <?php echo $adultPrice; ?>;
         const teenPrice = <?php echo $teenPrice; ?>;
         const kidPrice = <?php echo $kidPrice; ?>;
-        const currency = '<?php echo $currency; ?>';
+        const currencySymbol = '<?php echo $currencySymbol; ?>';
         const currentPaid = <?php echo $currentTotal; ?>;
         const currentAdditionalDue = <?php echo $additionalDue; ?>;
 
@@ -371,18 +372,18 @@ $conn->close();
             let warningHtml = '';
             if (additionalDue > 0) {
                 warningHtml = `<div style="background: #fef3c7; padding: 10px; border-radius: 8px; margin-top: 10px; color: #92400e;">
-                    ⚠️ Additional payment required: ${additionalDue.toFixed(2)} ${currency}
+                    ⚠️ Additional payment required: ${additionalDue.toFixed(2)} ${currencySymbol}
                 </div>`;
             }
 
             document.getElementById('priceBreakdown').innerHTML = `
                 <strong>💰 Price Breakdown:</strong><br>
-                Adults: ${adults} × ${adultPrice} = ${(adults * adultPrice).toFixed(2)} ${currency}<br>
-                Teens: ${teens} × ${teenPrice} = ${(teens * teenPrice).toFixed(2)} ${currency}<br>
-                Kids: ${kids} × ${kidPrice} = ${(kids * kidPrice).toFixed(2)} ${currency}<br>
+                Adults: ${adults} × ${adultPrice.toFixed(2)} = ${(adults * adultPrice).toFixed(2)} ${currencySymbol}<br>
+                Teens: ${teens} × ${teenPrice.toFixed(2)} = ${(teens * teenPrice).toFixed(2)} ${currencySymbol}<br>
+                Kids: ${kids} × ${kidPrice.toFixed(2)} = ${(kids * kidPrice).toFixed(2)} ${currencySymbol}<br>
                 <hr>
-                <strong>New Total: ${newTotal.toFixed(2)} ${currency}</strong><br>
-                <strong>Already Paid: ${currentPaid.toFixed(2)} ${currency}</strong>
+                <strong>New Total: ${newTotal.toFixed(2)} ${currencySymbol}</strong><br>
+                <strong>Already Paid: ${currentPaid.toFixed(2)} ${currencySymbol}</strong>
                 ${warningHtml}
             `;
         }
