@@ -852,3 +852,28 @@ body.dark-mode .bulk-actions-bar {
         transform: translateX(100%);
     }
 }
+
+.alert {
+    padding: 12px 20px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.alert-warning {
+    background: #fef3c7;
+    color: #92400e;
+    border-left: 4px solid #f59e0b;
+}
+
+.alert-info {
+    background: #dbeafe;
+    color: #1e40af;
+    border-left: 4px solid #3b82f6;
+}
+
+.alert-warning i, .alert-info i {
+    font-size: 1.2rem;
+}
