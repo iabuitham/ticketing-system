@@ -73,6 +73,11 @@ $typeLabels = [
             padding: 20px;
             margin-bottom: 20px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
         }
         .reservation-info {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -105,9 +110,21 @@ $typeLabels = [
         .ticket-body {
             padding: 20px;
         }
+        .qr-code {
+            text-align: center;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #f8fafc;
+            border-radius: 12px;
+        }
+        .qr-code img {
+            max-width: 120px;
+            height: auto;
+            border-radius: 8px;
+        }
         .ticket-code {
             font-family: monospace;
-            font-size: 14px;
+            font-size: 12px;
             background: #f1f5f9;
             padding: 10px;
             border-radius: 8px;
@@ -144,7 +161,7 @@ $typeLabels = [
         }
         .btn-primary { background: #4f46e5; color: white; }
         .btn-secondary { background: #64748b; color: white; }
-        .btn-print { background: #10b981; color: white; }
+        .btn-sm { padding: 6px 12px; font-size: 12px; }
         @media print {
             .no-print { display: none; }
             .ticket-card { break-inside: avoid; page-break-inside: avoid; }
@@ -155,17 +172,15 @@ $typeLabels = [
 <body>
     <div class="container">
         <div class="header no-print">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <h1><i class="bi bi-ticket-perforated"></i> <?php echo $title; ?></h1>
-                <div>
-                    <button onclick="window.print()" class="btn btn-print"><i class="bi bi-printer"></i> Print All</button>
-                    <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Back</a>
-                </div>
+            <h1><i class="bi bi-ticket-perforated"></i> <?php echo $title; ?></h1>
+            <div>
+                <button onclick="window.print()" class="btn btn-primary"><i class="bi bi-printer"></i> Print All</button>
+                <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Back</a>
             </div>
         </div>
         
         <?php if ($reservation): ?>
-        <div class="reservation-info">
+        <div class="reservation-info no-print">
             <h2><i class="bi bi-receipt"></i> <?php echo htmlspecialchars($reservation['name']); ?></h2>
             <p><strong>Reservation ID:</strong> <?php echo htmlspecialchars($reservation['reservation_id']); ?></p>
             <p><strong>Phone:</strong> <?php echo htmlspecialchars($reservation['phone']); ?></p>
@@ -183,18 +198,23 @@ $typeLabels = [
                     <h3><?php echo $typeLabels[$ticket['guest_type']]; ?> Ticket</h3>
                 </div>
                 <div class="ticket-body">
+                    <!-- QR CODE - Automatically displayed -->
+                    <div class="qr-code">
+                        <img src="generate_qr.php?ticket_code=<?php echo urlencode($ticket['ticket_code']); ?>&size=100" alt="QR Code">
+                    </div>
+                    
                     <div class="ticket-code">
-                        <strong>Ticket Code:</strong><br>
+                        <strong>Ticket ID:</strong><br>
                         <?php echo htmlspecialchars($ticket['ticket_code']); ?>
                     </div>
                     <div class="ticket-detail">
-                        <span>Guest Number:</span>
+                        <span>Ticket Number:</span>
                         <strong>#<?php echo str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT); ?></strong>
                     </div>
                     <div class="ticket-detail">
                         <span>Status:</span>
                         <span class="status-badge status-<?php echo $ticket['is_scanned'] ? 'scanned' : 'unscanned'; ?>">
-                            <?php echo $ticket['is_scanned'] ? 'Scanned/Used' : 'Available'; ?>
+                            <?php echo $ticket['is_scanned'] ? 'Used' : 'Available'; ?>
                         </span>
                     </div>
                     <?php if ($ticket['scanned_at']): ?>
@@ -203,6 +223,11 @@ $typeLabels = [
                         <span><?php echo date('M d, Y H:i', strtotime($ticket['scanned_at'])); ?></span>
                     </div>
                     <?php endif; ?>
+                    <div class="ticket-detail no-print" style="margin-top: 15px; justify-content: center; gap: 10px;">
+                        <a href="print_ticket.php?ticket_code=<?php echo urlencode($ticket['ticket_code']); ?>" target="_blank" class="btn btn-primary btn-sm">
+                            <i class="bi bi-printer"></i> Print
+                        </a>
+                    </div>
                 </div>
             </div>
             <?php endforeach; ?>
