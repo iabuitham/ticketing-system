@@ -540,7 +540,7 @@ $conn->close();
                             <tr>
                                 <th><i class="bi bi-clock"></i> <?php echo t('date_time'); ?></th>
                                 <th><i class="bi bi-wallet2"></i> <?php echo t('payment_method'); ?></th>
-                                <th><i class="bi bi-cash"></i> <?php echo t('amount'); ?></th>
+                                <th><i class="bi bi-cash"></i> <?php echo t('Amount'); ?></th>
                                 <th><i class="bi bi-info-circle"></i> <?php echo t('reference_evidence'); ?></th>
                             </tr>
                         </thead>
