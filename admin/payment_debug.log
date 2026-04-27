@@ -1,0 +1,36 @@
+2026-04-27 12:00:30 - Payment process started
+POST data: Array
+(
+    [reservation_id] => RES0003-4G4A0T0K-8W4RD
+    [total_amount] => 40
+    [splits] => [{"method":"cash","amount":40,"received_by":"Issa","receipt_id":null}]
+)
+
+Reservation ID: RES0003-4G4A0T0K-8W4RD
+Splits: Array
+(
+    [0] => Array
+        (
+            [method] => cash
+            [amount] => 40
+            [received_by] => Issa
+            [receipt_id] => 
+        )
+
+)
+
+Database connected
+Reservation found: Array
+(
+    [total_amount] => 40.00
+    [additional_amount_due] => 40.00
+    [name] => Issa Abu Itham
+    [phone] => +962797314111
+)
+
+Total Amount: 40, Total Paid: 0, Remaining: 40
+Payment Total: 40
+Saved split: cash - 40
+Reservation updated - Status: paid, Additional Due: 0
+WhatsApp message sent to: +962797314111
+SUCCESS - Payment processed

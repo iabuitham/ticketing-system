@@ -130,15 +130,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         // ========== SEND WHATSAPP CONFIRMATION ==========
         // This is where the WhatsApp code should go - INSIDE the POST submission block
-        $whatsappMessage = "🎫 *Reservation Confirmed!*\n\n";
-        $whatsappMessage .= "Dear {$name},\n\n";
-        $whatsappMessage .= "Your reservation has been confirmed.\n\n";
-        $whatsappMessage .= "📋 *Reservation ID:* {$reservation_id}\n";
-        $whatsappMessage .= "👥 *Guests:* " . ($adults + $teens + $kids) . "\n";
-        $whatsappMessage .= "🍽️ *Table:* {$table_id}\n";
-        $whatsappMessage .= "💰 *Total Amount:* {$currencySymbol} " . number_format($total_amount, 2) . "\n\n";
+        $whatsappMessage = "🎫 *Reservation Confirmed | تم تأكيد الحجز!*\n\n";
+
+        $whatsappMessage .= "Dear {$name} | عزيزنا {$name},\n\n";
+
+        $whatsappMessage .= "Your reservation has been confirmed successfully.\n";
+        $whatsappMessage .= "تم تأكيد حجزك بنجاح.\n\n";
+
+        $whatsappMessage .= "📋 *Reservation ID | رقم الحجز:* {$reservation_id}\n";
+        $whatsappMessage .= "👥 *Guests | عدد الضيوف:* " . ($adults + $teens + $kids) . "\n";
+        $whatsappMessage .= "🍽️ *Table | الطاولة:* {$table_id}\n";
+        $whatsappMessage .= "💰 *Total Amount | المبلغ الإجمالي:* {$currencySymbol} " . number_format($total_amount, 2) . "\n\n";
+
+        $whatsappMessage .= "To pay for your reservation, please follow the steps below:\n";
+        $whatsappMessage .= "لدفع قيمة الحجز، يرجى اتباع الخطوات التالية:\n\n";
+
+        $whatsappMessage .= "Transfer the amount {$currencySymbol}" . number_format($total_amount, 2) . "\n";
+        $whatsappMessage .= "قم بتحويل المبلغ {$currencySymbol}" . number_format($total_amount, 2) . "\n\n";
+
+        $whatsappMessage .= "Via CliQ transfer to:\n";
+        $whatsappMessage .= "عبر خدمة CliQ إلى:\n";
+        $whatsappMessage .= "*Alias | الاسم المستعار: ABUFARES79*\n";
+        $whatsappMessage .= "*Bank | البنك: Arab Bank | البنك العربي*\n\n";
+
+        $whatsappMessage .= "Then send a screenshot of the transfer to this number.\n";
+        $whatsappMessage .= "ثم أرسل صورة إثبات التحويل إلى هذا الرقم.\n\n";
+
         $whatsappMessage .= "We look forward to serving you! 🎉\n";
-        $whatsappMessage .= "_Thank you for choosing us_";
+        $whatsappMessage .= "نتطلع لخدمتك! 🎉\n\n";
+
+        $whatsappMessage .= "_Thank you for choosing us | شكرًا لاختياركم لنا_";
         
         // Send the message
         $whatsappSent = sendWhatsAppMessage($phone, $whatsappMessage);
