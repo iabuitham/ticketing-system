@@ -338,6 +338,54 @@ function getRemainingDue($reservation_id) {
 }
 
 /**
+ * Update table availability based on active reservations
+ */
+function updateTableAvailability() {
+    $conn = getConnection();
+    
+    // Reset all tables to unused first
+    $conn->query("UPDATE `tables` SET `is_used` = 0");
+    
+    // Get all active reservations (not cancelled, not paid? adjust as needed)
+    $result = $conn->query("SELECT DISTINCT table_id FROM reservations WHERE status NOT IN ('cancelled', 'paid')");
+    
+    while ($row = $result->fetch_assoc()) {
+        $tableId = $row['table_id'];
+        $conn->query("UPDATE `tables` SET `is_used` = 1 WHERE table_number = '$tableId'");
+    }
+    
+    $conn->close();
+}
+
+/**
+ * Get available tables (not used and active)
+ */
+function getAvailableTables() {
+    $conn = getConnection();
+    $tables = [];
+    $result = $conn->query("SELECT table_number, section FROM tables WHERE is_active = 1 AND is_used = 0 AND status = 'available' ORDER BY table_number");
+    while ($row = $result->fetch_assoc()) {
+        $tables[] = $row['table_number'];
+    }
+    $conn->close();
+    return $tables;
+}
+
+/**
+ * Check if a table is available
+ */
+function isTableAvailable($table_number) {
+    $conn = getConnection();
+    $stmt = $conn->prepare("SELECT COUNT(*) as count FROM tables WHERE table_number = ? AND is_active = 1 AND is_used = 0 AND status = 'available'");
+    $stmt->bind_param("s", $table_number);
+    $stmt->execute();
+    $result = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    $conn->close();
+    return $result['count'] > 0;
+}
+
+/**
  * Get current active event
  */
 function getCurrentEvent() {

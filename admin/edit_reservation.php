@@ -88,6 +88,16 @@ $currentTotal = floatval($reservation['total_amount'] ?? 0);
 $additionalDue = floatval($reservation['additional_amount_due'] ?? 0);
 $cancelledClass = $isCancelled ? 'cancelled-text' : '';
 
+// Get available tables for dropdown (don't close connection yet!)
+$tables = [];
+$table_result = $conn->query("SELECT table_number, section FROM tables WHERE is_active = 1 ORDER BY table_number");
+if ($table_result) {
+    while ($row = $table_result->fetch_assoc()) {
+        $tables[] = $row;
+    }
+}
+
+// Now close the connection
 $conn->close();
 ?>
 <!DOCTYPE html>
@@ -332,22 +342,19 @@ $conn->close();
 
                     <div class="price-breakdown" id="priceBreakdown"></div>
 
-<div class="form-group">
-    <label>Table ID *</label>
-    <select name="table_id" required <?php echo $isCancelled ? 'disabled' : ''; ?>>
-        <option value="">Select a table</option>
-        <?php
-        $tables_result = $conn->query("SELECT table_number, section FROM tables WHERE is_active = 1 ORDER BY table_number");
-        while ($table = $tables_result->fetch_assoc()):
-        ?>
-            <option value="<?php echo htmlspecialchars($table['table_number']); ?>" 
-                    <?php echo $reservation['table_id'] == $table['table_number'] ? 'selected' : ''; ?>>
-                Table <?php echo htmlspecialchars($table['table_number']); ?> 
-                <?php if ($table['section']): ?>(<?php echo htmlspecialchars($table['section']); ?>)<?php endif; ?>
-            </option>
-        <?php endwhile; ?>
-    </select>
-</div>
+                    <div class="form-group">
+                        <label>Table ID *</label>
+                        <select name="table_id" required <?php echo $isCancelled ? 'disabled' : ''; ?>>
+                            <option value="">Select a table</option>
+                            <?php foreach ($tables as $table): ?>
+                                <option value="<?php echo htmlspecialchars($table['table_number']); ?>" 
+                                        <?php echo $reservation['table_id'] == $table['table_number'] ? 'selected' : ''; ?>>
+                                    Table <?php echo htmlspecialchars($table['table_number']); ?> 
+                                    <?php if ($table['section']): ?>(<?php echo htmlspecialchars($table['section']); ?>)<?php endif; ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
 
                     <div class="form-group">
                         <label>Notes</label>

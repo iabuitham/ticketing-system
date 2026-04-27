@@ -39,6 +39,11 @@ $stmt = $conn->prepare("UPDATE reservations SET status = ? WHERE reservation_id 
 $stmt->bind_param("ss", $new_status, $reservation_id);
 
 if ($stmt->execute()) {
+    // Update table availability when cancelling or completing
+    if ($new_status == 'cancelled' || $new_status == 'paid') {
+        updateTableAvailability();
+    }
+    
     // If marking as paid, generate ticket codes and send WhatsApp
     if ($new_status == 'paid' && $old_status != 'paid') {
         // Generate ticket codes if not exist
@@ -138,7 +143,6 @@ function sendTicketLinkViaWhatsApp($reservation) {
     $phone = preg_replace('/[^0-9]/', '', $phone);
     if (substr($phone, 0, 1) == '0') $phone = substr($phone, 1);
     if (substr($phone, 0, 3) != '962') $phone = '962' . $phone;
-    $phone = '+' . $phone;
     
     // Send WhatsApp message
     sendWhatsAppMessage($phone, $message);

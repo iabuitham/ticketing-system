@@ -1243,11 +1243,6 @@ $conn->close();
                                     <button onclick="deleteReservation('<?php echo $res['reservation_id']; ?>', this)" class="btn btn-sm btn-danger" title="Delete">
                                         <i class="bi bi-trash3"></i>
                                     </button>
-                                    <?php if ($res['status'] == 'paid'): ?>
-                                        <a href="print_ticket.php?reservation_id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-primary" title="Print Ticket">
-                                            <i class="bi bi-printer"></i>
-                                        </a>
-                                    <?php endif; ?>
                                 </div>
                             </td>
                         </tr>
