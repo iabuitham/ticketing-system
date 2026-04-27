@@ -106,6 +106,33 @@ function getCurrencySymbol() {
     return $symbol;
 }
 
+
+/**
+ * Get base URL for the system
+ */
+function getBaseUrl() {
+    // First check if set in database
+    $url = getSetting('base_url', '');
+    
+    if (!empty($url)) {
+        return rtrim($url, '/') . '/';
+    }
+    
+    // Auto-detect based on current request
+    $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'];
+    $scriptName = dirname($_SERVER['SCRIPT_NAME']);
+    
+    // Remove /admin or other subdirectories
+    $basePath = str_replace('/admin', '', $scriptName);
+    $basePath = str_replace('/public', '', $basePath);
+    $basePath = rtrim($basePath, '/');
+    
+    $baseUrl = $protocol . '://' . $host . $basePath . '/';
+    
+    return $baseUrl;
+}
+
 /**
  * Format price with currency
  */
@@ -480,46 +507,44 @@ function getDaysRemainingText($event_date) {
 }
 
 /**
+ * Calculate rate limit delay based on number of recipients
+ */
+function calculateRateLimitDelay($count) {
+    if ($count <= 10) return 500000;      // 0.5 seconds
+    if ($count <= 50) return 1000000;     // 1 second
+    if ($count <= 100) return 2000000;    // 2 seconds
+    return 3000000;                        // 3 seconds
+}
+/**
+ * Send WhatsApp message using Ultramsg
+ */
+/**
  * Send WhatsApp message using Ultramsg
  */
 /**
  * Send WhatsApp message using Ultramsg
  */
 function sendWhatsAppMessage($to, $message) {
-    // Check if enabled
     $enabled = getSetting('enable_whatsapp', '0') == '1';
-    if (!$enabled) return false;
+    if (!$enabled) {
+        return ['success' => false, 'error' => 'WhatsApp is disabled'];
+    }
     
-    // Get credentials
     $instanceId = getSetting('ultramsg_instance_id', '');
     $token = getSetting('ultramsg_token', '');
     
     if (empty($instanceId) || empty($token)) {
-        error_log("Ultramsg: Missing credentials");
-        return false;
+        return ['success' => false, 'error' => 'Missing API credentials'];
     }
     
-    // Clean phone number - remove ALL non-digits
+    // Clean phone number
     $to = preg_replace('/[^0-9]/', '', $to);
-    
-    // Remove leading zeros
     $to = ltrim($to, '0');
-    
-    // Remove country code if already there (962)
     if (substr($to, 0, 3) == '962') {
         $to = substr($to, 3);
     }
-    
-    // Now add the country code correctly
     $to = '962' . $to;
     
-    // Final validation - number should be 12 digits (962 + 9 digits)
-    if (strlen($to) != 12) {
-        error_log("Ultramsg: Invalid phone number length: " . strlen($to) . " - Number: " . $to);
-        return false;
-    }
-    
-    // Prepare data
     $data = [
         'token' => $token,
         'to' => $to,
@@ -527,7 +552,6 @@ function sendWhatsAppMessage($to, $message) {
         'priority' => 1
     ];
     
-    // Send request
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, "https://api.ultramsg.com/{$instanceId}/messages/chat");
     curl_setopt($ch, CURLOPT_POST, true);
@@ -539,14 +563,16 @@ function sendWhatsAppMessage($to, $message) {
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     
-    // Log result
     $responseData = json_decode($response, true);
+    
     if ($httpCode == 200 && isset($responseData['sent']) && $responseData['sent']) {
-        error_log("WhatsApp sent successfully to: {$to}");
-        return true;
+        return ['success' => true];
     } else {
-        error_log("WhatsApp failed: " . $response);
-        return false;
+        return [
+            'success' => false, 
+            'error' => $responseData['error'] ?? 'Unknown error',
+            'response' => $responseData
+        ];
     }
 }
 

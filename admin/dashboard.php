@@ -1161,7 +1161,6 @@ $conn->close();
             <div>
                 <a href="create_reservation.php" class="btn btn-primary"><i class="bi bi-plus-circle"></i> <?php echo t('new_reservation'); ?></a>
                 <a href="bulk_whatsapp.php" class="btn btn-success"><i class="bi bi-whatsapp"></i> <?php echo t('bulk_whatsapp'); ?></a>
-                <a href="view_tickets.php" class="btn btn-info"><i class="bi bi-ticket-perforated"></i> All Tickets</a>
                 <button onclick="openExportModal()" class="btn btn-info"><i class="bi bi-filetype-csv"></i> <?php echo t('export_csv'); ?></button>
                 <a href="print_statement.php" class="btn btn-secondary"><i class="bi bi-printer"></i> <?php echo t('print_statement'); ?></a>
                 <a href="manager_report.php" class="btn btn-secondary"><i class="bi bi-bar-chart-steps"></i> <?php echo t('analytics'); ?></a>
