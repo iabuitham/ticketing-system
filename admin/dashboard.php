@@ -1167,6 +1167,7 @@ $conn->close();
                 <a href="manager_report.php" class="btn btn-secondary"><i class="bi bi-bar-chart-steps"></i> <?php echo t('analytics'); ?></a>
                 <a href="tables.php" class="btn btn-secondary"><i class="bi bi-grid-3x3-gap-fill"></i> Tables</a>
                 <a href="settings.php" class="btn btn-secondary"><i class="bi bi-gear"></i> <?php echo t('system_settings'); ?></a>
+                <a href="tickets_dashboard.php" class="btn btn-info"><i class="bi bi-ticket-perforated"></i> Ticket Dashboard</a>
             </div>
         </div>
 
@@ -1186,11 +1187,16 @@ $conn->close();
                     </tr>
                 </thead>
                 <tbody>
-                    <?php foreach ($reservations as $res): 
-                        $totalGuests = ($res['adults'] ?? 0) + ($res['teens'] ?? 0) + ($res['kids'] ?? 0);
-                        $amountDue = floatval($res['actual_amount_due'] ?? 0);
-                        $showPayButton = ($res['status'] != 'cancelled' && $amountDue > 0);
-                    ?>
+    <?php foreach ($reservations as $res): 
+        $totalGuests = ($res['adults'] ?? 0) + ($res['teens'] ?? 0) + ($res['kids'] ?? 0);
+        // Use actual_amount_due that we calculated earlier
+        $amountDue = isset($res['actual_amount_due']) ? floatval($res['actual_amount_due']) : 0;
+        
+        // Fallback calculation if not set
+        if ($amountDue == 0 && isset($res['total_amount']) && isset($res['total_paid'])) {
+            $amountDue = max(0, floatval($res['total_amount']) - floatval($res['total_paid']));
+        }
+    ?>
                         <tr>
                             <td><strong><?php echo htmlspecialchars($res['reservation_id']); ?></strong></td>
                             <td><?php echo htmlspecialchars($res['name']); ?></td>
@@ -1228,9 +1234,10 @@ $conn->close();
                                         <i class="bi bi-ticket-perforated"></i>
                                     </a>
                                     
-                                    <?php if ($res['status'] != 'cancelled' && $res['actual_amount_due'] > 0): ?>
-    <button onclick="openPaymentModal('<?php echo $res['reservation_id']; ?>', <?php echo floatval($res['total_amount']); ?>, <?php echo $res['actual_amount_due']; ?>)" class="btn btn-sm btn-success" title="Pay">
-        <i class="bi bi-credit-card"></i> Pay <?php echo number_format($res['actual_amount_due'], 2); ?>
+                                   <!-- PAYMENT BUTTON - FIXED -->
+<?php if ($res['status'] != 'cancelled' && $amountDue > 0): ?>
+    <button onclick="openPaymentModal('<?php echo $res['reservation_id']; ?>', <?php echo floatval($res['total_amount'] ?? 0); ?>, <?php echo $amountDue; ?>)" class="btn btn-sm btn-success" title="Pay">
+        <i class="bi bi-credit-card"></i> Pay <?php echo number_format($amountDue, 2); ?>
     </button>
 <?php endif; ?>
                                     
@@ -1363,23 +1370,35 @@ $conn->close();
         let currentTotalAmount = 0;
         let paymentSplitCount = 0;
 
-        function openPaymentModal(reservationId, totalAmount, amountDue) {
-            currentReservationId = reservationId;
-            currentTotalAmount = parseFloat(totalAmount);
-            currentAmountDue = parseFloat(amountDue);
-
-            document.getElementById('paymentReservationId').value = reservationId;
-            document.getElementById('modalTotalAmountDue').innerHTML = currentAmountDue.toFixed(2) + ' <?php echo $currencySymbol; ?>';
-            document.getElementById('totalAmountDue').value = currentAmountDue;
-
-            document.getElementById('paymentSplits').innerHTML = '';
-            paymentSplitCount = 0;
-            addPaymentSplit();
-
-            updateRemainingAmount();
-            document.getElementById('paymentModal').style.display = 'flex';
-        }
-
+function openPaymentModal(reservationId, totalAmount, amountDue) {
+    console.log("=== DEBUG ===");
+    console.log("Reservation ID:", reservationId);
+    console.log("Total Amount:", totalAmount);
+    console.log("Amount Due Passed:", amountDue);
+    
+    currentReservationId = reservationId;
+    currentTotalAmount = parseFloat(totalAmount);
+    currentAmountDue = parseFloat(amountDue);
+    
+    console.log("currentAmountDue set to:", currentAmountDue);
+    
+    if (isNaN(currentAmountDue) || currentAmountDue <= 0) {
+        console.error("Invalid amount due:", amountDue);
+        alert("Error: Invalid amount due. Please refresh and try again.");
+        return;
+    }
+    
+    document.getElementById('paymentReservationId').value = reservationId;
+    document.getElementById('modalTotalAmountDue').innerHTML = currentAmountDue.toFixed(2) + ' <?php echo $currencySymbol; ?>';
+    document.getElementById('totalAmountDue').value = currentAmountDue;
+    
+    document.getElementById('paymentSplits').innerHTML = '';
+    paymentSplitCount = 0;
+    addPaymentSplit();
+    
+    updateRemainingAmount();
+    document.getElementById('paymentModal').style.display = 'flex';
+}
         function closePaymentModal() {
             document.getElementById('paymentModal').style.display = 'none';
         }
@@ -1480,32 +1499,112 @@ $conn->close();
             }
         }
 
-        function updateRemainingAmount() {
-            let totalPaid = 0;
-            const amounts = document.querySelectorAll('.payment-amount');
-            amounts.forEach(amount => {
-                const val = parseFloat(amount.value);
-                if (!isNaN(val)) totalPaid += val;
-            });
-
-            const remaining = currentAmountDue - totalPaid;
-            const remainingElement = document.getElementById('remainingAmount');
-            if (remainingElement) {
-                remainingElement.textContent = remaining.toFixed(2);
-                if (remaining < 0) {
-                    remainingElement.style.color = '#ef4444';
-                } else if (remaining === 0) {
-                    remainingElement.style.color = '#10b981';
-                } else {
-                    remainingElement.style.color = '#f59e0b';
-                }
+function updateRemainingAmount() {
+    let totalPaid = 0;
+    const amounts = document.querySelectorAll('.payment-amount');
+    amounts.forEach(amount => {
+        const val = parseFloat(amount.value);
+        if (!isNaN(val)) totalPaid += val;
+    });
+    
+    // Round to 2 decimal places
+    totalPaid = Math.round(totalPaid * 100) / 100;
+    const remaining = Math.round((currentAmountDue - totalPaid) * 100) / 100;
+    
+    const remainingElement = document.getElementById('remainingAmount');
+    if (remainingElement) {
+        remainingElement.textContent = remaining.toFixed(2);
+        if (remaining < -0.01) {
+            remainingElement.style.color = '#ef4444';
+            // Show warning if overpaying
+            document.getElementById('remainingAmountDisplay').style.background = '#fee2e2';
+        } else if (remaining === 0) {
+            remainingElement.style.color = '#10b981';
+            document.getElementById('remainingAmountDisplay').style.background = '#d1fae5';
+        } else {
+            remainingElement.style.color = '#f59e0b';
+            document.getElementById('remainingAmountDisplay').style.background = '#fef3c7';
+        }
+        
+        // Disable process button if overpaying
+        const processBtn = document.querySelector('.modal-buttons .btn-success');
+        if (processBtn) {
+            if (remaining < -0.01) {
+                processBtn.disabled = true;
+                processBtn.style.opacity = '0.5';
+                processBtn.title = 'Cannot pay more than amount due';
+            } else {
+                processBtn.disabled = false;
+                processBtn.style.opacity = '1';
             }
         }
+    }
+}
 
-        async function processSplitPayments() {
+function addPaymentSplit() {
+    const container = document.getElementById('paymentSplits');
+    const splitIndex = paymentSplitCount;
+    
+    const splitDiv = document.createElement('div');
+    splitDiv.className = 'payment-split-item';
+    splitDiv.setAttribute('data-split-index', splitIndex);
+    splitDiv.innerHTML = `
+        <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-bottom: 10px; align-items: end;">
+            <div class="form-group">
+                <label>Payment Method</label>
+                <select class="payment-method" onchange="togglePaymentFields(this, ${splitIndex})">
+                    <option value="">Select</option>
+                    <option value="cash">Cash</option>
+                    <option value="cliq">CliQ</option>
+                    <option value="visa">Visa</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Amount (<?php echo $currencySymbol; ?>)</label>
+                <input type="number" class="payment-amount" step="0.01" placeholder="0.00" 
+                       onkeyup="updateRemainingAmount()" 
+                       onchange="validateSplitAmount(this)">
+            </div>
+            <div class="form-group">
+                <label>&nbsp;</label>
+                <button type="button" class="btn btn-danger btn-sm" onclick="removePaymentSplit(this)">Remove</button>
+            </div>
+        </div>
+        <div class="payment-fields" style="display: none;"></div>
+    `;
+    
+    container.appendChild(splitDiv);
+    paymentSplitCount++;
+}
+
+function validateSplitAmount(input) {
+    let value = parseFloat(input.value);
+    if (isNaN(value)) value = 0;
+    
+    // Calculate current total of other splits
+    let otherTotal = 0;
+    const allAmounts = document.querySelectorAll('.payment-amount');
+    allAmounts.forEach(amount => {
+        if (amount !== input) {
+            otherTotal += parseFloat(amount.value) || 0;
+        }
+    });
+    
+    const maxAllowed = currentAmountDue - otherTotal;
+    
+    if (value > maxAllowed + 0.01) {
+        alert(`Maximum allowed for this split is ${maxAllowed.toFixed(2)} (remaining amount due)`);
+        input.value = maxAllowed.toFixed(2);
+        updateRemainingAmount();
+    }
+}
+
+async function processSplitPayments() {
     const splits = [];
     const splitItems = document.querySelectorAll('.payment-split-item');
     let totalAmount = 0;
+    
+    console.log("Current Amount Due:", currentAmountDue);
     
     for (let item of splitItems) {
         const method = item.querySelector('.payment-method').value;
@@ -1554,13 +1653,19 @@ $conn->close();
         splits.push(splitData);
     }
     
-    if (Math.abs(totalAmount - currentAmountDue) > 0.01 && totalAmount < currentAmountDue) {
-        alert(`Total payment amount (${totalAmount.toFixed(2)}) is less than amount due (${currentAmountDue.toFixed(2)}). Please add more payment splits or adjust amounts.`);
-        return;
-    }
+    totalAmount = Math.round(totalAmount * 100) / 100;
+    const amountDue = Math.round(currentAmountDue * 100) / 100;
     
-    if (totalAmount > currentAmountDue) {
-        alert(`Total payment amount (${totalAmount.toFixed(2)}) exceeds amount due (${currentAmountDue.toFixed(2)}). Please adjust amounts.`);
+    console.log("Total to pay:", totalAmount);
+    console.log("Amount due:", amountDue);
+    
+    // Allow small rounding differences (0.01)
+    if (Math.abs(totalAmount - amountDue) > 0.02) {
+        if (totalAmount < amountDue) {
+            alert(`Total payment (${totalAmount.toFixed(2)}) is less than amount due (${amountDue.toFixed(2)}).`);
+        } else {
+            alert(`Total payment (${totalAmount.toFixed(2)}) exceeds amount due (${amountDue.toFixed(2)}). Please reduce the amount.`);
+        }
         return;
     }
     
@@ -1568,10 +1673,11 @@ $conn->close();
     
     const formData = new FormData();
     formData.append('reservation_id', currentReservationId);
-    formData.append('total_amount', currentAmountDue);
+    // Send the exact amount due, not the total
+    formData.append('total_amount', amountDue);
     formData.append('splits', JSON.stringify(splits.map(s => ({
         method: s.method,
-        amount: s.amount,
+        amount: Math.min(s.amount, amountDue), // Ensure not more than due
         received_by: s.received_by || null,
         receipt_id: s.receipt_id || null
     }))));
@@ -1594,38 +1700,18 @@ $conn->close();
             body: formData
         });
         
-        // Check if response is ok
-        if (!response.ok) {
-            throw new Error('Server error: ' + response.status);
-        }
-        
-        const text = await response.text();
-        
-        // Try to parse JSON
-        let data;
-        try {
-            data = JSON.parse(text);
-        } catch (e) {
-            console.error('Invalid JSON response:', text);
-            throw new Error('Server returned invalid response. Check error logs.');
-        }
-        
+        const data = await response.json();
         hideLoading();
         
         if (data.success) {
-            const remainingText = data.remaining_due > 0 
-                ? `Remaining due: ${data.remaining_due.toFixed(2)} <?php echo $currencySymbol; ?>`
-                : 'Reservation is now fully paid!';
-            
-            alert(`✓ Payments processed successfully!\n\n${remainingText}`);
+            alert('✓ Payment processed successfully!');
             closePaymentModal();
             location.reload();
         } else {
-            alert('Error: ' + (data.error || 'Payment failed. Please try again.'));
+            alert('Error: ' + (data.error || 'Payment failed'));
         }
     } catch (error) {
         hideLoading();
-        console.error('Payment error:', error);
         alert('Error: ' + error.message);
     }
 }

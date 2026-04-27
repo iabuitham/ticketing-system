@@ -34,3 +34,171 @@ Saved split: cash - 40
 Reservation updated - Status: paid, Additional Due: 0
 WhatsApp message sent to: +962797314111
 SUCCESS - Payment processed
+2026-04-27 13:34:50 - Payment process started
+POST data: Array
+(
+    [reservation_id] => RES0001-3G3A0T0K-TV3UE
+    [total_amount] => 30
+    [splits] => [{"method":"cliq","amount":30,"received_by":null,"receipt_id":null}]
+)
+
+Reservation ID: RES0001-3G3A0T0K-TV3UE
+Splits: Array
+(
+    [0] => Array
+        (
+            [method] => cliq
+            [amount] => 30
+            [received_by] => 
+            [receipt_id] => 
+        )
+
+)
+
+Database connected
+Reservation found: Array
+(
+    [total_amount] => 30.00
+    [additional_amount_due] => 30.00
+    [name] => Issa Abu Itham
+    [phone] => +962797314111
+)
+
+Total Amount: 30, Total Paid: 0, Remaining: 30
+Payment Total: 30
+Saved split: cliq - 30
+Reservation updated - Status: paid, Additional Due: 0
+2026-04-27 13:35:04 - Payment process started
+POST data: Array
+(
+    [reservation_id] => RES0001-3G3A0T0K-TV3UE
+    [total_amount] => 30
+    [splits] => [{"method":"cliq","amount":30,"received_by":null,"receipt_id":null}]
+)
+
+Reservation ID: RES0001-3G3A0T0K-TV3UE
+Splits: Array
+(
+    [0] => Array
+        (
+            [method] => cliq
+            [amount] => 30
+            [received_by] => 
+            [receipt_id] => 
+        )
+
+)
+
+Database connected
+Reservation found: Array
+(
+    [total_amount] => 30.00
+    [additional_amount_due] => 0.00
+    [name] => Issa Abu Itham
+    [phone] => +962797314111
+)
+
+Total Amount: 30, Total Paid: 30, Remaining: 0
+Payment Total: 30
+ERROR: Payment total exceeds amount due
+Stack trace: #0 {main}
+2026-04-27 13:35:18 - Payment process started
+POST data: Array
+(
+    [reservation_id] => RES0001-3G3A0T0K-TV3UE
+    [total_amount] => 30
+    [splits] => [{"method":"cash","amount":30,"received_by":"Issa Abu Itham","receipt_id":null}]
+)
+
+Reservation ID: RES0001-3G3A0T0K-TV3UE
+Splits: Array
+(
+    [0] => Array
+        (
+            [method] => cash
+            [amount] => 30
+            [received_by] => Issa Abu Itham
+            [receipt_id] => 
+        )
+
+)
+
+Database connected
+Reservation found: Array
+(
+    [total_amount] => 30.00
+    [additional_amount_due] => 0.00
+    [name] => Issa Abu Itham
+    [phone] => +962797314111
+)
+
+Total Amount: 30, Total Paid: 30, Remaining: 0
+Payment Total: 30
+ERROR: Payment total exceeds amount due
+Stack trace: #0 {main}
+2026-04-27 13:38:26 - Payment process started
+POST data: Array
+(
+    [reservation_id] => RES0001-3G3A0T0K-TV3UE
+    [total_amount] => 30
+    [splits] => [{"method":"cash","amount":30,"received_by":"Issa Abu Itham","receipt_id":null}]
+)
+
+Reservation ID: RES0001-3G3A0T0K-TV3UE
+Splits: Array
+(
+    [0] => Array
+        (
+            [method] => cash
+            [amount] => 30
+            [received_by] => Issa Abu Itham
+            [receipt_id] => 
+        )
+
+)
+
+Database connected
+Reservation found: Array
+(
+    [total_amount] => 30.00
+    [additional_amount_due] => 0.00
+    [name] => Issa Abu Itham
+    [phone] => +962797314111
+)
+
+Total Amount: 30, Total Paid: 30, Remaining: 0
+ERROR: Payment total exceeds amount due
+Stack trace: #0 {main}
+2026-04-27 14:17:24 - Payment process started
+POST data: Array
+(
+    [reservation_id] => RES0001-10G10A0T0K-1SLG8
+    [total_amount] => 100
+    [splits] => [{"method":"cash","amount":100,"received_by":"Issa Abu Itham","receipt_id":null}]
+)
+
+Reservation ID: RES0001-10G10A0T0K-1SLG8
+Splits: Array
+(
+    [0] => Array
+        (
+            [method] => cash
+            [amount] => 100
+            [received_by] => Issa Abu Itham
+            [receipt_id] => 
+        )
+
+)
+
+Database connected
+Reservation found: Array
+(
+    [total_amount] => 100.00
+    [additional_amount_due] => 100.00
+    [name] => Issa Abu Itham
+    [phone] => +962797314111
+)
+
+Total Amount: 100, Total Paid: 0, Remaining: 100
+Saved split: cash - 100
+Reservation updated - Status: paid, Additional Due: 0

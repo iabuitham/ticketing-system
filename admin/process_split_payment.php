@@ -1,73 +1,64 @@
 <?php
-// Turn on error reporting for debugging
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+// Turn off all error reporting for JSON response
+error_reporting(0);
+ini_set('display_errors', 0);
 
 session_start();
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
 
-// Create a log file
-$log_file = __DIR__ . '/payment_debug.log';
-file_put_contents($log_file, date('Y-m-d H:i:s') . " - Payment process started\n", FILE_APPEND);
-file_put_contents($log_file, "POST data: " . print_r($_POST, true) . "\n", FILE_APPEND);
-
+// Set JSON header
 header('Content-Type: application/json');
 
+// Check authentication
 if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
-    file_put_contents($log_file, "ERROR: Unauthorized\n", FILE_APPEND);
     echo json_encode(['success' => false, 'error' => 'Unauthorized']);
     exit();
 }
 
-$reservation_id = $_POST['reservation_id'] ?? '';
-$splits_json = $_POST['splits'] ?? '[]';
+// Get POST data
+$reservation_id = isset($_POST['reservation_id']) ? $_POST['reservation_id'] : '';
+$splits_json = isset($_POST['splits']) ? $_POST['splits'] : '[]';
 $splits = json_decode($splits_json, true);
 
-file_put_contents($log_file, "Reservation ID: $reservation_id\n", FILE_APPEND);
-file_put_contents($log_file, "Splits: " . print_r($splits, true) . "\n", FILE_APPEND);
+if (empty($reservation_id)) {
+    echo json_encode(['success' => false, 'error' => 'No reservation ID provided']);
+    exit();
+}
 
-if (empty($reservation_id) || empty($splits)) {
-    file_put_contents($log_file, "ERROR: Invalid payment data\n", FILE_APPEND);
-    echo json_encode(['success' => false, 'error' => 'Invalid payment data']);
+if (empty($splits)) {
+    echo json_encode(['success' => false, 'error' => 'No payment splits provided']);
     exit();
 }
 
 $conn = getConnection();
 
+// Start transaction
+$conn->begin_transaction();
+
 try {
-    // Test database connection
-    if (!$conn) {
-        throw new Exception('Database connection failed');
-    }
-    file_put_contents($log_file, "Database connected\n", FILE_APPEND);
-    
     // Get current reservation
     $stmt = $conn->prepare("SELECT total_amount, additional_amount_due, name, phone FROM reservations WHERE reservation_id = ?");
     $stmt->bind_param("s", $reservation_id);
     $stmt->execute();
-    $result = $stmt->get_result()->fetch_assoc();
+    $result = $stmt->get_result();
+    $reservation = $result->fetch_assoc();
     $stmt->close();
     
-    if (!$result) {
+    if (!$reservation) {
         throw new Exception('Reservation not found');
     }
     
-    file_put_contents($log_file, "Reservation found: " . print_r($result, true) . "\n", FILE_APPEND);
-    
-    // Get total paid
+    // Get total paid from split_payments
     $stmt = $conn->prepare("SELECT COALESCE(SUM(amount), 0) as total_paid FROM split_payments WHERE reservation_id = ?");
     $stmt->bind_param("s", $reservation_id);
     $stmt->execute();
     $paidResult = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     
-    $totalAmount = floatval($result['total_amount']);
+    $totalAmount = floatval($reservation['total_amount']);
     $totalPaid = floatval($paidResult['total_paid']);
     $remainingDue = $totalAmount - $totalPaid;
-    
-    file_put_contents($log_file, "Total Amount: $totalAmount, Total Paid: $totalPaid, Remaining: $remainingDue\n", FILE_APPEND);
     
     // Calculate total payment from splits
     $paymentTotal = 0;
@@ -75,22 +66,25 @@ try {
         $paymentTotal += floatval($split['amount']);
     }
     
-    file_put_contents($log_file, "Payment Total: $paymentTotal\n", FILE_APPEND);
+    // Round to 2 decimal places
+    $paymentTotal = round($paymentTotal, 2);
+    $remainingDue = round($remainingDue, 2);
     
-    if (abs($paymentTotal - $remainingDue) > 0.01 && $paymentTotal < $remainingDue) {
-        throw new Exception('Payment total does not match amount due');
+    // Validate payment amount
+    if ($paymentTotal > $remainingDue + 0.01) {
+        throw new Exception("Payment total ($paymentTotal) exceeds amount due ($remainingDue)");
     }
     
-    if ($paymentTotal > $remainingDue) {
-        throw new Exception('Payment total exceeds amount due');
+    if ($paymentTotal < $remainingDue - 0.01) {
+        throw new Exception("Payment total ($paymentTotal) is less than amount due ($remainingDue)");
     }
     
     // Process each payment split
     foreach ($splits as $split) {
         $method = $split['method'];
         $amount = floatval($split['amount']);
-        $receipt_id = $split['receipt_id'] ?? null;
-        $received_by = $split['received_by'] ?? null;
+        $receipt_id = isset($split['receipt_id']) ? $split['receipt_id'] : null;
+        $received_by = isset($split['received_by']) ? $split['received_by'] : null;
         
         $stmt = $conn->prepare("INSERT INTO split_payments 
             (reservation_id, payment_method, amount, receipt_id, received_by, payment_date) 
@@ -101,7 +95,6 @@ try {
             throw new Exception('Failed to save payment split: ' . $stmt->error);
         }
         $stmt->close();
-        file_put_contents($log_file, "Saved split: $method - $amount\n", FILE_APPEND);
     }
     
     // Calculate new totals
@@ -118,32 +111,31 @@ try {
     }
     $update->close();
     
-    file_put_contents($log_file, "Reservation updated - Status: $newStatus, Additional Due: $newAdditionalDue\n", FILE_APPEND);
+    $conn->commit();
     
-    // Send WhatsApp message if fully paid
+    // Send WhatsApp notification (don't let it break the JSON)
     if ($newAdditionalDue <= 0) {
-        $baseUrl = getSetting('base_url', 'http://localhost/ticketing-system/');
-        $ticketLink = $baseUrl . "public/view_tickets.php?token=" . base64_encode($reservation_id);
-        $eventName = $_SESSION['selected_event_name'] ?? 'Event';
-        $eventDate = $_SESSION['selected_event_date'] ?? '';
-        $eventDateFormatted = $eventDate ? date('F j, Y', strtotime($eventDate)) : 'TBA';
-        
-        $ticketMessage = "🎟️ *YOUR TICKETS ARE READY!* 🎟️\n\n";
-        $ticketMessage .= "Dear {$result['name']},\n\n";
-        $ticketMessage .= "Thank you for your payment! Your tickets are now ready.\n\n";
-        $ticketMessage .= "📋 *Reservation ID:* {$reservation_id}\n";
-        $ticketMessage .= "🎪 *Event:* {$eventName}\n";
-        $ticketMessage .= "📅 *Date:* {$eventDateFormatted}\n\n";
-        $ticketMessage .= "*🔗 Click below to view and download your tickets:*\n";
-        $ticketMessage .= "{$ticketLink}\n\n";
-        $ticketMessage .= "We look forward to seeing you! 🎉\n";
-        
-        sendWhatsAppMessage($result['phone'], $ticketMessage);
-        file_put_contents($log_file, "WhatsApp message sent to: {$result['phone']}\n", FILE_APPEND);
+        try {
+            $eventName = isset($_SESSION['selected_event_name']) ? $_SESSION['selected_event_name'] : 'Event';
+            $baseUrl = getSetting('base_url', 'http://localhost/ticketing-system/');
+            $ticketLink = $baseUrl . "public/view_tickets.php?token=" . base64_encode($reservation_id);
+            
+            $message = "🎟️ *YOUR TICKETS ARE READY!* 🎟️\n\n";
+            $message .= "Dear {$reservation['name']},\n\n";
+            $message .= "Thank you for your payment!\n\n";
+            $message .= "📋 *Reservation ID:* {$reservation_id}\n";
+            $message .= "🎪 *Event:* {$eventName}\n\n";
+            $message .= "🔗 View your tickets: {$ticketLink}\n\n";
+            $message .= "We look forward to seeing you! 🎉";
+            
+            sendWhatsAppMessage($reservation['phone'], $message);
+        } catch (Exception $e) {
+            // Don't throw, just log
+            error_log("WhatsApp error: " . $e->getMessage());
+        }
     }
     
-    file_put_contents($log_file, "SUCCESS - Payment processed\n", FILE_APPEND);
-    
+    // Return success response
     echo json_encode([
         'success' => true,
         'message' => 'Payment processed successfully',
@@ -152,8 +144,7 @@ try {
     ]);
     
 } catch (Exception $e) {
-    file_put_contents($log_file, "ERROR: " . $e->getMessage() . "\n", FILE_APPEND);
-    file_put_contents($log_file, "Stack trace: " . $e->getTraceAsString() . "\n", FILE_APPEND);
+    $conn->rollback();
     echo json_encode(['success' => false, 'error' => $e->getMessage()]);
 }
 
