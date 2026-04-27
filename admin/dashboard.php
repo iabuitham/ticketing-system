@@ -1371,20 +1371,16 @@ $conn->close();
         let paymentSplitCount = 0;
 
 function openPaymentModal(reservationId, totalAmount, amountDue) {
-    console.log("=== DEBUG ===");
-    console.log("Reservation ID:", reservationId);
+    console.log("Opening payment modal for:", reservationId);
     console.log("Total Amount:", totalAmount);
-    console.log("Amount Due Passed:", amountDue);
+    console.log("Amount Due:", amountDue);
     
     currentReservationId = reservationId;
     currentTotalAmount = parseFloat(totalAmount);
     currentAmountDue = parseFloat(amountDue);
     
-    console.log("currentAmountDue set to:", currentAmountDue);
-    
     if (isNaN(currentAmountDue) || currentAmountDue <= 0) {
-        console.error("Invalid amount due:", amountDue);
-        alert("Error: Invalid amount due. Please refresh and try again.");
+        alert("No amount due for this reservation.");
         return;
     }
     
@@ -1604,8 +1600,6 @@ async function processSplitPayments() {
     const splitItems = document.querySelectorAll('.payment-split-item');
     let totalAmount = 0;
     
-    console.log("Current Amount Due:", currentAmountDue);
-    
     for (let item of splitItems) {
         const method = item.querySelector('.payment-method').value;
         const amount = parseFloat(item.querySelector('.payment-amount').value);
@@ -1653,46 +1647,37 @@ async function processSplitPayments() {
         splits.push(splitData);
     }
     
+    // Round to 2 decimal places
     totalAmount = Math.round(totalAmount * 100) / 100;
     const amountDue = Math.round(currentAmountDue * 100) / 100;
     
-    console.log("Total to pay:", totalAmount);
-    console.log("Amount due:", amountDue);
+    console.log("Total Amount to Pay:", totalAmount);
+    console.log("Amount Due:", amountDue);
     
-    // Allow small rounding differences (0.01)
+    // Check if total matches the amount due (allow 0.01 tolerance)
     if (Math.abs(totalAmount - amountDue) > 0.02) {
         if (totalAmount < amountDue) {
-            alert(`Total payment (${totalAmount.toFixed(2)}) is less than amount due (${amountDue.toFixed(2)}).`);
+            alert(`Total payment (${totalAmount.toFixed(2)}) is less than amount due (${amountDue.toFixed(2)}). Please add more.`);
         } else {
             alert(`Total payment (${totalAmount.toFixed(2)}) exceeds amount due (${amountDue.toFixed(2)}). Please reduce the amount.`);
         }
         return;
     }
     
+    // Use the exact amount due (not the total from inputs)
+    const exactAmount = amountDue;
+    
+    // Adjust the last split to match exact amount if needed
+    if (Math.abs(totalAmount - exactAmount) > 0.01) {
+        const lastSplit = splits[splits.length - 1];
+        lastSplit.amount = exactAmount - (totalAmount - lastSplit.amount);
+    }
+    
     showLoading('Processing payments...');
     
     const formData = new FormData();
     formData.append('reservation_id', currentReservationId);
-    // Send the exact amount due, not the total
-    formData.append('total_amount', amountDue);
-    formData.append('splits', JSON.stringify(splits.map(s => ({
-        method: s.method,
-        amount: Math.min(s.amount, amountDue), // Ensure not more than due
-        received_by: s.received_by || null,
-        receipt_id: s.receipt_id || null
-    }))));
-    
-    let fileIndex = 0;
-    for (let item of splitItems) {
-        const method = item.querySelector('.payment-method').value;
-        if (method === 'cliq') {
-            const fileInput = item.querySelector('.proof-file');
-            if (fileInput.files[0]) {
-                formData.append(`file_${fileIndex}`, fileInput.files[0]);
-                fileIndex++;
-            }
-        }
-    }
+    formData.append('splits', JSON.stringify(splits));
     
     try {
         const response = await fetch('process_split_payment.php', {
@@ -1700,7 +1685,19 @@ async function processSplitPayments() {
             body: formData
         });
         
-        const data = await response.json();
+        const text = await response.text();
+        console.log("Raw response:", text);
+        
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch(e) {
+            console.error("Failed to parse JSON:", text);
+            alert("Server error. Check logs.");
+            hideLoading();
+            return;
+        }
+        
         hideLoading();
         
         if (data.success) {
@@ -1713,6 +1710,7 @@ async function processSplitPayments() {
     } catch (error) {
         hideLoading();
         alert('Error: ' + error.message);
+        console.error(error);
     }
 }
 

@@ -551,9 +551,12 @@ function sendWhatsAppMessage($to, $message) {
 }
 
 /**
- * Send WhatsApp image (for tickets, receipts)
+ * Send WhatsApp image using Ultramsg - sends actual image file
  */
-function sendWhatsAppImage($to, $imageUrl, $caption = '') {
+/**
+ * Send WhatsApp image - sends REAL image file (not link)
+ */
+function sendWhatsAppImage($to, $imagePath, $caption = '') {
     $enabled = getSetting('enable_whatsapp', '0') == '1';
     if (!$enabled) return false;
     
@@ -562,31 +565,48 @@ function sendWhatsAppImage($to, $imageUrl, $caption = '') {
     
     if (empty($instanceId) || empty($token)) return false;
     
+    // Clean phone number
     $to = preg_replace('/[^0-9]/', '', $to);
-    if (substr($to, 0, 2) != '962') {
-        $to = '962' . $to;
+    $to = ltrim($to, '0');
+    if (substr($to, 0, 3) == '962') {
+        $to = substr($to, 3);
     }
-    if (substr($to, 0, 1) == '0') {
-        $to = '962' . substr($to, 1);
+    $to = '962' . $to;
+    
+    // If imagePath is not a file, try to download it
+    if (!file_exists($imagePath)) {
+        $imageData = @file_get_contents($imagePath);
+        if (!$imageData) return false;
+        $tempFile = tempnam(sys_get_temp_dir(), 'wa_img_');
+        file_put_contents($tempFile, $imageData);
+        $imagePath = $tempFile;
     }
     
-    $data = [
+    // Send via cURL
+    $curl = curl_init();
+    curl_setopt($curl, CURLOPT_URL, "https://api.ultramsg.com/{$instanceId}/messages/image");
+    curl_setopt($curl, CURLOPT_POST, true);
+    
+    $postfields = [
         'token' => $token,
         'to' => $to,
-        'image' => $imageUrl,
-        'caption' => $caption
+        'caption' => $caption,
+        'image' => new CURLFile($imagePath)
     ];
     
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, "https://api.ultramsg.com/{$instanceId}/messages/image");
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($curl, CURLOPT_POSTFIELDS, $postfields);
+    curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, false);
     
-    $response = curl_exec($ch);
-    curl_close($ch);
+    $response = curl_exec($curl);
+    $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+    curl_close($curl);
     
-    return true;
+    // Clean up temp file
+    if (isset($tempFile) && file_exists($tempFile)) {
+        unlink($tempFile);
+    }
+    
+    return $httpCode == 200;
 }
 ?>
