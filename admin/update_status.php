@@ -67,10 +67,10 @@ if ($stmt->execute()) {
             }
         }
         
-        // Send WhatsApp message with ticket link
-        sendTicketLinkViaWhatsApp($reservation);
+        // Send tickets as QR code images (like in process_split_payment)
+        sendTicketsAsQRCodeImages($reservation_id, $reservation['phone'], $reservation['name']);
         
-        $_SESSION['success'] = "Reservation marked as paid! Ticket link sent via WhatsApp.";
+        $_SESSION['success'] = "Reservation marked as paid! Tickets sent via WhatsApp as QR code images.";
     } else {
         $_SESSION['success'] = "Status updated to " . ucfirst($new_status) . " successfully!";
     }
@@ -99,52 +99,82 @@ function generateTicketId($reservationId, $type, $number) {
     return $reservationId . '-' . $typeCode . str_pad($number, 4, '0', STR_PAD_LEFT);
 }
 
-// Function to send ticket link via WhatsApp
-function sendTicketLinkViaWhatsApp($reservation) {
+// Function to send tickets as QR code images (same as process_split_payment)
+function sendTicketsAsQRCodeImages($reservation_id, $customerPhone, $customerName) {
     $conn = getConnection();
     
-    // Get ticket codes
-    $tickets = $conn->query("SELECT * FROM ticket_codes WHERE reservation_id = '{$reservation['reservation_id']}' ORDER BY guest_type, guest_number")->fetch_all(MYSQLI_ASSOC);
+    // Get all tickets
+    $ticketsStmt = $conn->prepare("SELECT * FROM ticket_codes WHERE reservation_id = ? AND is_active = 1 ORDER BY guest_type, guest_number");
+    $ticketsStmt->bind_param("s", $reservation_id);
+    $ticketsStmt->execute();
+    $tickets = $ticketsStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $ticketsStmt->close();
+    
+    $eventName = isset($_SESSION['selected_event_name']) ? $_SESSION['selected_event_name'] : 'Event';
     $conn->close();
     
-    $baseUrl = getBaseUrl();
-    $ticketLink = $baseUrl . "admin/print_ticket.php?reservation_id=" . urlencode($reservation['reservation_id']);
-    $totalGuests = $reservation['adults'] + $reservation['teens'] + $reservation['kids'];
-    $currency = getSetting('currency', 'JOD');
-    
-    $message = "✅ *TICKET READY!* ✅\n\n";
-    $message .= "Dear {$reservation['name']},\n\n";
-    $message .= "Your payment has been confirmed and your tickets are now ready!\n\n";
-    
-    $message .= "📋 *Reservation Details:*\n";
-    $message .= "• Reservation ID: {$reservation['reservation_id']}\n";
-    $message .= "• Table: {$reservation['table_id']}\n";
-    $message .= "• Guests: {$totalGuests} ({$reservation['adults']} Adults, {$reservation['teens']} Teens, {$reservation['kids']} Kids)\n\n";
-    
-    $message .= "🎫 *Your Ticket Codes:*\n";
-    foreach ($tickets as $ticket) {
-        $typeIcon = $ticket['guest_type'] == 'adult' ? '👤' : ($ticket['guest_type'] == 'teen' ? '🧑' : '👶');
-        $message .= "{$typeIcon} {$ticket['ticket_code']}\n";
+    if (empty($tickets)) {
+        return false;
     }
     
-    $message .= "\n📎 *Download Your E-Ticket:*\n";
-    $message .= $ticketLink . "\n\n";
+    // Send header message
+    $headerMessage = "🎟️ *YOUR TICKETS ARE READY!* 🎟️\n\n";
+    $headerMessage .= "Dear {$customerName},\n\n";
+    $headerMessage .= "Thank you for your payment! Here are your tickets.\n\n";
+    $headerMessage .= "📋 *Reservation ID:* {$reservation_id}\n";
+    $headerMessage .= "🎪 *Event:* {$eventName}\n";
+    $headerMessage .= "📱 *Total Tickets:* " . count($tickets) . "\n\n";
+    $headerMessage .= "⬇️ *Your tickets are attached below as images.* ⬇️\n";
+    $headerMessage .= "Press and hold on each image to save to your phone.\n";
+    $headerMessage .= "Show the saved images at the entrance.\n\n";
+    $headerMessage .= "We look forward to seeing you! 🎉";
     
-    $message .= "📱 *Instructions:*\n";
-    $message .= "• Click the link above to view your ticket\n";
-    $message .= "• You can print or save as PDF\n";
-    $message .= "• Present the ticket (digital or printed) at the entrance\n";
-    $message .= "• Each ticket has a unique QR code for scanning\n\n";
+    sendWhatsAppMessage($customerPhone, $headerMessage);
     
-    $message .= "🎉 Thank you for choosing our event! We look forward to welcoming you! 🎉";
+    // Create temp directory
+    $tempDir = '../uploads/temp_tickets/';
+    if (!is_dir($tempDir)) {
+        mkdir($tempDir, 0777, true);
+    }
     
-    // Format phone number
-    $phone = $reservation['phone'];
-    $phone = preg_replace('/[^0-9]/', '', $phone);
-    if (substr($phone, 0, 1) == '0') $phone = substr($phone, 1);
-    if (substr($phone, 0, 3) != '962') $phone = '962' . $phone;
+    // Send each ticket as QR code image
+    $ticketCount = 0;
+    foreach ($tickets as $ticket) {
+        $ticketCount++;
+        $typeLabel = ucfirst($ticket['guest_type']);
+        $ticketNumber = str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT);
+        
+        // Generate QR code image
+        $qrUrl = "https://quickchart.io/qr?text=" . urlencode($ticket['ticket_code']) . "&size=250&margin=2";
+        $qrImageData = @file_get_contents($qrUrl);
+        
+        if ($qrImageData) {
+            $tempFile = $tempDir . "ticket_{$ticket['ticket_code']}.png";
+            file_put_contents($tempFile, $qrImageData);
+            
+            $caption = "🎫 *{$typeLabel} Ticket #{$ticketNumber}*\n";
+            $caption .= "ID: {$ticket['ticket_code']}\n";
+            $caption .= "Valid for one-time entry\n";
+            $caption .= "Show this QR code at the entrance";
+            
+            sendWhatsAppImage($customerPhone, $tempFile, $caption);
+            unlink($tempFile); // Delete temp file
+        }
+        
+        usleep(500000); // 0.5 sec delay
+    }
     
-    // Send WhatsApp message
-    sendWhatsAppMessage($phone, $message);
+    // Send closing message
+    if ($ticketCount > 0) {
+        $closingMessage = "✅ *All {$ticketCount} ticket(s) sent!*\n\n";
+        $closingMessage .= "📸 Each ticket has been sent as an image.\n";
+        $closingMessage .= "💾 Press and hold on each image to save to your phone gallery.\n";
+        $closingMessage .= "📱 Show the saved images at the entrance for scanning.\n\n";
+        $closingMessage .= "Thank you for choosing us! 🎉";
+        
+        sendWhatsAppMessage($customerPhone, $closingMessage);
+    }
+    
+    return $ticketCount;
 }
 ?>

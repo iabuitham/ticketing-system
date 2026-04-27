@@ -106,31 +106,23 @@ function getCurrencySymbol() {
     return $symbol;
 }
 
-
 /**
  * Get base URL for the system
  */
 function getBaseUrl() {
-    // First check if set in database
     $url = getSetting('base_url', '');
-    
     if (!empty($url)) {
         return rtrim($url, '/') . '/';
     }
     
-    // Auto-detect based on current request
     $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http';
     $host = $_SERVER['HTTP_HOST'];
     $scriptName = dirname($_SERVER['SCRIPT_NAME']);
-    
-    // Remove /admin or other subdirectories
     $basePath = str_replace('/admin', '', $scriptName);
     $basePath = str_replace('/public', '', $basePath);
     $basePath = rtrim($basePath, '/');
     
-    $baseUrl = $protocol . '://' . $host . $basePath . '/';
-    
-    return $baseUrl;
+    return $protocol . '://' . $host . $basePath . '/';
 }
 
 /**
@@ -166,27 +158,19 @@ function generateRandomString($length = 5) {
 }
 
 /**
- * Get next sequential number for reservation (ensures never 0)
+ * Get next sequential number for reservation
  */
 function getNextSequentialNumber() {
     $conn = getConnection();
-    
-    // Get the maximum sequential number, handling NULLs
-    $result = $conn->query("SELECT COALESCE(MAX(sequential_number), 0) as max_seq FROM reservations");
-    $row = $result->fetch_assoc();
-    $max_seq = intval($row['max_seq']);
+    $result = $conn->query("SELECT COALESCE(MAX(sequential_number), 0) + 1 as next_num FROM reservations");
+    $next = $result->fetch_assoc()['next_num'];
     $conn->close();
-    
-    // If no records or max is 0, start from 1
-    if ($max_seq <= 0) {
-        return 1;
-    }
-    
-    return $max_seq + 1;
+    if ($next <= 0) $next = 1;
+    return $next;
 }
 
 /**
- * Generate Reservation ID with pattern: RES0001-15G12A3T0K-AT54G
+ * Generate Reservation ID
  */
 function generateReservationId($adults, $teens, $kids) {
     $prefix = 'RES';
@@ -195,410 +179,56 @@ function generateReservationId($adults, $teens, $kids) {
     $totalGuests = $adults + $teens + $kids;
     $breakdown = $totalGuests . 'G' . $adults . 'A' . $teens . 'T' . $kids . 'K';
     $randomSuffix = generateRandomString(5);
-    
     return $prefix . $sequentialFormatted . '-' . $breakdown . '-' . $randomSuffix;
 }
 
 /**
- * Generate Ticket ID for each attendee
+ * Generate Ticket ID
  */
 function generateTicketId($reservationId, $attendeeType, $attendeeNumber) {
     $typeCode = '';
     switch ($attendeeType) {
-        case 'adult':
-            $typeCode = 'A';
-            break;
-        case 'teen':
-            $typeCode = 'T';
-            break;
-        case 'kid':
-            $typeCode = 'K';
-            break;
+        case 'adult': $typeCode = 'A'; break;
+        case 'teen': $typeCode = 'T'; break;
+        case 'kid': $typeCode = 'K'; break;
     }
-    
     $numberFormatted = str_pad($attendeeNumber, 3, '0', STR_PAD_LEFT);
-    $ticketId = $reservationId . '-' . $typeCode . $numberFormatted;
-    
-    return $ticketId;
+    return $reservationId . '-' . $typeCode . $numberFormatted;
 }
 
 /**
- * Regenerate reservation ID keeping the same sequential number and random suffix
+ * Regenerate reservation ID keeping same sequential number and random suffix
  */
 function regenerateReservationIdFromOld($old_id, $new_adults, $new_teens, $new_kids) {
-    // Extract sequential number and random suffix from old ID
     if (preg_match('/^RES(\d{4})-(\d+G\d+A\d+T\d+K)-([A-Z0-9]{5})$/', $old_id, $matches)) {
         $sequential = $matches[1];
         $randomSuffix = $matches[3];
     } else {
-        // If pattern doesn't match, generate fresh
         return generateReservationId($new_adults, $new_teens, $new_kids);
     }
-    
-    $prefix = 'RES';
     $totalGuests = $new_adults + $new_teens + $new_kids;
     $breakdown = $totalGuests . 'G' . $new_adults . 'A' . $new_teens . 'T' . $new_kids . 'K';
-    
-    return $prefix . $sequential . '-' . $breakdown . '-' . $randomSuffix;
+    return 'RES' . $sequential . '-' . $breakdown . '-' . $randomSuffix;
 }
 
 /**
- * Decode Reservation ID to get original data
- */
-function decodeReservationId($reservationId) {
-    $pattern = '/^RES(\d{4})-(\d+G\d+A\d+T\d+K)-([A-Z0-9]{5})$/';
-    
-    if (preg_match($pattern, $reservationId, $matches)) {
-        // Parse the breakdown part
-        $breakdown = $matches[2];
-        preg_match('/(\d+)G(\d+)A(\d+)T(\d+)K/', $breakdown, $breakdown_matches);
-        
-        return [
-            'sequential' => intval($matches[1]),
-            'total_guests' => intval($breakdown_matches[1] ?? 0),
-            'adults' => intval($breakdown_matches[2] ?? 0),
-            'teens' => intval($breakdown_matches[3] ?? 0),
-            'kids' => intval($breakdown_matches[4] ?? 0),
-            'random_suffix' => $matches[3]
-        ];
-    }
-    
-    return null;
-}
-
-/**
- * Calculate ticket prices based on current settings
- */
-function calculateTicketPrice($type, $quantity = 1, $isEarlyBird = false, $groupSize = 0) {
-    $price = 0;
-    
-    switch ($type) {
-        case 'adult':
-            $price = getSetting('ticket_price_adult', 10);
-            break;
-        case 'teen':
-            $price = getSetting('ticket_price_teen', 10);
-            break;
-        case 'kid':
-            $price = getSetting('ticket_price_kid', 0);
-            break;
-        default:
-            $price = 0;
-    }
-    
-    $total = $price * $quantity;
-    
-    if ($isEarlyBird) {
-        $earlyBirdDiscount = getSetting('early_bird_discount', 0);
-        if ($earlyBirdDiscount > 0) {
-            $total = $total * (1 - $earlyBirdDiscount / 100);
-        }
-    }
-    
-    $minGroupSize = getSetting('min_group_size', 10);
-    if ($groupSize >= $minGroupSize) {
-        $groupDiscount = getSetting('group_discount', 0);
-        if ($groupDiscount > 0) {
-            $total = $total * (1 - $groupDiscount / 100);
-        }
-    }
-    
-    return max(0, $total);
-}
-
-/**
- * Get total paid amount for a reservation
- */
-function getTotalPaid($reservation_id) {
-    $conn = getConnection();
-    $stmt = $conn->prepare("SELECT COALESCE(SUM(amount), 0) as total_paid FROM split_payments WHERE reservation_id = ?");
-    $stmt->bind_param("s", $reservation_id);
-    $stmt->execute();
-    $result = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $conn->close();
-    return floatval($result['total_paid']);
-}
-
-/**
- * Get remaining amount due for a reservation
- */
-function getRemainingDue($reservation_id) {
-    $conn = getConnection();
-    $stmt = $conn->prepare("SELECT total_amount FROM reservations WHERE reservation_id = ?");
-    $stmt->bind_param("s", $reservation_id);
-    $stmt->execute();
-    $result = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    
-    $totalPaid = getTotalPaid($reservation_id);
-    $conn->close();
-    
-    return max(0, floatval($result['total_amount']) - $totalPaid);
-}
-
-/**
- * Update table availability based on active reservations
- */
-function updateTableAvailability() {
-    $conn = getConnection();
-    
-    // Reset all tables to unused first
-    $conn->query("UPDATE `tables` SET `is_used` = 0");
-    
-    // Get all active reservations (not cancelled, not paid? adjust as needed)
-    $result = $conn->query("SELECT DISTINCT table_id FROM reservations WHERE status NOT IN ('cancelled', 'paid')");
-    
-    while ($row = $result->fetch_assoc()) {
-        $tableId = $row['table_id'];
-        $conn->query("UPDATE `tables` SET `is_used` = 1 WHERE table_number = '$tableId'");
-    }
-    
-    $conn->close();
-}
-
-/**
- * Get available tables (not used and active)
- */
-function getAvailableTables() {
-    $conn = getConnection();
-    $tables = [];
-    $result = $conn->query("SELECT table_number, section FROM tables WHERE is_active = 1 AND is_used = 0 AND status = 'available' ORDER BY table_number");
-    while ($row = $result->fetch_assoc()) {
-        $tables[] = $row['table_number'];
-    }
-    $conn->close();
-    return $tables;
-}
-
-/**
- * Check if a table is available
- */
-function isTableAvailable($table_number) {
-    $conn = getConnection();
-    $stmt = $conn->prepare("SELECT COUNT(*) as count FROM tables WHERE table_number = ? AND is_active = 1 AND is_used = 0 AND status = 'available'");
-    $stmt->bind_param("s", $table_number);
-    $stmt->execute();
-    $result = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $conn->close();
-    return $result['count'] > 0;
-}
-
-/**
- * Get current active event
- */
-function getCurrentEvent() {
-    $conn = getConnection();
-    $result = $conn->query("SELECT * FROM event_settings WHERE status = 'upcoming' ORDER BY event_date ASC LIMIT 1");
-    $event = $result->fetch_assoc();
-    $conn->close();
-    return $event;
-}
-
-/**
- * Get all upcoming events
- */
-function getUpcomingEvents($limit = null) {
-    $conn = getConnection();
-    $query = "SELECT * FROM event_settings WHERE event_date >= CURDATE() AND status = 'upcoming' ORDER BY event_date ASC";
-    if ($limit) {
-        $query .= " LIMIT " . intval($limit);
-    }
-    $result = $conn->query($query);
-    $events = $result->fetch_all(MYSQLI_ASSOC);
-    $conn->close();
-    return $events;
-}
-
-/**
- * Send email notification (if enabled)
- */
-function sendEmail($to, $subject, $body) {
-    $enabled = getSetting('enable_email', '1') == '1';
-    if (!$enabled) return false;
-    
-    $smtpHost = getSetting('smtp_host', '');
-    $smtpPort = getSetting('smtp_port', '587');
-    $smtpUser = getSetting('smtp_user', '');
-    $smtpPass = getSetting('smtp_pass', '');
-    
-    if (empty($smtpHost) || empty($smtpUser)) return false;
-    
-    return true;
-}
-
-/**
- * Check if maintenance mode is enabled
- */
-function isMaintenanceMode() {
-    $maintenance = getSetting('maintenance_mode', '0');
-    return $maintenance == '1';
-}
-
-/**
- * Get theme color
- */
-function getThemeColor() {
-    return getSetting('theme_color', '#4f46e5');
-}
-
-/**
- * Check if dark mode is enabled
- */
-function isDarkModeEnabled() {
-    return getSetting('dark_mode_enabled', '1') == '1';
-}
-
-/**
- * Get cancellation policy text
- */
-function getCancellationPolicy() {
-    return getSetting('cancellation_policy', 'Tickets are non-refundable 24 hours before event');
-}
-
-/**
- * Get terms and conditions
- */
-function getTermsConditions() {
-    return getSetting('terms_conditions', 'Please read our terms and conditions carefully.');
-}
-
-/**
- * Check daily reservation limit
- */
-function checkDailyLimit() {
-    $maxPerDay = getSetting('max_reservations_per_day', 1000);
-    $conn = getConnection();
-    $today = date('Y-m-d');
-    $result = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE DATE(created_at) = '$today'");
-    $count = $result->fetch_assoc()['count'];
-    $conn->close();
-    return $count < $maxPerDay;
-}
-
-/**
- * Get ticket type labels
- */
-function getTicketLabels() {
-    return [
-        'adult' => getSetting('label_adult', 'Adults'),
-        'teen' => getSetting('label_teen', 'Teens'),
-        'kid' => getSetting('label_kid', 'Kids')
-    ];
-}
-
-/**
- * Get footer text
- */
-function getFooterText() {
-    return getSetting('footer_text', '© 2024 Ticketing System. All rights reserved.');
-}
-
-/**
- * Log user activity
- */
-function logActivity($userId, $action, $details = null) {
-    $conn = getConnection();
-    $ip = $_SERVER['REMOTE_ADDR'] ?? null;
-    $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? null;
-    
-    $stmt = $conn->prepare("INSERT INTO audit_log (user_id, action, details, ip_address, user_agent) VALUES (?, ?, ?, ?, ?)");
-    $stmt->bind_param("issss", $userId, $action, $details, $ip, $userAgent);
-    $result = $stmt->execute();
-    $stmt->close();
-    $conn->close();
-    return $result;
-}
-
-/**
- * Calculate days remaining until event
- */
-function getDaysRemaining($event_date) {
-    $today = new DateTime();
-    $event = new DateTime($event_date);
-    $interval = $today->diff($event);
-    
-    $days = $interval->days;
-    
-    if ($today > $event) {
-        return -$days;
-    }
-    
-    return $days;
-}
-
-/**
- * Get days remaining text with appropriate styling
- */
-function getDaysRemainingText($event_date) {
-    $days = getDaysRemaining($event_date);
-    
-    if ($days < 0) {
-        $abs_days = abs($days);
-        if ($abs_days == 1) {
-            return "Event was yesterday";
-        } else {
-            return "Event passed " . $abs_days . " days ago";
-        }
-    } elseif ($days == 0) {
-        return "🎉 TODAY IS THE EVENT DAY! 🎉";
-    } elseif ($days == 1) {
-        return "🔥 TOMORROW! 1 day remaining 🔥";
-    } elseif ($days <= 7) {
-        return "⚠️ Only " . $days . " days remaining! ⚠️";
-    } elseif ($days <= 30) {
-        return "📅 " . $days . " days remaining";
-    } else {
-        return "🗓️ " . $days . " days until the event";
-    }
-}
-
-/**
- * Calculate rate limit delay based on number of recipients
- */
-function calculateRateLimitDelay($count) {
-    if ($count <= 10) return 500000;      // 0.5 seconds
-    if ($count <= 50) return 1000000;     // 1 second
-    if ($count <= 100) return 2000000;    // 2 seconds
-    return 3000000;                        // 3 seconds
-}
-/**
- * Send WhatsApp message using Ultramsg
- */
-/**
- * Send WhatsApp message using Ultramsg
- */
-/**
- * Send WhatsApp message using Ultramsg
+ * Send WhatsApp text message
  */
 function sendWhatsAppMessage($to, $message) {
     $enabled = getSetting('enable_whatsapp', '0') == '1';
-    if (!$enabled) {
-        return ['success' => false, 'error' => 'WhatsApp is disabled'];
-    }
+    if (!$enabled) return false;
     
     $instanceId = getSetting('ultramsg_instance_id', '');
     $token = getSetting('ultramsg_token', '');
     
-    if (empty($instanceId) || empty($token)) {
-        return ['success' => false, 'error' => 'Missing API credentials'];
-    }
+    if (empty($instanceId) || empty($token)) return false;
     
-    // Clean phone number
     $to = preg_replace('/[^0-9]/', '', $to);
     $to = ltrim($to, '0');
-    if (substr($to, 0, 3) == '962') {
-        $to = substr($to, 3);
-    }
+    if (substr($to, 0, 3) == '962') $to = substr($to, 3);
     $to = '962' . $to;
     
-    $data = [
-        'token' => $token,
-        'to' => $to,
-        'body' => $message,
-        'priority' => 1
-    ];
+    $data = ['token' => $token, 'to' => $to, 'body' => $message, 'priority' => 1];
     
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, "https://api.ultramsg.com/{$instanceId}/messages/chat");
@@ -606,29 +236,16 @@ function sendWhatsAppMessage($to, $message) {
     curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     
     $responseData = json_decode($response, true);
-    
-    if ($httpCode == 200 && isset($responseData['sent']) && $responseData['sent']) {
-        return ['success' => true];
-    } else {
-        return [
-            'success' => false, 
-            'error' => $responseData['error'] ?? 'Unknown error',
-            'response' => $responseData
-        ];
-    }
+    return ($httpCode == 200 && isset($responseData['sent']) && $responseData['sent']);
 }
 
 /**
- * Send WhatsApp image using Ultramsg - sends actual image file
- */
-/**
- * Send WhatsApp image - sends REAL image file (not link)
+ * Send WhatsApp image using Ultramsg
  */
 function sendWhatsAppImage($to, $imagePath, $caption = '') {
     $enabled = getSetting('enable_whatsapp', '0') == '1';
@@ -642,21 +259,30 @@ function sendWhatsAppImage($to, $imagePath, $caption = '') {
     // Clean phone number
     $to = preg_replace('/[^0-9]/', '', $to);
     $to = ltrim($to, '0');
-    if (substr($to, 0, 3) == '962') {
-        $to = substr($to, 3);
-    }
+    if (substr($to, 0, 3) == '962') $to = substr($to, 3);
     $to = '962' . $to;
     
-    // If imagePath is not a file, try to download it
-    if (!file_exists($imagePath)) {
+    // If it's a URL, download the image first
+    if (filter_var($imagePath, FILTER_VALIDATE_URL)) {
         $imageData = @file_get_contents($imagePath);
         if (!$imageData) return false;
         $tempFile = tempnam(sys_get_temp_dir(), 'wa_img_');
         file_put_contents($tempFile, $imageData);
         $imagePath = $tempFile;
+        $cleanup = true;
     }
     
-    // Send via cURL
+    // Check if file exists
+    if (!file_exists($imagePath)) {
+        return false;
+    }
+    
+    // Get file info
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mimeType = finfo_file($finfo, $imagePath);
+    finfo_close($finfo);
+    
+    // Send the image
     $curl = curl_init();
     curl_setopt($curl, CURLOPT_URL, "https://api.ultramsg.com/{$instanceId}/messages/image");
     curl_setopt($curl, CURLOPT_POST, true);
@@ -665,7 +291,7 @@ function sendWhatsAppImage($to, $imagePath, $caption = '') {
         'token' => $token,
         'to' => $to,
         'caption' => $caption,
-        'image' => new CURLFile($imagePath)
+        'image' => new CURLFile($imagePath, $mimeType, basename($imagePath))
     ];
     
     curl_setopt($curl, CURLOPT_POSTFIELDS, $postfields);
@@ -676,11 +302,163 @@ function sendWhatsAppImage($to, $imagePath, $caption = '') {
     $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
     curl_close($curl);
     
-    // Clean up temp file
-    if (isset($tempFile) && file_exists($tempFile)) {
-        unlink($tempFile);
+    // Clean up temp file if we created one
+    if (isset($cleanup) && file_exists($imagePath)) {
+        unlink($imagePath);
     }
     
     return $httpCode == 200;
+}
+
+/**
+ * Send all tickets as QR code images
+ */
+function sendAllTicketsAsImages($reservation_id, $customerPhone, $customerName) {
+    $conn = getConnection();
+    
+    $ticketsStmt = $conn->prepare("SELECT * FROM ticket_codes WHERE reservation_id = ? AND is_active = 1 ORDER BY guest_type, guest_number");
+    $ticketsStmt->bind_param("s", $reservation_id);
+    $ticketsStmt->execute();
+    $tickets = $ticketsStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $ticketsStmt->close();
+    
+    $eventStmt = $conn->prepare("SELECT event_name, event_date, event_time, venue FROM event_settings WHERE id = ?");
+    $eventStmt->bind_param("i", $_SESSION['selected_event_id'] ?? 0);
+    $eventStmt->execute();
+    $event = $eventStmt->get_result()->fetch_assoc();
+    $eventStmt->close();
+    $conn->close();
+    
+    if (empty($tickets)) return false;
+    
+    $eventDetails = [
+        'name' => $event['event_name'] ?? getSetting('site_name', 'Event'),
+        'date' => $event['event_date'] ?? '',
+        'time' => $event['event_time'] ?? '',
+        'venue' => $event['venue'] ?? ''
+    ];
+    
+    $reservation = ['name' => $customerName, 'table_id' => 'N/A'];
+    
+    // Send header message
+    $headerMessage = "🎟️ *YOUR TICKETS ARE READY!* 🎟️\n\n";
+    $headerMessage .= "Dear {$customerName},\n\n";
+    $headerMessage .= "Thank you for your payment! Here are your tickets.\n\n";
+    $headerMessage .= "📋 *Reservation ID:* {$reservation_id}\n";
+    $headerMessage .= "🎪 *Event:* {$eventDetails['name']}\n";
+    $headerMessage .= "📱 *Total Tickets:* " . count($tickets) . "\n\n";
+    $headerMessage .= "*Each ticket has been sent as a separate QR code image.*\n";
+    $headerMessage .= "Save each image to your phone.\n";
+    $headerMessage .= "Show them at the entrance for scanning.\n\n";
+    $headerMessage .= "We look forward to seeing you! 🎉";
+    
+    sendWhatsAppMessage($customerPhone, $headerMessage);
+    
+    // Send each ticket as QR code image
+    $sentCount = 0;
+    foreach ($tickets as $ticket) {
+        $typeLabel = ucfirst($ticket['guest_type']);
+        $ticketNumber = str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT);
+        
+        $caption = "🎫 *{$typeLabel} Ticket #{$ticketNumber}*\n";
+        $caption .= "ID: {$ticket['ticket_code']}\n";
+        $caption .= "Customer: {$customerName}\n";
+        $caption .= "Valid for one-time entry\n";
+        $caption .= "Show this QR code at the entrance";
+        
+        // Generate QR code URL
+        $qrUrl = "https://quickchart.io/qr?text=" . urlencode($ticket['ticket_code']) . "&size=250&margin=2";
+        
+        // Send the QR code as image
+        $result = sendWhatsAppImage($customerPhone, $qrUrl, $caption);
+        if ($result) $sentCount++;
+        
+        usleep(500000); // 0.5 second delay
+    }
+    
+    // Send closing message
+    if ($sentCount > 0) {
+        $closingMessage = "✅ *All {$sentCount} ticket(s) sent!*\n\n";
+        $closingMessage .= "📸 Each ticket has been sent as a QR code image.\n";
+        $closingMessage .= "💾 Press and hold on each image to save to your phone.\n";
+        $closingMessage .= "📱 Show the saved images at the entrance.\n\n";
+        $closingMessage .= "Thank you for choosing us! 🎉";
+        sendWhatsAppMessage($customerPhone, $closingMessage);
+    }
+    
+    return $sentCount;
+}
+
+/**
+ * Decode Reservation ID
+ */
+function decodeReservationId($reservationId) {
+    $pattern = '/^RES(\d{4})-(\d+G\d+A\d+T\d+K)-([A-Z0-9]{5})$/';
+    if (preg_match($pattern, $reservationId, $matches)) {
+        $breakdown = $matches[2];
+        preg_match('/(\d+)G(\d+)A(\d+)T(\d+)K/', $breakdown, $breakdown_matches);
+        return [
+            'sequential' => intval($matches[1]),
+            'total_guests' => intval($breakdown_matches[1] ?? 0),
+            'adults' => intval($breakdown_matches[2] ?? 0),
+            'teens' => intval($breakdown_matches[3] ?? 0),
+            'kids' => intval($breakdown_matches[4] ?? 0),
+            'random_suffix' => $matches[3]
+        ];
+    }
+    return null;
+}
+
+/**
+ * Update table availability
+ */
+function updateTableAvailability() {
+    $conn = getConnection();
+    $conn->query("UPDATE `tables` SET `is_used` = 0");
+    $result = $conn->query("SELECT DISTINCT table_id FROM reservations WHERE status NOT IN ('cancelled', 'paid')");
+    while ($row = $result->fetch_assoc()) {
+        $tableId = $row['table_id'];
+        if (!empty($tableId)) {
+            $conn->query("UPDATE `tables` SET `is_used` = 1 WHERE table_number = '$tableId'");
+        }
+    }
+    $conn->close();
+}
+
+/**
+ * Get current event
+ */
+function getCurrentEvent() {
+    $conn = getConnection();
+    $result = $conn->query("SELECT * FROM event_settings WHERE status = 'upcoming' ORDER BY event_date ASC LIMIT 1");
+    $event = $result->fetch_assoc();
+    $conn->close();
+    return $event;
+}
+
+/**
+ * Get days remaining until event
+ */
+function getDaysRemaining($event_date) {
+    $today = new DateTime();
+    $event = new DateTime($event_date);
+    $interval = $today->diff($event);
+    $days = $interval->days;
+    return $today > $event ? -$days : $days;
+}
+
+/**
+ * Get days remaining text
+ */
+function getDaysRemainingText($event_date) {
+    $days = getDaysRemaining($event_date);
+    if ($days < 0) {
+        $abs_days = abs($days);
+        return $abs_days == 1 ? "Event was yesterday" : "Event passed " . $abs_days . " days ago";
+    } elseif ($days == 0) return "🎉 TODAY IS THE EVENT DAY! 🎉";
+    elseif ($days == 1) return "🔥 TOMORROW! 1 day remaining 🔥";
+    elseif ($days <= 7) return "⚠️ Only " . $days . " days remaining! ⚠️";
+    elseif ($days <= 30) return "📅 " . $days . " days remaining";
+    else return "🗓️ " . $days . " days until the event";
 }
 ?>
