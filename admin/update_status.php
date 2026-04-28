@@ -99,7 +99,7 @@ function generateTicketId($reservationId, $type, $number) {
     return $reservationId . '-' . $typeCode . str_pad($number, 4, '0', STR_PAD_LEFT);
 }
 
-// Function to send tickets as QR code images (same as process_split_payment)
+// Function to send tickets as QR code images using URL method (works reliably)
 function sendTicketsAsQRCodeImages($reservation_id, $customerPhone, $customerName) {
     $conn = getConnection();
     
@@ -114,8 +114,14 @@ function sendTicketsAsQRCodeImages($reservation_id, $customerPhone, $customerNam
     $conn->close();
     
     if (empty($tickets)) {
+        error_log("No tickets found for reservation: $reservation_id");
         return false;
     }
+    
+    // Clean phone number
+    $cleanPhone = preg_replace('/[^0-9]/', '', $customerPhone);
+    if (substr($cleanPhone, 0, 1) == '0') $cleanPhone = substr($cleanPhone, 1);
+    if (substr($cleanPhone, 0, 3) != '962') $cleanPhone = '962' . $cleanPhone;
     
     // Send header message
     $headerMessage = "🎟️ *YOUR TICKETS ARE READY!* 🎟️\n\n";
@@ -129,36 +135,30 @@ function sendTicketsAsQRCodeImages($reservation_id, $customerPhone, $customerNam
     $headerMessage .= "Show the saved images at the entrance.\n\n";
     $headerMessage .= "We look forward to seeing you! 🎉";
     
-    sendWhatsAppMessage($customerPhone, $headerMessage);
+    sendWhatsAppMessage($cleanPhone, $headerMessage);
     
-    // Create temp directory
-    $tempDir = '../uploads/temp_tickets/';
-    if (!is_dir($tempDir)) {
-        mkdir($tempDir, 0777, true);
-    }
-    
-    // Send each ticket as QR code image
+    // Send each ticket as QR code image using URL method (proven to work)
     $ticketCount = 0;
     foreach ($tickets as $ticket) {
         $ticketCount++;
         $typeLabel = ucfirst($ticket['guest_type']);
         $ticketNumber = str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT);
         
-        // Generate QR code image
+        // Generate QR code URL (no local file needed)
         $qrUrl = "https://quickchart.io/qr?text=" . urlencode($ticket['ticket_code']) . "&size=250&margin=2";
-        $qrImageData = @file_get_contents($qrUrl);
         
-        if ($qrImageData) {
-            $tempFile = $tempDir . "ticket_{$ticket['ticket_code']}.png";
-            file_put_contents($tempFile, $qrImageData);
-            
-            $caption = "🎫 *{$typeLabel} Ticket #{$ticketNumber}*\n";
-            $caption .= "ID: {$ticket['ticket_code']}\n";
-            $caption .= "Valid for one-time entry\n";
-            $caption .= "Show this QR code at the entrance";
-            
-            sendWhatsAppImage($customerPhone, $tempFile, $caption);
-            unlink($tempFile); // Delete temp file
+        $caption = "🎫 *{$typeLabel} Ticket #{$ticketNumber}*\n";
+        $caption .= "ID: {$ticket['ticket_code']}\n";
+        $caption .= "Valid for one-time entry\n";
+        $caption .= "Show this QR code at the entrance";
+        
+        // Send using URL method (works!)
+        $result = sendWhatsAppImage($cleanPhone, $qrUrl, $caption);
+        
+        if ($result) {
+            error_log("Ticket sent: {$ticket['ticket_code']}");
+        } else {
+            error_log("Failed to send ticket: {$ticket['ticket_code']}");
         }
         
         usleep(500000); // 0.5 sec delay
@@ -167,12 +167,12 @@ function sendTicketsAsQRCodeImages($reservation_id, $customerPhone, $customerNam
     // Send closing message
     if ($ticketCount > 0) {
         $closingMessage = "✅ *All {$ticketCount} ticket(s) sent!*\n\n";
-        $closingMessage .= "📸 Each ticket has been sent as an image.\n";
+        $closingMessage .= "📸 Each ticket has been sent as a QR code image.\n";
         $closingMessage .= "💾 Press and hold on each image to save to your phone gallery.\n";
         $closingMessage .= "📱 Show the saved images at the entrance for scanning.\n\n";
         $closingMessage .= "Thank you for choosing us! 🎉";
         
-        sendWhatsAppMessage($customerPhone, $closingMessage);
+        sendWhatsAppMessage($cleanPhone, $closingMessage);
     }
     
     return $ticketCount;

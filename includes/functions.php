@@ -243,85 +243,91 @@ function sendWhatsAppMessage($to, $message) {
     $responseData = json_decode($response, true);
     return ($httpCode == 200 && isset($responseData['sent']) && $responseData['sent']);
 }
-
 /**
  * Send WhatsApp image using Ultramsg
  */
-function sendWhatsAppImage($to, $imagePath, $caption = '') {
+function sendWhatsAppImage($to, $imageUrl, $caption = '') {
+    error_log("sendWhatsAppImage called - To: $to, URL: $imageUrl");
+    
     $enabled = getSetting('enable_whatsapp', '0') == '1';
-    if (!$enabled) return false;
+    if (!$enabled) {
+        error_log("WhatsApp is disabled");
+        return false;
+    }
     
     $instanceId = getSetting('ultramsg_instance_id', '');
     $token = getSetting('ultramsg_token', '');
     
-    if (empty($instanceId) || empty($token)) return false;
-    
-    // Clean phone number
-    $to = preg_replace('/[^0-9]/', '', $to);
-    $to = ltrim($to, '0');
-    if (substr($to, 0, 3) == '962') $to = substr($to, 3);
-    $to = '962' . $to;
-    
-    // If it's a URL, download the image first
-    if (filter_var($imagePath, FILTER_VALIDATE_URL)) {
-        $imageData = @file_get_contents($imagePath);
-        if (!$imageData) return false;
-        $tempFile = tempnam(sys_get_temp_dir(), 'wa_img_');
-        file_put_contents($tempFile, $imageData);
-        $imagePath = $tempFile;
-        $cleanup = true;
-    }
-    
-    // Check if file exists
-    if (!file_exists($imagePath)) {
+    if (empty($instanceId) || empty($token)) {
+        error_log("Missing Ultramsg credentials");
         return false;
     }
     
-    // Get file info
-    $finfo = finfo_open(FILEINFO_MIME_TYPE);
-    $mimeType = finfo_file($finfo, $imagePath);
-    finfo_close($finfo);
+    // Format phone number correctly
+    $to = preg_replace('/[^0-9]/', '', $to);
+    if (substr($to, 0, 1) == '0') $to = substr($to, 1);
+    if (substr($to, 0, 3) != '962') $to = '962' . $to;
     
-    // Send the image
-    $curl = curl_init();
-    curl_setopt($curl, CURLOPT_URL, "https://api.ultramsg.com/{$instanceId}/messages/image");
-    curl_setopt($curl, CURLOPT_POST, true);
-    
-    $postfields = [
+    // Prepare the request
+    $data = [
         'token' => $token,
         'to' => $to,
-        'caption' => $caption,
-        'image' => new CURLFile($imagePath, $mimeType, basename($imagePath))
+        'image' => $imageUrl,
+        'caption' => $caption
     ];
     
-    curl_setopt($curl, CURLOPT_POSTFIELDS, $postfields);
-    curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, false);
+    $url = "https://api.ultramsg.com/{$instanceId}/messages/image";
     
-    $response = curl_exec($curl);
-    $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
-    curl_close($curl);
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
     
-    // Clean up temp file if we created one
-    if (isset($cleanup) && file_exists($imagePath)) {
-        unlink($imagePath);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    error_log("Ultramsg Response - HTTP: $httpCode");
+    error_log("Response body: $response");
+    
+    // Ultramsg returns HTTP 200 on success, even if response says 'sent' => true
+    // Some versions return 'sent' => 1 instead of true
+    if ($httpCode == 200) {
+        $responseData = json_decode($response, true);
+        // Check for both 'sent' => true and 'sent' => 1
+        if (isset($responseData['sent']) && ($responseData['sent'] === true || $responseData['sent'] === 1 || $responseData['sent'] === '1')) {
+            error_log("Image sent successfully to: $to");
+            return true;
+        }
+        // Also accept if there's no error and message was sent
+        if (!isset($responseData['error'])) {
+            error_log("Image likely sent successfully to: $to");
+            return true;
+        }
     }
     
-    return $httpCode == 200;
+    error_log("Failed to send image to: $to - Response: $response");
+    return false;
 }
 
 /**
- * Send all tickets as QR code images
+ * Send all tickets for a reservation as QR code images
+ * Uses URL method (quickchart.io) which works reliably
  */
 function sendAllTicketsAsImages($reservation_id, $customerPhone, $customerName) {
     $conn = getConnection();
     
+    // Get all tickets
     $ticketsStmt = $conn->prepare("SELECT * FROM ticket_codes WHERE reservation_id = ? AND is_active = 1 ORDER BY guest_type, guest_number");
     $ticketsStmt->bind_param("s", $reservation_id);
     $ticketsStmt->execute();
     $tickets = $ticketsStmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $ticketsStmt->close();
     
+    // Get event details
     $eventStmt = $conn->prepare("SELECT event_name, event_date, event_time, venue FROM event_settings WHERE id = ?");
     $eventStmt->bind_param("i", $_SESSION['selected_event_id'] ?? 0);
     $eventStmt->execute();
@@ -329,7 +335,9 @@ function sendAllTicketsAsImages($reservation_id, $customerPhone, $customerName) 
     $eventStmt->close();
     $conn->close();
     
-    if (empty($tickets)) return false;
+    if (empty($tickets)) {
+        return false;
+    }
     
     $eventDetails = [
         'name' => $event['event_name'] ?? getSetting('site_name', 'Event'),
@@ -338,8 +346,6 @@ function sendAllTicketsAsImages($reservation_id, $customerPhone, $customerName) 
         'venue' => $event['venue'] ?? ''
     ];
     
-    $reservation = ['name' => $customerName, 'table_id' => 'N/A'];
-    
     // Send header message
     $headerMessage = "🎟️ *YOUR TICKETS ARE READY!* 🎟️\n\n";
     $headerMessage .= "Dear {$customerName},\n\n";
@@ -347,14 +353,14 @@ function sendAllTicketsAsImages($reservation_id, $customerPhone, $customerName) 
     $headerMessage .= "📋 *Reservation ID:* {$reservation_id}\n";
     $headerMessage .= "🎪 *Event:* {$eventDetails['name']}\n";
     $headerMessage .= "📱 *Total Tickets:* " . count($tickets) . "\n\n";
-    $headerMessage .= "*Each ticket has been sent as a separate QR code image.*\n";
+    $headerMessage .= "*Your tickets are attached below as images.*\n";
     $headerMessage .= "Save each image to your phone.\n";
-    $headerMessage .= "Show them at the entrance for scanning.\n\n";
+    $headerMessage .= "Show them at the entrance.\n\n";
     $headerMessage .= "We look forward to seeing you! 🎉";
     
     sendWhatsAppMessage($customerPhone, $headerMessage);
     
-    // Send each ticket as QR code image
+    // Send each ticket as QR code image using URL method
     $sentCount = 0;
     foreach ($tickets as $ticket) {
         $typeLabel = ucfirst($ticket['guest_type']);
@@ -363,17 +369,22 @@ function sendAllTicketsAsImages($reservation_id, $customerPhone, $customerName) 
         $caption = "🎫 *{$typeLabel} Ticket #{$ticketNumber}*\n";
         $caption .= "ID: {$ticket['ticket_code']}\n";
         $caption .= "Customer: {$customerName}\n";
-        $caption .= "Valid for one-time entry\n";
+        $caption .= "Valid for one-time entry\n\n";
         $caption .= "Show this QR code at the entrance";
         
-        // Generate QR code URL
+        // Generate QR code URL using quickchart.io (works reliably)
         $qrUrl = "https://quickchart.io/qr?text=" . urlencode($ticket['ticket_code']) . "&size=250&margin=2";
         
-        // Send the QR code as image
+        // Send the image using URL method
         $result = sendWhatsAppImage($customerPhone, $qrUrl, $caption);
-        if ($result) $sentCount++;
         
-        usleep(500000); // 0.5 second delay
+        if ($result) {
+            $sentCount++;
+        } else {
+            error_log("Failed to send ticket: {$ticket['ticket_code']}");
+        }
+        
+        usleep(500000); // 0.5 second delay between messages
     }
     
     // Send closing message
@@ -381,8 +392,9 @@ function sendAllTicketsAsImages($reservation_id, $customerPhone, $customerName) 
         $closingMessage = "✅ *All {$sentCount} ticket(s) sent!*\n\n";
         $closingMessage .= "📸 Each ticket has been sent as a QR code image.\n";
         $closingMessage .= "💾 Press and hold on each image to save to your phone.\n";
-        $closingMessage .= "📱 Show the saved images at the entrance.\n\n";
+        $closingMessage .= "📱 Show the saved images at the entrance for scanning.\n\n";
         $closingMessage .= "Thank you for choosing us! 🎉";
+        
         sendWhatsAppMessage($customerPhone, $closingMessage);
     }
     

@@ -1,6 +1,7 @@
 <?php
-error_reporting(0);
-ini_set('display_errors', 0);
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 
 session_start();
 require_once '../includes/db.php';
@@ -149,29 +150,23 @@ try {
             mkdir($tempDir, 0777, true);
         }
         
-        // Send each ticket as QR code image
+        // Send each ticket as QR code image using URL method
         $ticketCount = 0;
         foreach ($tickets as $ticket) {
             $ticketCount++;
             $typeLabel = ucfirst($ticket['guest_type']);
             $ticketNumber = str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT);
             
-            // Generate QR code image
+            // Generate QR code URL (no local file needed)
             $qrUrl = "https://quickchart.io/qr?text=" . urlencode($ticket['ticket_code']) . "&size=250&margin=2";
-            $qrImageData = @file_get_contents($qrUrl);
             
-            if ($qrImageData) {
-                $tempFile = $tempDir . "ticket_{$ticket['ticket_code']}.png";
-                file_put_contents($tempFile, $qrImageData);
-                
-                $caption = "🎫 *{$typeLabel} Ticket #{$ticketNumber}*\n";
-                $caption .= "ID: {$ticket['ticket_code']}\n";
-                $caption .= "Valid for one-time entry\n";
-                $caption .= "Show this QR code at the entrance";
-                
-                sendWhatsAppImage($customerPhone, $tempFile, $caption);
-                unlink($tempFile); // Delete temp file
-            }
+            $caption = "🎫 *{$typeLabel} Ticket #{$ticketNumber}*\n";
+            $caption .= "ID: {$ticket['ticket_code']}\n";
+            $caption .= "Valid for one-time entry\n";
+            $caption .= "Show this QR code at the entrance";
+            
+            // Send using URL method
+            sendWhatsAppImage($customerPhone, $qrUrl, $caption);
             
             usleep(500000); // 0.5 sec delay
         }
