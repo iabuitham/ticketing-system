@@ -615,14 +615,9 @@ $conn->close();
         <i class="bi bi-pencil"></i> <?php echo t('edit_reservation'); ?>
     </a>
     <!-- NEW: View Tickets Button -->
-    <a href="view_tickets.php?id=<?php echo urlencode($reservation_id); ?>" class="btn btn-info">
+    <a href="/public/reservation_tickets.php?id=<?php echo urlencode($reservation_id); ?>" class="btn btn-info">
         <i class="bi bi-ticket-perforated"></i> View Tickets
     </a>
-    <?php if ($reservation['status'] == 'paid'): ?>
-        <a href="print_ticket.php?reservation_id=<?php echo urlencode($reservation_id); ?>" class="btn btn-primary" target="_blank">
-            <i class="bi bi-ticket-perforated"></i> <?php echo t('print_ticket'); ?>
-        </a>
-    <?php endif; ?>
     <a href="print_statement.php?id=<?php echo urlencode($reservation_id); ?>" class="btn btn-info" target="_blank">
         <i class="bi bi-printer"></i> <?php echo t('print_statement'); ?>
     </a>

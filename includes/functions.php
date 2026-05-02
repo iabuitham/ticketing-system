@@ -328,8 +328,8 @@ function sendAllTicketsAsImages($reservation_id, $customerPhone, $customerName) 
     
     // Get event details
     $eventStmt = $conn->prepare("SELECT event_name, event_date, event_time, venue FROM event_settings WHERE id = ?");
-    $eventStmt->bind_param("i", $_SESSION['selected_event_id'] ?? 0);
-    $eventStmt->execute();
+    $event_id = $_SESSION['selected_event_id'] ?? 0;
+    $eventStmt->bind_param("i", $event_id);    $eventStmt->execute();
     $event = $eventStmt->get_result()->fetch_assoc();
     $eventStmt->close();
     $conn->close();

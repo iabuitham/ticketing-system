@@ -372,13 +372,6 @@ $conn->close();
                              </d>
                             <td><?php echo date('M d, H:i', strtotime($ticket['created_at'])); ?> </d>
                             <td>
-                                <div class="btn-group" style="display: flex; gap: 5px;">
-                                    <a href="generate_ticket_image.php?ticket_code=<?php echo urlencode($ticket['ticket_code']); ?>" target="_blank" class="btn btn-sm btn-primary">
-                                        <i class="bi bi-image"></i>
-                                    </a>
-                                    <a href="print_ticket.php?ticket_code=<?php echo urlencode($ticket['ticket_code']); ?>" target="_blank" class="btn btn-sm btn-secondary">
-                                        <i class="bi bi-printer"></i>
-                                    </a>
                                     <?php if (!$ticket['is_scanned']): ?>
                                         <?php if ($ticket['is_active']): ?>
                                             <a href="?toggle=1&id=<?php echo $ticket['id']; ?>" class="btn btn-sm btn-warning" onclick="return confirm('Deactivate this ticket?')">

@@ -133,6 +133,16 @@ if (empty($tickets)) {
             transform: translateY(-5px);
         }
         
+        /* Deactivated ticket style */
+        .ticket-card.deactivated {
+            opacity: 0.7;
+            filter: grayscale(0.3);
+        }
+        
+        .ticket-card.deactivated .ticket-header {
+            background: linear-gradient(135deg, #64748b, #475569);
+        }
+        
         .ticket-header {
             background: linear-gradient(135deg, #4f46e5, #4338ca);
             color: white;
@@ -177,6 +187,33 @@ if (empty($tickets)) {
             width: 180px;
             height: 180px;
             display: block;
+        }
+        
+        /* Deactivated QR code overlay */
+        .deactivated .qr-container {
+            position: relative;
+        }
+        
+        .deactivated .qr-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 16px;
+        }
+        
+        .deactivated .qr-overlay span {
+            background: #ef4444;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 30px;
+            font-size: 14px;
+            font-weight: bold;
         }
         
         .ticket-code {
@@ -225,8 +262,21 @@ if (empty($tickets)) {
         }
         
         .status-used {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        
+        .status-inactive {
             background: #fee2e2;
             color: #991b1b;
+        }
+        
+        .warning-box {
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 20px;
         }
         
         .btn-download {
@@ -245,6 +295,12 @@ if (empty($tickets)) {
         
         .btn-download:hover {
             background: #059669;
+        }
+        
+        .btn-disabled {
+            background: #94a3b8;
+            cursor: not-allowed;
+            pointer-events: none;
         }
         
         .btn-whatsapp {
@@ -290,6 +346,23 @@ if (empty($tickets)) {
             <p><?php echo htmlspecialchars($eventName); ?></p>
         </div>
         
+        <!-- Warning if any tickets are deactivated -->
+        <?php 
+        $hasDeactivated = false;
+        foreach ($tickets as $ticket) {
+            if ($ticket['is_active'] == 0) {
+                $hasDeactivated = true;
+                break;
+            }
+        }
+        ?>
+        <?php if ($hasDeactivated): ?>
+        <div class="warning-box">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <strong>Notice:</strong> Some of your tickets have been deactivated. Please contact support for assistance.
+        </div>
+        <?php endif; ?>
+        
         <!-- Reservation Details -->
         <div class="reservation-card">
             <div class="reservation-title">
@@ -330,17 +403,25 @@ if (empty($tickets)) {
                 $ticketNumber = str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT);
                 $qrCodeUrl = "https://quickchart.io/qr?text=" . urlencode($ticket['ticket_code']) . "&size=180&margin=2";
                 $isUsed = $ticket['is_scanned'] == 1;
+                $isActive = $ticket['is_active'] == 1;
+                $isValid = $isActive && !$isUsed;
+                $cardClass = !$isActive ? 'deactivated' : '';
             ?>
-            <div class="ticket-card">
+            <div class="ticket-card <?php echo $cardClass; ?>">
                 <div class="ticket-header">
                     <h3><i class="bi bi-ticket-perforated"></i> <?php echo $typeLabel; ?> Ticket</h3>
                     <span class="ticket-number">#<?php echo $ticketNumber; ?></span>
                 </div>
                 <div class="ticket-body">
-                    <div class="qr-container">
+                    <div class="qr-container" style="position: relative;">
                         <div class="qr-code">
                             <img src="<?php echo $qrCodeUrl; ?>" alt="QR Code" loading="lazy">
                         </div>
+                        <?php if (!$isActive): ?>
+                        <div class="qr-overlay">
+                            <span>DEACTIVATED</span>
+                        </div>
+                        <?php endif; ?>
                     </div>
                     
                     <div class="ticket-code">
@@ -351,9 +432,13 @@ if (empty($tickets)) {
                     <div class="ticket-detail">
                         <span class="detail-label">Status</span>
                         <span class="detail-value">
-                            <span class="status-badge <?php echo $isUsed ? 'status-used' : 'status-valid'; ?>">
-                                <?php echo $isUsed ? 'Used' : 'Valid'; ?>
-                            </span>
+                            <?php if ($isUsed): ?>
+                                <span class="status-badge status-used">Used</span>
+                            <?php elseif (!$isActive): ?>
+                                <span class="status-badge status-inactive">Deactivated</span>
+                            <?php else: ?>
+                                <span class="status-badge status-valid">Valid</span>
+                            <?php endif; ?>
                         </span>
                     </div>
                     
@@ -367,13 +452,17 @@ if (empty($tickets)) {
                         <span class="detail-value"><?php echo htmlspecialchars($reservation['name']); ?></span>
                     </div>
                     
-                    <?php if (!$isUsed): ?>
-                    <button onclick="window.print()" class="btn-download">
-                        <i class="bi bi-printer"></i> Print Ticket
-                    </button>
+                    <?php if ($isValid): ?>
+                        <button onclick="window.print()" class="btn-download">
+                            <i class="bi bi-printer"></i> Print Ticket
+                        </button>
+                    <?php else: ?>
+                        <button class="btn-download btn-disabled" disabled style="background: #94a3b8; cursor: not-allowed;">
+                            <i class="bi bi-x-circle"></i> <?php echo $isUsed ? 'Ticket Already Used' : 'Ticket Deactivated'; ?>
+                        </button>
                     <?php endif; ?>
                     
-                    <a href="https://wa.me/+962795410115; ?>?text=I%20need%20help%20with%20my%20ticket%20<?php echo urlencode($ticket['ticket_code']); ?>" target="_blank" class="btn-download btn-whatsapp">
+                    <a href="https://wa.me/9625410115?text=I%20need%20help%20with%20my%20ticket%20<?php echo urlencode($ticket['ticket_code']); ?>" target="_blank" class="btn-download btn-whatsapp">
                         <i class="bi bi-whatsapp"></i> Contact Support
                     </a>
                 </div>
@@ -382,7 +471,7 @@ if (empty($tickets)) {
         </div>
         
         <div class="footer">
-            <p><i class="bi bi-info-circle"></i> Each ticket has a unique QR code. Present this page or print your tickets at the entrance.</p>
+            <p><i class="bi bi-info-circle"></i> Each ticket has a unique QR code. Only valid (green) tickets will be accepted at the entrance.</p>
             <p>© <?php echo date('Y'); ?> <?php echo htmlspecialchars($eventName); ?></p>
         </div>
     </div>

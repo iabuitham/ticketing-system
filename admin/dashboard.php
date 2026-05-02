@@ -131,26 +131,34 @@ $attendeeStats = [
  'pending_attendees' => $attendeeStats['pending_attendees'] ?? 0
 ];
 
-// Get revenue by payment method
+// Get revenue by payment method from split_payments
 $revenueResult = $conn->query("SELECT 
- SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END) as cash,
- SUM(CASE WHEN payment_method = 'cliq' THEN amount ELSE 0 END) as cliq,
- SUM(CASE WHEN payment_method = 'visa' THEN amount ELSE 0 END) as visa,
- SUM(amount) as total
+    SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END) as cash,
+    SUM(CASE WHEN payment_method = 'cliq' THEN amount ELSE 0 END) as cliq,
+    SUM(CASE WHEN payment_method = 'visa' THEN amount ELSE 0 END) as visa,
+    SUM(amount) as total
 FROM split_payments");
 
 $revenue = $revenueResult->fetch_assoc();
 $revenue = [
- 'cash' => $revenue['cash'] ?? 0,
- 'cliq' => $revenue['cliq'] ?? 0,
- 'visa' => $revenue['visa'] ?? 0,
- 'total' => $revenue['total'] ?? 0
+    'cash' => $revenue['cash'] ?? 0,
+    'cliq' => $revenue['cliq'] ?? 0,
+    'visa' => $revenue['visa'] ?? 0,
+    'total' => $revenue['total'] ?? 0
 ];
 
 // Get cancelled revenue
 $cancelledResult = $conn->query("SELECT SUM(total_amount) as total FROM reservations WHERE status = 'cancelled' AND total_amount > 0");
 $cancelledRow = $cancelledResult->fetch_assoc();
 $cancelledRevenue = $cancelledRow['total'] ?? 0;
+
+// Get refunded/credited amounts from credit_notes that have been processed
+$refundResult = $conn->query("SELECT SUM(amount) as total FROM credit_notes WHERE status = 'processed'");
+$refundRow = $refundResult->fetch_assoc();
+$totalRefunded = $refundRow['total'] ?? 0;
+
+// Calculate net revenue (total payments minus refunds)
+$netRevenue = max(0, $revenue['total'] - $totalRefunded);
 
 $currency = getSetting('currency', 'JOD');
 $currencySymbol = getCurrencySymbol();
@@ -1097,28 +1105,40 @@ $conn->close();
      </div>
    </div>
 
-   <div class="stat-card success">
-     <div class="stat-number"><?php echo number_format(floatval($revenue['total']), 2); ?> <?php echo $currencySymbol; ?></div>
-     <div class="stat-label"><i class="bi bi-graph-up"></i> <?php echo t('total_revenue'); ?></div>
-     <div class="stat-details">
+<div class="stat-card success">
+    <div class="stat-number"><?php echo number_format(floatval($netRevenue), 2); ?> <?php echo $currencySymbol; ?></div>
+    <div class="stat-label"><i class="bi bi-graph-up"></i> <?php echo t('net_revenue'); ?></div>
+    <div class="stat-details">
         <div class="detail-item">
-             <span><i class="bi bi-cash-stack"></i> <?php echo t('cash'); ?></span>
-             <span><?php echo number_format(floatval($revenue['cash']), 2); ?> <?php echo $currencySymbol; ?></span>
+            <span><i class="bi bi-cash-stack"></i> <?php echo t('cash'); ?></span>
+            <span><?php echo number_format(floatval($revenue['cash']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
-             <span><i class="bi bi-phone"></i> <?php echo t('cliq'); ?></span>
-             <span><?php echo number_format(floatval($revenue['cliq']), 2); ?> <?php echo $currencySymbol; ?></span>
+            <span><i class="bi bi-phone"></i> <?php echo t('cliq'); ?></span>
+            <span><?php echo number_format(floatval($revenue['cliq']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
-             <span><i class="bi bi-credit-card"></i> <?php echo t('visa'); ?></span>
-             <span><?php echo number_format(floatval($revenue['visa']), 2); ?> <?php echo $currencySymbol; ?></span>
+            <span><i class="bi bi-credit-card"></i> <?php echo t('visa'); ?></span>
+            <span><?php echo number_format(floatval($revenue['visa']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
-             <span><i class="bi bi-x-circle"></i> <?php echo t('cancelled'); ?></span>
-             <span class="detail-value" style="color: #fecaca;">- <?php echo number_format(floatval($cancelledRevenue), 2); ?> <?php echo $currencySymbol; ?></span>
+            <span><i class="bi bi-receipt"></i> <?php echo t('total_payments'); ?></span>
+            <span><?php echo number_format(floatval($revenue['total']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
-     </div>
-   </div>
+        <div class="detail-item">
+            <span><i class="bi bi-arrow-return-left"></i> <?php echo t('refunds'); ?></span>
+            <span class="detail-value" style="color: #f59e0b;">- <?php echo number_format(floatval($totalRefunded), 2); ?> <?php echo $currencySymbol; ?></span>
+        </div>
+        <div class="detail-item" style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 5px; padding-top: 8px;">
+            <span><strong><i class="bi bi-calculator"></i> <?php echo t('net_revenue'); ?></strong></span>
+            <span><strong><?php echo number_format(floatval($netRevenue), 2); ?> <?php echo $currencySymbol; ?></strong></span>
+        </div>
+        <div class="detail-item">
+            <span><i class="bi bi-x-circle"></i> <?php echo t('cancelled'); ?></span>
+            <span class="detail-value" style="color: #fecaca;">- <?php echo number_format(floatval($cancelledRevenue), 2); ?> <?php echo $currencySymbol; ?></span>
+        </div>
+    </div>
+</div>
 
    <div class="stat-card info">
      <div class="stat-number"><?php echo intval($stats['total']); ?></div>
@@ -1229,7 +1249,7 @@ $conn->close();
                                                        <a href="edit_reservation.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-warning" title="Edit">
                                                                                          <i class="bi bi-pencil"></i>
                                                        </a>
-                                                       <a href="view_tickets.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-info" title="View Tickets">
+                                                       <a href="/public/reservation_tickets.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-info" title="View Tickets">
                                                                                          <i class="bi bi-ticket-perforated"></i>
                                                        </a>
 

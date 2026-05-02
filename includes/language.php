@@ -98,7 +98,10 @@ $translations = [
         'notes' => 'Notes',
         'created_at' => 'Created At',
         'email' => 'Email',
-        'view_reservation' => 'View Reservation'
+        'view_reservation' => 'View Reservation',
+        'net_revenue' => 'Net Revenue',
+        'total_payments' => 'Total Payments',
+        'refunds' => 'Refunds',
     ],
     'ar' => [
         'dashboard' => 'لوحة التحكم',
@@ -174,7 +177,10 @@ $translations = [
         'notes' => 'ملاحظات',
         'created_at' => 'تاريخ الإنشاء',
         'email' => 'البريد الإلكتروني',
-        'view_reservation' => 'عرض الحجز'
+        'view_reservation' => 'عرض الحجز',
+        'net_revenue' => 'صافي الإيرادات',
+        'total_payments' => 'إجمالي المدفوعات',
+        'refunds' => 'المبالغ المستردة',
     ]
 ];
 

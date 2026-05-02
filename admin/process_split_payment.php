@@ -147,41 +147,7 @@ try {
         $headerMessage .= "We look forward to seeing you! 🎉";
         
         sendWhatsAppMessage($customerPhone, $headerMessage);
-        
-        // Send each ticket as QR code image (backup method)
-        $ticketCount = 0;
-        foreach ($tickets as $ticket) {
-            $ticketCount++;
-            $typeLabel = ucfirst($ticket['guest_type']);
-            $ticketNumber = str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT);
-            
-            // Generate QR code URL
-            $qrUrl = "https://quickchart.io/qr?text=" . urlencode($ticket['ticket_code']) . "&size=250&margin=2";
-            
-            $caption = "🎫 *{$typeLabel} Ticket #{$ticketNumber}*\n";
-            $caption .= "ID: {$ticket['ticket_code']}\n";
-            $caption .= "Valid for one-time entry\n";
-            $caption .= "Show this QR code at the entrance";
-            
-            // Send using URL method
-            sendWhatsAppImage($customerPhone, $qrUrl, $caption);
-            
-            usleep(500000); // 0.5 sec delay
-        }
-        
-        // Send closing message
-        if ($ticketCount > 0) {
-            $closingMessage = "✅ *All {$ticketCount} ticket(s) sent!*\n\n";
-            $closingMessage .= "📸 Each ticket has been sent as an image above.\n";
-            $closingMessage .= "🔗 Or view them all at: {$ticketsPageUrl}\n\n";
-            $closingMessage .= "💾 Press and hold on each image to save to your phone.\n";
-            $closingMessage .= "📱 Show the saved images at the entrance for scanning.\n\n";
-            $closingMessage .= "Thank you for choosing us! 🎉";
-            
-            sendWhatsAppMessage($customerPhone, $closingMessage);
-        }
     }
-    // ========== END WHATSAPP MESSAGES ==========
     
     echo json_encode([
         'success' => true,
