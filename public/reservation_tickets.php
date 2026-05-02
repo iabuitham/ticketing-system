@@ -41,7 +41,6 @@ $baseUrl = getSetting('base_url', 'https://restorandticketingsystem.unaux.com/')
 $totalGuests = $reservation['adults'] + $reservation['teens'] + $reservation['kids'];
 $currencySymbol = getCurrencySymbol();
 
-// If no tickets found, show error
 if (empty($tickets)) {
     die('No tickets found for this reservation. Please contact support.');
 }
@@ -126,6 +125,8 @@ if (empty($tickets)) {
             overflow: hidden;
             box-shadow: 0 10px 30px rgba(0,0,0,0.1);
             transition: transform 0.3s ease;
+            break-inside: avoid;
+            page-break-inside: avoid;
         }
         
         .ticket-card:hover {
@@ -156,15 +157,26 @@ if (empty($tickets)) {
             padding: 20px;
         }
         
-        .ticket-image {
+        .qr-container {
             text-align: center;
-            margin-bottom: 15px;
+            margin: 15px 0;
+            padding: 15px;
+            background: #f8fafc;
+            border-radius: 16px;
         }
         
-        .ticket-image img {
-            max-width: 100%;
+        .qr-code {
+            display: inline-block;
+            background: white;
+            padding: 10px;
             border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .qr-code img {
+            width: 180px;
+            height: 180px;
+            display: block;
         }
         
         .ticket-code {
@@ -251,6 +263,13 @@ if (empty($tickets)) {
             font-size: 12px;
         }
         
+        @media print {
+            body { background: white; padding: 0; }
+            .header, .footer, .btn-download, .btn-whatsapp { display: none; }
+            .ticket-card { break-inside: avoid; page-break-inside: avoid; box-shadow: none; border: 1px solid #ddd; margin-bottom: 20px; }
+            .qr-code img { max-width: 120px; height: auto; }
+        }
+        
         @media (max-width: 768px) {
             .ticket-grid {
                 grid-template-columns: 1fr;
@@ -260,13 +279,7 @@ if (empty($tickets)) {
                 gap: 10px;
             }
             .header h1 { font-size: 24px; }
-        }
-        
-        @media print {
-            body { background: white; padding: 0; }
-            .header, .footer, .btn-download { display: none; }
-            .ticket-card { break-inside: avoid; page-break-inside: avoid; box-shadow: none; border: 1px solid #ddd; }
-            .ticket-image img { max-width: 150px; }
+            .qr-code img { width: 140px; height: 140px; }
         }
     </style>
 </head>
@@ -315,15 +328,19 @@ if (empty($tickets)) {
             <?php foreach ($tickets as $ticket): 
                 $typeLabel = $typeLabels[$ticket['guest_type']];
                 $ticketNumber = str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT);
-                $ticketImageUrl = $baseUrl . "public/generate_ticket_image.php?ticket_code=" . urlencode($ticket['ticket_code']);            ?>
+                $qrCodeUrl = "https://quickchart.io/qr?text=" . urlencode($ticket['ticket_code']) . "&size=180&margin=2";
+                $isUsed = $ticket['is_scanned'] == 1;
+            ?>
             <div class="ticket-card">
                 <div class="ticket-header">
                     <h3><i class="bi bi-ticket-perforated"></i> <?php echo $typeLabel; ?> Ticket</h3>
                     <span class="ticket-number">#<?php echo $ticketNumber; ?></span>
                 </div>
                 <div class="ticket-body">
-                    <div class="ticket-image">
-                        <img src="<?php echo $ticketImageUrl; ?>" alt="Ticket QR Code">
+                    <div class="qr-container">
+                        <div class="qr-code">
+                            <img src="<?php echo $qrCodeUrl; ?>" alt="QR Code" loading="lazy">
+                        </div>
                     </div>
                     
                     <div class="ticket-code">
@@ -334,22 +351,29 @@ if (empty($tickets)) {
                     <div class="ticket-detail">
                         <span class="detail-label">Status</span>
                         <span class="detail-value">
-                            <span class="status-badge <?php echo $ticket['is_scanned'] ? 'status-used' : 'status-valid'; ?>">
-                                <?php echo $ticket['is_scanned'] ? 'Used' : 'Valid'; ?>
+                            <span class="status-badge <?php echo $isUsed ? 'status-used' : 'status-valid'; ?>">
+                                <?php echo $isUsed ? 'Used' : 'Valid'; ?>
                             </span>
                         </span>
                     </div>
                     
                     <div class="ticket-detail">
                         <span class="detail-label">Table</span>
-                        <span class="detail-value"><?php echo htmlspecialchars($reservation['table_id']); ?></span>
+                        <span class="detail-value">Table <?php echo htmlspecialchars($reservation['table_id']); ?></span>
                     </div>
                     
-                    <a href="<?php echo $ticketImageUrl; ?>" download class="btn-download">
-                        <i class="bi bi-download"></i> Download Ticket
-                    </a>
+                    <div class="ticket-detail">
+                        <span class="detail-label">Ticket Holder</span>
+                        <span class="detail-value"><?php echo htmlspecialchars($reservation['name']); ?></span>
+                    </div>
                     
-                    <a href="https://wa.me/+962795410115?text=I%20need%20help%20with%20my%20ticket%20<?php echo urlencode($ticket['ticket_code']); ?>" target="_blank" class="btn-download btn-whatsapp">
+                    <?php if (!$isUsed): ?>
+                    <button onclick="window.print()" class="btn-download">
+                        <i class="bi bi-printer"></i> Print Ticket
+                    </button>
+                    <?php endif; ?>
+                    
+                    <a href="https://wa.me/+962795410115; ?>?text=I%20need%20help%20with%20my%20ticket%20<?php echo urlencode($ticket['ticket_code']); ?>" target="_blank" class="btn-download btn-whatsapp">
                         <i class="bi bi-whatsapp"></i> Contact Support
                     </a>
                 </div>
@@ -358,7 +382,7 @@ if (empty($tickets)) {
         </div>
         
         <div class="footer">
-            <p><i class="bi bi-info-circle"></i> Each ticket has a unique QR code. Present this page or downloaded tickets at the entrance.</p>
+            <p><i class="bi bi-info-circle"></i> Each ticket has a unique QR code. Present this page or print your tickets at the entrance.</p>
             <p>© <?php echo date('Y'); ?> <?php echo htmlspecialchars($eventName); ?></p>
         </div>
     </div>
