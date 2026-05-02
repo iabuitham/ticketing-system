@@ -1,5 +1,5 @@
 <?php
-session_start();
+// Public ticket image generator - No admin session required
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
 
@@ -27,108 +27,89 @@ if (!$ticket) {
 }
 
 $eventName = getSetting('site_name', 'Event');
-$eventDate = $_SESSION['selected_event_date'] ?? date('F j, Y', strtotime('+30 days'));
-$eventTime = $_SESSION['selected_event_time'] ?? '6:00 PM';
-$eventVenue = $_SESSION['selected_event_venue'] ?? 'Grand Hall, Amman';
+$eventDate = date('F j, Y', strtotime('+30 days'));
+$eventTime = '6:00 PM';
+$eventVenue = 'Grand Hall, Amman';
 $typeLabel = ucfirst($ticket['guest_type']);
 $ticketNumber = str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT);
 
-// Load your template image
-$templatePath = '../assets/images/ticket_template.png';
+// Create image
+$width = 500;
+$height = 700;
+$image = imagecreatetruecolor($width, $height);
 
-if (!file_exists($templatePath)) {
-    // Fallback: create a simple ticket if template not found
-    $width = 500;
-    $height = 700;
-    $image = imagecreatetruecolor($width, $height);
-    $white = imagecolorallocate($image, 255, 255, 255);
-    $purple = imagecolorallocate($image, 79, 70, 229);
-    imagefill($image, 0, 0, $white);
-    imagefilledrectangle($image, 0, 0, $width, 180, $purple);
-} else {
-    $image = imagecreatefrompng($templatePath);
-}
+// Colors
+$white = imagecolorallocate($image, 255, 255, 255);
+$purple = imagecolorallocate($image, 79, 70, 229);
+$dark = imagecolorallocate($image, 30, 41, 59);
+$gray = imagecolorallocate($image, 100, 116, 139);
 
-// Get image dimensions
-$width = imagesx($image);
-$height = imagesy($image);
+// Fill background
+imagefill($image, 0, 0, $white);
 
-// Text colors
-$textColor = imagecolorallocate($image, 30, 41, 59);
-$labelColor = imagecolorallocate($image, 100, 116, 139);
-$whiteColor = imagecolorallocate($image, 255, 255, 255);
+// Draw header
+imagefilledrectangle($image, 0, 0, $width, 180, $purple);
 
-// Calculate center positions
-$centerX = $width / 2;
+// Add header text
+$white_color = imagecolorallocate($image, 255, 255, 255);
+imagestring($image, 5, 150, 40, "ENTRY TICKET", $white_color);
+imagestring($image, 4, 160, 70, strtoupper($typeLabel), $white_color);
 
-// Add text to template (adjust these coordinates based on your template)
-$y = 100;
+// Add event name
+imagestring($image, 5, 30, 210, "EVENT:", $gray);
+imagestring($image, 5, 120, 210, substr($eventName, 0, 35), $dark);
 
-// Event Name (centered)
-$eventNameText = substr($eventName, 0, 30);
-$textWidth = strlen($eventNameText) * imagefontwidth(5);
-$textX = ($width - $textWidth) / 2;
-imagestring($image, 5, $textX, 80, $eventNameText, $textColor);
+// Add date
+imagestring($image, 4, 30, 245, "DATE:", $gray);
+imagestring($image, 4, 120, 245, $eventDate, $dark);
 
-// Event Date
-imagestring($image, 4, 50, 160, "DATE:", $labelColor);
-imagestring($image, 4, 150, 160, $eventDate, $textColor);
+// Add time
+imagestring($image, 4, 30, 275, "TIME:", $gray);
+imagestring($image, 4, 120, 275, $eventTime, $dark);
 
-// Event Time
-imagestring($image, 4, 50, 190, "TIME:", $labelColor);
-imagestring($image, 4, 150, 190, $eventTime, $textColor);
+// Add venue
+imagestring($image, 4, 30, 305, "VENUE:", $gray);
+imagestring($image, 4, 120, 305, substr($eventVenue, 0, 35), $dark);
 
-// Venue
-imagestring($image, 4, 50, 220, "VENUE:", $labelColor);
-imagestring($image, 4, 150, 220, substr($eventVenue, 0, 30), $textColor);
+// Add customer name
+imagestring($image, 5, 30, 350, "TICKET HOLDER:", $gray);
+imagestring($image, 5, 200, 350, substr($ticket['name'], 0, 25), $dark);
 
-// Customer Name
-imagestring($image, 5, 50, 280, "TICKET HOLDER:", $labelColor);
-imagestring($image, 5, 220, 280, substr($ticket['name'], 0, 25), $textColor);
+// Add table
+imagestring($image, 5, 30, 385, "TABLE:", $gray);
+imagestring($image, 5, 120, 385, $ticket['table_id'], $dark);
 
-// Table
-imagestring($image, 5, 50, 320, "TABLE:", $labelColor);
-imagestring($image, 5, 150, 320, $ticket['table_id'], $textColor);
+// Add ticket number
+imagestring($image, 4, 30, 415, "TICKET #:", $gray);
+imagestring($image, 4, 130, 415, $ticketNumber, $dark);
 
-// Ticket Type
-$typeText = $typeLabel . " Ticket #" . $ticketNumber;
-imagestring($image, 4, 50, 360, "TICKET TYPE:", $labelColor);
-imagestring($image, 4, 180, 360, $typeText, $textColor);
-
-// Generate QR code and overlay onto template
+// Generate QR code
 $qrSize = 160;
 $qrUrl = "https://quickchart.io/qr?text=" . urlencode($ticket['ticket_code']) . "&size={$qrSize}&margin=2";
 $qrData = @file_get_contents($qrUrl);
 
 if ($qrData) {
-    $tempFile = tempnam(sys_get_temp_dir(), 'qr_');
-    file_put_contents($tempFile, $qrData);
-    $qrImage = imagecreatefrompng($tempFile);
-    
+    $qrImage = imagecreatefromstring($qrData);
     if ($qrImage) {
         $qrWidth = imagesx($qrImage);
         $qrHeight = imagesy($qrImage);
-        
-        // Center the QR code
         $qrX = ($width - $qrWidth) / 2;
-        $qrY = 420;
-        
+        $qrY = 470;
         imagecopy($image, $qrImage, $qrX, $qrY, 0, 0, $qrWidth, $qrHeight);
         imagedestroy($qrImage);
     }
-    unlink($tempFile);
 }
 
-// Add ticket code at the bottom
-$ticketCodeText = "Ticket ID: " . $ticket['ticket_code'];
-$textWidth = strlen($ticketCodeText) * imagefontwidth(3);
+// Add ticket ID
+$ticketIdText = "ID: " . $ticket['ticket_code'];
+$textWidth = strlen($ticketIdText) * imagefontwidth(3);
 $textX = ($width - $textWidth) / 2;
-imagestring($image, 3, $textX, 610, $ticketCodeText, $labelColor);
+imagestring($image, 3, $textX, 650, $ticketIdText, $gray);
 
 // Add footer
-imagestring($image, 3, 150, 650, "Scan QR code at entrance", $labelColor);
+imagestring($image, 3, 150, 675, "Scan QR code at entrance", $gray);
 
-// Output the final image
+// Output image
 header('Content-Type: image/png');
 header('Content-Disposition: inline; filename="ticket_' . $ticket['ticket_code'] . '.png"');
 imagepng($image);

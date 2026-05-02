@@ -1,12 +1,11 @@
 <?php
-session_start();
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
 
-$reservation_id = isset($_GET['id']) ? sanitizeInput($_GET['id']) : '';
+$reservation_id = isset($_GET['id']) ? urldecode($_GET['id']) : '';
 
 if (empty($reservation_id)) {
-    die('No reservation ID provided');
+    die('No reservation ID provided. Please check your ticket link.');
 }
 
 $conn = getConnection();
@@ -19,7 +18,7 @@ $reservation = $stmt->get_result()->fetch_assoc();
 $stmt->close();
 
 if (!$reservation) {
-    die('Reservation not found');
+    die('Reservation not found. Please contact support.');
 }
 
 // Get all tickets for this reservation
@@ -38,9 +37,14 @@ $typeLabels = [
 ];
 
 $eventName = getSetting('site_name', 'Event');
-$baseUrl = getBaseUrl();
+$baseUrl = getSetting('base_url', 'https://restorandticketingsystem.unaux.com/');
 $totalGuests = $reservation['adults'] + $reservation['teens'] + $reservation['kids'];
 $currencySymbol = getCurrencySymbol();
+
+// If no tickets found, show error
+if (empty($tickets)) {
+    die('No tickets found for this reservation. Please contact support.');
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -311,8 +315,7 @@ $currencySymbol = getCurrencySymbol();
             <?php foreach ($tickets as $ticket): 
                 $typeLabel = $typeLabels[$ticket['guest_type']];
                 $ticketNumber = str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT);
-                $ticketImageUrl = $baseUrl . "admin/generate_ticket_image.php?ticket_code=" . urlencode($ticket['ticket_code']);
-            ?>
+                $ticketImageUrl = $baseUrl . "public/generate_ticket_image.php?ticket_code=" . urlencode($ticket['ticket_code']);            ?>
             <div class="ticket-card">
                 <div class="ticket-header">
                     <h3><i class="bi bi-ticket-perforated"></i> <?php echo $typeLabel; ?> Ticket</h3>
@@ -346,7 +349,7 @@ $currencySymbol = getCurrencySymbol();
                         <i class="bi bi-download"></i> Download Ticket
                     </a>
                     
-                    <a href="https://wa.me/<?php echo $reservation['phone']; ?>?text=I%20need%20help%20with%20my%20ticket%20<?php echo urlencode($ticket['ticket_code']); ?>" target="_blank" class="btn-download btn-whatsapp">
+                    <a href="https://wa.me/+962795410115?text=I%20need%20help%20with%20my%20ticket%20<?php echo urlencode($ticket['ticket_code']); ?>" target="_blank" class="btn-download btn-whatsapp">
                         <i class="bi bi-whatsapp"></i> Contact Support
                     </a>
                 </div>

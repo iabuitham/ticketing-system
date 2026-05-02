@@ -142,7 +142,7 @@ try {
         $headerMessage .= "📱 *Total Tickets:* " . count($tickets) . "\n\n";
         $headerMessage .= "🔗 *View all your tickets online:*\n";
         $headerMessage .= "{$ticketsPageUrl}\n\n";
-        $headerMessage .= "💾 You can also save each ticket image below.\n";
+        $headerMessage .= "💾 You can also save each ticket image below.\n";    
         $headerMessage .= "📱 Show the tickets at the entrance.\n\n";
         $headerMessage .= "We look forward to seeing you! 🎉";
         
