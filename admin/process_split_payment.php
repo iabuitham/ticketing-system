@@ -128,36 +128,34 @@ try {
         $ticketsStmt->close();
         
         $eventName = isset($_SESSION['selected_event_name']) ? $_SESSION['selected_event_name'] : 'Event';
-        $baseUrl = getSetting('base_url', 'http://localhost/ticketing-system/');
+        $baseUrl = getSetting('base_url', 'https://restorandticketingsystem.unaux.com/');
         
-        // Send header message
+        // Generate tickets page link
+        $ticketsPageUrl = $baseUrl . "public/reservation_tickets.php?id=" . urlencode($reservation_id);
+        
+        // Send header message with link to tickets page
         $headerMessage = "🎟️ *YOUR TICKETS ARE READY!* 🎟️\n\n";
         $headerMessage .= "Dear {$customerName},\n\n";
-        $headerMessage .= "Thank you for your payment! Here are your tickets.\n\n";
+        $headerMessage .= "Thank you for your payment! Your tickets are ready.\n\n";
         $headerMessage .= "📋 *Reservation ID:* {$reservation_id}\n";
         $headerMessage .= "🎪 *Event:* {$eventName}\n";
         $headerMessage .= "📱 *Total Tickets:* " . count($tickets) . "\n\n";
-        $headerMessage .= "⬇️ *Your tickets are attached below as images.* ⬇️\n";
-        $headerMessage .= "Press and hold on each image to save to your phone.\n";
-        $headerMessage .= "Show the saved images at the entrance.\n\n";
+        $headerMessage .= "🔗 *View all your tickets online:*\n";
+        $headerMessage .= "{$ticketsPageUrl}\n\n";
+        $headerMessage .= "💾 You can also save each ticket image below.\n";
+        $headerMessage .= "📱 Show the tickets at the entrance.\n\n";
         $headerMessage .= "We look forward to seeing you! 🎉";
         
         sendWhatsAppMessage($customerPhone, $headerMessage);
         
-        // Create temp directory
-        $tempDir = '../uploads/temp_tickets/';
-        if (!is_dir($tempDir)) {
-            mkdir($tempDir, 0777, true);
-        }
-        
-        // Send each ticket as QR code image using URL method
+        // Send each ticket as QR code image (backup method)
         $ticketCount = 0;
         foreach ($tickets as $ticket) {
             $ticketCount++;
             $typeLabel = ucfirst($ticket['guest_type']);
             $ticketNumber = str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT);
             
-            // Generate QR code URL (no local file needed)
+            // Generate QR code URL
             $qrUrl = "https://quickchart.io/qr?text=" . urlencode($ticket['ticket_code']) . "&size=250&margin=2";
             
             $caption = "🎫 *{$typeLabel} Ticket #{$ticketNumber}*\n";
@@ -174,8 +172,9 @@ try {
         // Send closing message
         if ($ticketCount > 0) {
             $closingMessage = "✅ *All {$ticketCount} ticket(s) sent!*\n\n";
-            $closingMessage .= "📸 Each ticket has been sent as an image.\n";
-            $closingMessage .= "💾 Press and hold on each image to save to your phone gallery.\n";
+            $closingMessage .= "📸 Each ticket has been sent as an image above.\n";
+            $closingMessage .= "🔗 Or view them all at: {$ticketsPageUrl}\n\n";
+            $closingMessage .= "💾 Press and hold on each image to save to your phone.\n";
             $closingMessage .= "📱 Show the saved images at the entrance for scanning.\n\n";
             $closingMessage .= "Thank you for choosing us! 🎉";
             
