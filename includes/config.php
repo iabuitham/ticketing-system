@@ -1,23 +1,21 @@
 <?php
 /**
- * Database configuration
- * Session settings should be set BEFORE session_start()
+ * Database configuration for ezyro hosting
  */
 
-// Database configuration
-define('DB_HOST', 'localhost');
-define('DB_USER', 'root');  // Change to your database username
-define('DB_NAME', 'ticketing_system');  // Change to your database name
-define('DB_PASS', '');  // Change to your database password
+// Database configuration (these look correct)
+define('DB_HOST', 'sql103.ezyro.com');
+define('DB_USER', 'ezyro_41780028');
+define('DB_NAME', 'ezyro_41780028_ticketing_system');
+define('DB_PASS', '6dfb6092a4');
 
-// Base URL (update this to your actual domain)
-define('BASE_URL', 'http://localhost/ticketing-system/');
+// Base URL - FIXED (remove /admin)
+define('BASE_URL', 'https://restorandticketingsystem.unaux.com/');
 
-// Error reporting (turn off in production)
+// Error reporting (turn off in production later)
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-// Note: Session settings should be set BEFORE session_start()
-// These settings are now moved to the file that starts the session
-// Do NOT set session settings here as session may already be started
+// Set timezone
+date_default_timezone_set('Asia/Amman');
 ?>

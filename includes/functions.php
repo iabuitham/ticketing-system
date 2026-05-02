@@ -314,8 +314,7 @@ function sendWhatsAppImage($to, $imageUrl, $caption = '') {
 }
 
 /**
- * Send all tickets for a reservation as QR code images
- * Uses URL method (quickchart.io) which works reliably
+ * Send all tickets for a reservation as beautiful ticket images (using template + QR code)
  */
 function sendAllTicketsAsImages($reservation_id, $customerPhone, $customerName) {
     $conn = getConnection();
@@ -336,66 +335,78 @@ function sendAllTicketsAsImages($reservation_id, $customerPhone, $customerName) 
     $conn->close();
     
     if (empty($tickets)) {
+        error_log("No tickets found for reservation: $reservation_id");
         return false;
     }
     
-    $eventDetails = [
-        'name' => $event['event_name'] ?? getSetting('site_name', 'Event'),
-        'date' => $event['event_date'] ?? '',
-        'time' => $event['event_time'] ?? '',
-        'venue' => $event['venue'] ?? ''
-    ];
+    // Update session with event details for the ticket
+    if ($event) {
+        $_SESSION['selected_event_date'] = $event['event_date'];
+        $_SESSION['selected_event_time'] = $event['event_time'];
+        $_SESSION['selected_event_venue'] = $event['venue'];
+    }
+    
+    $baseUrl = getBaseUrl();
+    $eventName = $event['event_name'] ?? getSetting('site_name', 'Event');
+    
+    // Clean phone number
+    $cleanPhone = preg_replace('/[^0-9]/', '', $customerPhone);
+    if (substr($cleanPhone, 0, 1) == '0') $cleanPhone = substr($cleanPhone, 1);
+    if (substr($cleanPhone, 0, 3) != '962') $cleanPhone = '962' . $cleanPhone;
     
     // Send header message
     $headerMessage = "🎟️ *YOUR TICKETS ARE READY!* 🎟️\n\n";
     $headerMessage .= "Dear {$customerName},\n\n";
-    $headerMessage .= "Thank you for your payment! Here are your tickets.\n\n";
+    $headerMessage .= "Thank you for your payment! Your tickets are below.\n\n";
     $headerMessage .= "📋 *Reservation ID:* {$reservation_id}\n";
-    $headerMessage .= "🎪 *Event:* {$eventDetails['name']}\n";
+    $headerMessage .= "🎪 *Event:* {$eventName}\n";
     $headerMessage .= "📱 *Total Tickets:* " . count($tickets) . "\n\n";
-    $headerMessage .= "*Your tickets are attached below as images.*\n";
-    $headerMessage .= "Save each image to your phone.\n";
-    $headerMessage .= "Show them at the entrance.\n\n";
-    $headerMessage .= "We look forward to seeing you! 🎉";
     
-    sendWhatsAppMessage($customerPhone, $headerMessage);
+    sendWhatsAppMessage($cleanPhone, $headerMessage);
     
-    // Send each ticket as QR code image using URL method
+    // Send each ticket as a beautiful image
     $sentCount = 0;
-    foreach ($tickets as $ticket) {
+    foreach ($tickets as $index => $ticket) {
         $typeLabel = ucfirst($ticket['guest_type']);
         $ticketNumber = str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT);
         
-        $caption = "🎫 *{$typeLabel} Ticket #{$ticketNumber}*\n";
-        $caption .= "ID: {$ticket['ticket_code']}\n";
-        $caption .= "Customer: {$customerName}\n";
-        $caption .= "Valid for one-time entry\n\n";
-        $caption .= "Show this QR code at the entrance";
+        // Generate ticket image URL using the template
+        $ticketImageUrl = $baseUrl . "admin/generate_ticket_image.php?ticket_code=" . urlencode($ticket['ticket_code']);
         
-        // Generate QR code URL using quickchart.io (works reliably)
-        $qrUrl = "https://quickchart.io/qr?text=" . urlencode($ticket['ticket_code']) . "&size=250&margin=2";
+        $caption = "🎫 *Ticket " . ($index + 1) . " of " . count($tickets) . "*\n";
+        $caption .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $caption .= "🎪 {$typeLabel} Ticket #{$ticketNumber}\n";
+        $caption .= "👤 {$customerName}\n";
+        $caption .= "🍽️ Table: {$ticket['table_id']}\n";
+        $caption .= "🎟️ ID: `{$ticket['ticket_code']}`\n";
+        $caption .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $caption .= "📱 Save this image. Show at entrance.";
         
-        // Send the image using URL method
-        $result = sendWhatsAppImage($customerPhone, $qrUrl, $caption);
+        // Send the image
+        $result = sendWhatsAppImage($cleanPhone, $ticketImageUrl, $caption);
         
         if ($result) {
             $sentCount++;
+            error_log("Ticket sent: {$ticket['ticket_code']}");
         } else {
             error_log("Failed to send ticket: {$ticket['ticket_code']}");
         }
         
-        usleep(500000); // 0.5 second delay between messages
+        // Wait between messages to ensure order
+        if ($index < count($tickets) - 1) {
+            usleep(1000000); // 1 second delay between tickets
+        }
     }
     
-    // Send closing message
+    // Send closing message ONLY after all tickets are sent
     if ($sentCount > 0) {
-        $closingMessage = "✅ *All {$sentCount} ticket(s) sent!*\n\n";
-        $closingMessage .= "📸 Each ticket has been sent as a QR code image.\n";
+        $closingMessage = "✅ *All {$sentCount} ticket(s) sent successfully!*\n\n";
+        $closingMessage .= "📸 Each ticket has been sent as an image above.\n";
         $closingMessage .= "💾 Press and hold on each image to save to your phone.\n";
-        $closingMessage .= "📱 Show the saved images at the entrance for scanning.\n\n";
+        $closingMessage .= "📱 Show the saved images at the entrance.\n\n";
         $closingMessage .= "Thank you for choosing us! 🎉";
         
-        sendWhatsAppMessage($customerPhone, $closingMessage);
+        sendWhatsAppMessage($cleanPhone, $closingMessage);
     }
     
     return $sentCount;
