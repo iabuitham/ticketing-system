@@ -185,7 +185,6 @@ $conn->close();
 ?>
 <!DOCTYPE html>
 <html lang="<?php echo $lang; ?>" dir="<?php echo getDirection(); ?>">
-
 <head>
  <meta charset="UTF-8">
  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
@@ -1187,6 +1186,9 @@ $conn->close();
      <a href="tables.php" class="btn btn-secondary"><i class="bi bi-grid-3x3-gap-fill"></i> Tables</a>
      <a href="settings.php" class="btn btn-secondary"><i class="bi bi-gear"></i> <?php echo t('system_settings'); ?></a>
      <a href="tickets_dashboard.php" class="btn btn-info"><i class="bi bi-ticket-perforated"></i> Ticket Dashboard</a>
+     <?php if ($selected_event_id > 0): ?>
+    <a href="close_event.php" class="btn btn-danger"><i class="bi bi-lock"></i> Close Event</a>
+    <?php endif; ?>
    </div>
   </div>
 
