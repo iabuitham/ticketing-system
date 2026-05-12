@@ -319,11 +319,76 @@ if (empty($tickets)) {
             font-size: 12px;
         }
         
+        /* PRINT STYLES - Each ticket on separate page */
         @media print {
-            body { background: white; padding: 0; }
-            .header, .footer, .btn-download, .btn-whatsapp { display: none; }
-            .ticket-card { break-inside: avoid; page-break-inside: avoid; box-shadow: none; border: 1px solid #ddd; margin-bottom: 20px; }
-            .qr-code img { max-width: 120px; height: auto; }
+            body {
+                background: white;
+                padding: 0;
+                margin: 0;
+            }
+            
+            .header, .footer, .btn-download, .btn-whatsapp, .reservation-card, .warning-box {
+                display: none !important;
+            }
+            
+            .ticket-grid {
+                display: block;
+                margin: 0;
+                padding: 0;
+            }
+            
+            .ticket-card {
+                break-after: page;
+                page-break-after: always;
+                break-inside: avoid;
+                page-break-inside: avoid;
+                box-shadow: none;
+                border: 1px solid #ddd;
+                margin: 0;
+                border-radius: 0;
+                position: relative;
+            }
+            
+            .ticket-card:last-child {
+                break-after: auto;
+                page-break-after: auto;
+            }
+            
+            .ticket-header {
+                background: linear-gradient(135deg, #1e293b, #0f172a);
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            
+            .qr-code img {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            
+            .status-badge {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            
+            .ticket-body {
+                padding: 20px;
+            }
+            
+            /* Page number indicator */
+            .ticket-card::after {
+                content: "Ticket " counter(ticket) " of <?php echo count($tickets); ?>";
+                counter-increment: ticket;
+                position: absolute;
+                bottom: 10px;
+                right: 20px;
+                font-size: 10px;
+                color: #94a3b8;
+            }
+        }
+        
+        /* Counter for print pages */
+        .ticket-grid {
+            counter-reset: ticket;
         }
         
         @media (max-width: 768px) {
@@ -398,7 +463,9 @@ if (empty($tickets)) {
         
         <!-- Tickets Grid -->
         <div class="ticket-grid">
-            <?php foreach ($tickets as $ticket): 
+            <?php
+            $ticketCounter= 0;
+            foreach ($tickets as $ticket): 
                 $typeLabel = $typeLabels[$ticket['guest_type']];
                 $ticketNumber = str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT);
                 $qrCodeUrl = "https://quickchart.io/qr?text=" . urlencode($ticket['ticket_code']) . "&size=180&margin=2";
@@ -406,8 +473,10 @@ if (empty($tickets)) {
                 $isActive = $ticket['is_active'] == 1;
                 $isValid = $isActive && !$isUsed;
                 $cardClass = !$isActive ? 'deactivated' : '';
+                $ticketCounter++;
+                $printPageBreak = ($ticketCounter > 1) ? 'page-break-before: always;' : '';
             ?>
-            <div class="ticket-card <?php echo $cardClass; ?>">
+            <div class="ticket-card <?php echo $cardClass; ?>" style="<?php echo $printPageBreak; ?>">
                 <div class="ticket-header">
                     <h3><i class="bi bi-ticket-perforated"></i> <?php echo $typeLabel; ?> Ticket</h3>
                     <span class="ticket-number">#<?php echo $ticketNumber; ?></span>
@@ -452,17 +521,22 @@ if (empty($tickets)) {
                         <span class="detail-value"><?php echo htmlspecialchars($reservation['name']); ?></span>
                     </div>
                     
+                    <div class="ticket-detail">
+                        <span class="detail-label">Event Date</span>
+                        <span class="detail-value"><?php echo date('F j, Y', strtotime($reservation['created_at'])); ?></span>
+                    </div>
+                    
                     <?php if ($isValid): ?>
-                        <button onclick="window.print()" class="btn-download">
-                            <i class="bi bi-printer"></i> Print Ticket
+                        <button onclick="window.print()" class="btn-download no-print">
+                            <i class="bi bi-printer"></i> Print This Ticket
                         </button>
                     <?php else: ?>
-                        <button class="btn-download btn-disabled" disabled style="background: #94a3b8; cursor: not-allowed;">
+                        <button class="btn-download btn-disabled no-print" disabled style="background: #94a3b8; cursor: not-allowed;">
                             <i class="bi bi-x-circle"></i> <?php echo $isUsed ? 'Ticket Already Used' : 'Ticket Deactivated'; ?>
                         </button>
                     <?php endif; ?>
                     
-                    <a href="https://wa.me/9625410115?text=I%20need%20help%20with%20my%20ticket%20<?php echo urlencode($ticket['ticket_code']); ?>" target="_blank" class="btn-download btn-whatsapp">
+                    <a href="https://wa.me/962795410115?text=I%20need%20help%20with%20my%20ticket%20<?php echo urlencode($ticket['ticket_code']); ?>" target="_blank" class="btn-download btn-whatsapp no-print">
                         <i class="bi bi-whatsapp"></i> Contact Support
                     </a>
                 </div>
@@ -470,9 +544,14 @@ if (empty($tickets)) {
             <?php endforeach; ?>
         </div>
         
-        <div class="footer">
+        <div class="footer no-print">
             <p><i class="bi bi-info-circle"></i> Each ticket has a unique QR code. Only valid (green) tickets will be accepted at the entrance.</p>
             <p>© <?php echo date('Y'); ?> <?php echo htmlspecialchars($eventName); ?></p>
+            <p style="margin-top: 10px;">
+                <button onclick="window.print()" class="btn-download" style="display: inline-block; width: auto; padding: 10px 20px;">
+                    <i class="bi bi-printer"></i> Print All Tickets (Each on separate page)
+                </button>
+            </p>
         </div>
     </div>
 </body>
