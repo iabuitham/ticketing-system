@@ -211,6 +211,51 @@ function regenerateReservationIdFromOld($old_id, $new_adults, $new_teens, $new_k
     return 'RES' . $sequential . '-' . $breakdown . '-' . $randomSuffix;
 }
 
+// Add to your includes/functions.php
+
+/**
+ * Prevent double booking for same customer/table
+ */
+function preventDoubleBooking($conn, $phone, $table_number, $event_date = null) {
+    if ($event_date === null) {
+        $event_date = date('Y-m-d');
+    }
+    
+    // Check if customer already has a reservation for this date
+    $stmt = $conn->prepare("
+        SELECT COUNT(*) as count 
+        FROM reservations 
+        WHERE phone = ? 
+        AND DATE(created_at) = ?
+        AND status NOT IN ('cancelled', 'expired', 'completed')
+    ");
+    $stmt->bind_param("ss", $phone, $event_date);
+    $stmt->execute();
+    $result = $stmt->get_result()->fetch_assoc();
+    
+    if ($result['count'] > 0) {
+        throw new Exception("You already have an active reservation. Only one booking allowed per person per event.");
+    }
+    
+    // Check if table is already booked
+    $stmt2 = $conn->prepare("
+        SELECT COUNT(*) as count 
+        FROM reservations r
+        WHERE r.table_id = ? 
+        AND DATE(r.created_at) = ?
+        AND r.status NOT IN ('cancelled', 'expired', 'completed')
+    ");
+    $stmt2->bind_param("ss", $table_number, $event_date);
+    $stmt2->execute();
+    $result2 = $stmt2->get_result()->fetch_assoc();
+    
+    if ($result2['count'] > 0) {
+        throw new Exception("This table is already booked for today. Please select another table.");
+    }
+    
+    return true;
+}
+
 /**
  * Send WhatsApp text message
  */

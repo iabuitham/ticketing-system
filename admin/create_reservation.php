@@ -5,8 +5,8 @@ require_once '../includes/functions.php';
 require_once '../includes/language.php';
 
 if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
- header('Location: login.php');
- exit();
+    header('Location: login.php');
+    exit();
 }
 
 $conn = getConnection();
@@ -21,21 +21,21 @@ $selected_event_name = $_SESSION['selected_event_name'] ?? 'No Event Selected';
 $event_ticket_prices = $_SESSION['event_ticket_prices'] ?? null;
 
 if (!$event_ticket_prices && $selected_event_id > 0) {
- $stmt = $conn->prepare("SELECT ticket_price_adult, ticket_price_teen, ticket_price_kid, event_name FROM event_settings WHERE id = ?");
- $stmt->bind_param("i", $selected_event_id);
- $stmt->execute();
- $event_data = $stmt->get_result()->fetch_assoc();
- $stmt->close();
+    $stmt = $conn->prepare("SELECT ticket_price_adult, ticket_price_teen, ticket_price_kid, event_name FROM event_settings WHERE id = ?");
+    $stmt->bind_param("i", $selected_event_id);
+    $stmt->execute();
+    $event_data = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
 
- if ($event_data) {
-  $event_ticket_prices = [
-   'adult' => $event_data['ticket_price_adult'],
-   'teen' => $event_data['ticket_price_teen'],
-   'kid' => $event_data['ticket_price_kid']
-  ];
-  $_SESSION['event_ticket_prices'] = $event_ticket_prices;
-  $_SESSION['selected_event_name'] = $event_data['event_name'];
- }
+    if ($event_data) {
+        $event_ticket_prices = [
+            'adult' => $event_data['ticket_price_adult'],
+            'teen' => $event_data['ticket_price_teen'],
+            'kid' => $event_data['ticket_price_kid']
+        ];
+        $_SESSION['event_ticket_prices'] = $event_ticket_prices;
+        $_SESSION['selected_event_name'] = $event_data['event_name'];
+    }
 }
 
 // Use event-specific prices or fall back to system settings
@@ -47,154 +47,224 @@ $currencySymbol = getCurrencySymbol();
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
- $name = sanitizeInput($_POST['name']);
- $phone = sanitizeInput($_POST['phone']);
- $table_id = sanitizeInput($_POST['table_id']);
- $adults = intval($_POST['adults']);
- $teens = intval($_POST['teens']);
- $kids = intval($_POST['kids']);
- $notes = sanitizeInput($_POST['notes'] ?? '');
+    $name = sanitizeInput($_POST['name']);
+    $phone = sanitizeInput($_POST['phone']);
+    $table_id = sanitizeInput($_POST['table_id']);
+    $adults = intval($_POST['adults']);
+    $teens = intval($_POST['teens']);
+    $kids = intval($_POST['kids']);
+    $notes = sanitizeInput($_POST['notes'] ?? '');
 
- // Calculate total amount
- $total_amount = ($adults * $adultPrice) + ($teens * $teenPrice) + ($kids * $kidPrice);
+    // Calculate total amount
+    $total_amount = ($adults * $adultPrice) + ($teens * $teenPrice) + ($kids * $kidPrice);
 
- // Get the NEXT sequential number correctly
- $seq_result = $conn->query("SELECT MAX(sequential_number) as max_seq FROM reservations");
- $max_seq_row = $seq_result->fetch_assoc();
- $current_max = intval($max_seq_row['max_seq']);
- $next_seq = $current_max + 1;
- if ($next_seq <= 0) $next_seq = 1;
+    // ========== DOUBLE BOOKING CHECK WITH NICE UI ==========
+    $doubleBookingError = '';
+    
+    // Check for existing reservation with same phone number
+    $stmt = $conn->prepare("
+        SELECT COUNT(*) as count, reservation_id, status 
+        FROM reservations 
+        WHERE phone = ?
+        AND status NOT IN ('cancelled', 'expired', 'completed')
+        AND DATE(created_at) = CURDATE()
+    ");
+    $stmt->bind_param("s", $phone);
+    $stmt->execute();
+    $phoneCheck = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
 
- // Generate new Reservation ID using the sequential number
- $reservation_id = generateReservationIdWithSeq($adults, $teens, $kids, $next_seq);
+    if ($phoneCheck['count'] > 0) {
+        $doubleBookingError = "❌ This phone number already has an active reservation (ID: {$phoneCheck['reservation_id']}, Status: {$phoneCheck['status']}).";
+    }
 
- // Start transaction
- $conn->begin_transaction();
+    // Check if table is already booked
+    if (empty($doubleBookingError)) {
+        $stmt = $conn->prepare("
+            SELECT COUNT(*) as count, reservation_id, status, name as customer_name
+            FROM reservations 
+            WHERE table_id = ?
+            AND status NOT IN ('cancelled', 'expired', 'completed')
+            AND DATE(created_at) = CURDATE()
+        ");
+        $stmt->bind_param("s", $table_id);
+        $stmt->execute();
+        $tableCheck = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
 
- try {
-  // Insert reservation with explicit sequential_number
-  $stmt = $conn->prepare("INSERT INTO reservations (reservation_id, sequential_number, name, phone, table_id, adults, teens, kids, total_amount, additional_amount_due, notes, status, created_at) 
-                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())");
-  $additional_amount_due = $total_amount;
-  $stmt->bind_param("sisssiiidds", $reservation_id, $next_seq, $name, $phone, $table_id, $adults, $teens, $kids, $total_amount, $additional_amount_due, $notes);
+        if ($tableCheck['count'] > 0) {
+            $doubleBookingError = "❌ Table {$table_id} is already booked for today by {$tableCheck['customer_name']} (Status: {$tableCheck['status']}). Please select another table.";
+        }
+    }
 
-  if (!$stmt->execute()) {
-   throw new Exception($conn->error);
-  }
-  $stmt->close();
+    // If double booking error exists, show it nicely
+    if (!empty($doubleBookingError)) {
+        $message = $doubleBookingError;
+        $messageType = "error";
+    } else {
+        // Get the NEXT sequential number correctly
+        $seq_result = $conn->query("SELECT MAX(sequential_number) as max_seq FROM reservations");
+        $max_seq_row = $seq_result->fetch_assoc();
+        $current_max = intval($max_seq_row['max_seq']);
+        $next_seq = $current_max + 1;
+        if ($next_seq <= 0) $next_seq = 1;
 
-  // Generate ticket codes for each attendee
-  $adultCount = 0;
-  $teenCount = 0;
-  $kidCount = 0;
+        // Generate new Reservation ID using the sequential number
+        $reservation_id = generateReservationIdWithSeq($adults, $teens, $kids, $next_seq);
 
-  // Check if ticket_codes table exists
-  $table_check = $conn->query("SHOW TABLES LIKE 'ticket_codes'");
-  if ($table_check && $table_check->num_rows > 0) {
-   // Generate tickets for adults
-   for ($i = 1; $i <= $adults; $i++) {
-     $ticketCode = generateTicketId($reservation_id, 'adult', $i);
-     $stmt_ticket = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'adult', ?)");
-     $stmt_ticket->bind_param("ssi", $reservation_id, $ticketCode, $i);
-     $stmt_ticket->execute();
-     $stmt_ticket->close();
-     $adultCount++;
-   }
+        // Start transaction
+        $conn->begin_transaction();
 
-   // Generate tickets for teens
-   for ($i = 1; $i <= $teens; $i++) {
-     $ticketCode = generateTicketId($reservation_id, 'teen', $i);
-     $stmt_ticket = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'teen', ?)");
-     $stmt_ticket->bind_param("ssi", $reservation_id, $ticketCode, $i);
-     $stmt_ticket->execute();
-     $stmt_ticket->close();
-     $teenCount++;
-   }
+        try {
+            // Insert reservation with explicit sequential_number
+            $stmt = $conn->prepare("INSERT INTO reservations (reservation_id, sequential_number, name, phone, table_id, adults, teens, kids, total_amount, additional_amount_due, notes, status, created_at) 
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())");
+            $additional_amount_due = $total_amount;
+            $stmt->bind_param("sisssiiidds", $reservation_id, $next_seq, $name, $phone, $table_id, $adults, $teens, $kids, $total_amount, $additional_amount_due, $notes);
 
-   // Generate tickets for kids
-   for ($i = 1; $i <= $kids; $i++) {
-     $ticketCode = generateTicketId($reservation_id, 'kid', $i);
-     $stmt_ticket = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'kid', ?)");
-     $stmt_ticket->bind_param("ssi", $reservation_id, $ticketCode, $i);
-     $stmt_ticket->execute();
-     $stmt_ticket->close();
-     $kidCount++;
-   }
-  }
+            if (!$stmt->execute()) {
+                throw new Exception($conn->error);
+            }
+            $stmt->close();
 
-  $conn->commit();
-  $message = "Reservation created successfully!<br>";
-  $message .= "Reservation ID: <strong>" . $reservation_id . "</strong><br>";
-  $message .= "Tickets generated: " . $adultCount . " Adult, " . $teenCount . " Teen, " . $kidCount . " Kid";
-  $messageType = "success";
+            // Update table status to reserved in tables table
+            $updateTable = $conn->prepare("
+                UPDATE tables 
+                SET status = 'reserved', 
+                    current_reservation_id = ?,
+                    reserved_until = DATE_ADD(NOW(), INTERVAL 2 HOUR)
+                WHERE table_number = ?
+            ");
+            $updateTable->bind_param("ss", $reservation_id, $table_id);
+            $updateTable->execute();
+            $updateTable->close();
 
-  // ========== SEND WHATSAPP CONFIRMATION ==========
-  // This is where the WhatsApp code should go - INSIDE the POST submission block
-  $whatsappMessage = "🎫 *Reservation Confirmed | تم تأكيد الحجز!*\n\n";
+            // Generate ticket codes for each attendee
+            $adultCount = 0;
+            $teenCount = 0;
+            $kidCount = 0;
 
-  $whatsappMessage .= "Dear {$name} | عزيزنا {$name},\n\n";
+            // Check if ticket_codes table exists
+            $table_check = $conn->query("SHOW TABLES LIKE 'ticket_codes'");
+            if ($table_check && $table_check->num_rows > 0) {
+                // Generate tickets for adults
+                for ($i = 1; $i <= $adults; $i++) {
+                    $ticketCode = generateTicketId($reservation_id, 'adult', $i);
+                    $stmt_ticket = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'adult', ?)");
+                    $stmt_ticket->bind_param("ssi", $reservation_id, $ticketCode, $i);
+                    $stmt_ticket->execute();
+                    $stmt_ticket->close();
+                    $adultCount++;
+                }
 
-  $whatsappMessage .= "Your reservation has been confirmed successfully.\n";
-  $whatsappMessage .= "تم تأكيد حجزك بنجاح.\n\n";
+                // Generate tickets for teens
+                for ($i = 1; $i <= $teens; $i++) {
+                    $ticketCode = generateTicketId($reservation_id, 'teen', $i);
+                    $stmt_ticket = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'teen', ?)");
+                    $stmt_ticket->bind_param("ssi", $reservation_id, $ticketCode, $i);
+                    $stmt_ticket->execute();
+                    $stmt_ticket->close();
+                    $teenCount++;
+                }
 
-  $whatsappMessage .= "📋 *Reservation ID | رقم الحجز:* {$reservation_id}\n";
-  $whatsappMessage .= "👥 *Guests | عدد الضيوف:* " . ($adults + $teens + $kids) . "\n";
-  $whatsappMessage .= "🍽️ *Table | الطاولة:* {$table_id}\n";
-  $whatsappMessage .= "💰 *Total Amount | المبلغ الإجمالي:* {$currencySymbol} " . number_format($total_amount, 2) . "\n\n";
+                // Generate tickets for kids
+                for ($i = 1; $i <= $kids; $i++) {
+                    $ticketCode = generateTicketId($reservation_id, 'kid', $i);
+                    $stmt_ticket = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'kid', ?)");
+                    $stmt_ticket->bind_param("ssi", $reservation_id, $ticketCode, $i);
+                    $stmt_ticket->execute();
+                    $stmt_ticket->close();
+                    $kidCount++;
+                }
+            }
 
-  $whatsappMessage .= "To pay for your reservation, please follow the steps below:\n";
-  $whatsappMessage .= "لدفع قيمة الحجز، يرجى اتباع الخطوات التالية:\n\n";
+            $conn->commit();
+            
+            // Build success message
+            $message = "✅ Reservation created successfully!<br>";
+            $message .= "📋 Reservation ID: <strong>" . $reservation_id . "</strong><br>";
+            $message .= "🎫 Tickets generated: " . $adultCount . " Adult, " . $teenCount . " Teen, " . $kidCount . " Kid<br>";
+            $message .= "🍽️ Table {$table_id} has been reserved for 2 hours.";
+            
+            // ========== SEND WHATSAPP CONFIRMATION ==========
+            $whatsappMessage = "🎫 *Reservation Confirmed | تم تأكيد الحجز!*\n\n";
+            $whatsappMessage .= "Dear {$name} | عزيزنا {$name},\n\n";
+            $whatsappMessage .= "Your reservation has been confirmed successfully.\n";
+            $whatsappMessage .= "تم تأكيد حجزك بنجاح.\n\n";
+            $whatsappMessage .= "📋 *Reservation ID | رقم الحجز:* {$reservation_id}\n";
+            $whatsappMessage .= "👥 *Guests | عدد الضيوف:* " . ($adults + $teens + $kids) . "\n";
+            $whatsappMessage .= "🍽️ *Table | الطاولة:* {$table_id}\n";
+            $whatsappMessage .= "💰 *Total Amount | المبلغ الإجمالي:* {$currencySymbol} " . number_format($total_amount, 2) . "\n\n";
+            $whatsappMessage .= "To pay for your reservation, please follow the steps below:\n";
+            $whatsappMessage .= "لدفع قيمة الحجز، يرجى اتباع الخطوات التالية:\n\n";
+            $whatsappMessage .= "Transfer the amount {$currencySymbol}" . number_format($total_amount, 2) . "\n";
+            $whatsappMessage .= "قم بتحويل المبلغ {$currencySymbol}" . number_format($total_amount, 2) . "\n\n";
+            $whatsappMessage .= "Via CliQ transfer to:\n";
+            $whatsappMessage .= "عبر خدمة CliQ إلى:\n";
+            $whatsappMessage .= "*Alias | الاسم المستعار: ABUFARES79*\n";
+            $whatsappMessage .= "*Bank | البنك: Arab Bank | البنك العربي*\n\n";
+            $whatsappMessage .= "Then send a screenshot of the transfer to this number.\n";
+            $whatsappMessage .= "ثم أرسل صورة إثبات التحويل إلى هذا الرقم.\n\n";
+            $whatsappMessage .= "We look forward to serving you! 🎉\n";
+            $whatsappMessage .= "نتطلع لخدمتك! 🎉\n\n";
+            $whatsappMessage .= "_Thank you for choosing us | شكرًا لاختياركم لنا_";
 
-  $whatsappMessage .= "Transfer the amount {$currencySymbol}" . number_format($total_amount, 2) . "\n";
-  $whatsappMessage .= "قم بتحويل المبلغ {$currencySymbol}" . number_format($total_amount, 2) . "\n\n";
+            // Send the message
+            $whatsappSent = sendWhatsAppMessage($phone, $whatsappMessage);
+            if ($whatsappSent) {
+                $message .= "<br>📱 WhatsApp confirmation sent to customer!";
+            } else {
+                $message .= "<br>⚠️ WhatsApp could not be sent (check credentials)";
+            }
+            
+            $messageType = "success";
 
-  $whatsappMessage .= "Via CliQ transfer to:\n";
-  $whatsappMessage .= "عبر خدمة CliQ إلى:\n";
-  $whatsappMessage .= "*Alias | الاسم المستعار: ABUFARES79*\n";
-  $whatsappMessage .= "*Bank | البنك: Arab Bank | البنك العربي*\n\n";
-
-  $whatsappMessage .= "Then send a screenshot of the transfer to this number.\n";
-  $whatsappMessage .= "ثم أرسل صورة إثبات التحويل إلى هذا الرقم.\n\n";
-
-  $whatsappMessage .= "We look forward to serving you! 🎉\n";
-  $whatsappMessage .= "نتطلع لخدمتك! 🎉\n\n";
-
-  $whatsappMessage .= "_Thank you for choosing us | شكرًا لاختياركم لنا_";
-
-  // Send the message
-  $whatsappSent = sendWhatsAppMessage($phone, $whatsappMessage);
-  if ($whatsappSent) {
-   $message .= "<br>📱 WhatsApp confirmation sent to customer!";
-  } else {
-   $message .= "<br>⚠️ WhatsApp could not be sent (check credentials)";
-  }
-  // ========== END WHATSAPP CODE ==========
-  $message = "Reservation created successfully!<br>";
-  $message .= "Reservation ID: <strong>" . $reservation_id . "</strong><br>";
-  $message .= "Tickets generated: " . $adultCount . " Adult, " . $teenCount . " Teen, " . $kidCount . " Kid";
-  $messageType = "success";
-
-  // Clear form
-  $_POST = array();
- } catch (Exception $e) {
-  $conn->rollback();
-  $message = "Error creating reservation: " . $e->getMessage();
-  $messageType = "error";
- }
+            // Clear form
+            $_POST = array();
+            
+        } catch (Exception $e) {
+            $conn->rollback();
+            $message = "❌ Error creating reservation: " . $e->getMessage();
+            $messageType = "error";
+        }
+    }
 }
 
-// Get available tables from tables table
-// Get available tables from tables table (only unused ones)
+// Get available tables - PHP-based filtering (avoids collation issues)
 $tables = [];
-$result = $conn->query("SELECT table_number, section FROM tables WHERE is_active = 1 AND is_used = 0 AND status = 'available' ORDER BY table_number");
-while ($row = $result->fetch_assoc()) {
- $tables[] = $row['table_number'];
+
+// Get all active tables
+$allTablesResult = $conn->query("SELECT table_number FROM tables WHERE is_active = 1 AND status = 'available'");
+
+// Get booked tables for today
+$bookedResult = $conn->query("
+    SELECT DISTINCT table_id 
+    FROM reservations 
+    WHERE status NOT IN ('cancelled', 'expired', 'completed') 
+    AND DATE(created_at) = CURDATE()
+");
+
+// Build array of booked tables
+$bookedTables = [];
+if ($bookedResult && $bookedResult->num_rows > 0) {
+    while ($row = $bookedResult->fetch_assoc()) {
+        $bookedTables[] = $row['table_id'];
+    }
+}
+
+// Filter and get available tables
+if ($allTablesResult && $allTablesResult->num_rows > 0) {
+    while ($row = $allTablesResult->fetch_assoc()) {
+        if (!in_array($row['table_number'], $bookedTables)) {
+            $tables[] = $row['table_number'];
+        }
+    }
 }
 
 // Optional: Add a message if no tables available
-if (empty($tables)) {
- $message = "⚠️ No tables available at the moment. Please check back later or contact administrator.";
- $messageType = "warning";
+if (empty($tables) && $_SERVER['REQUEST_METHOD'] !== 'POST') {
+    $message = "⚠️ No tables available at the moment. Please check back later or contact administrator.";
+    $messageType = "warning";
 }
 
 $conn->close();
@@ -202,393 +272,451 @@ $conn->close();
 // Helper function to generate reservation ID with specific sequential number
 function generateReservationIdWithSeq($adults, $teens, $kids, $sequential)
 {
- $prefix = 'RES';
- $sequentialFormatted = str_pad($sequential, 4, '0', STR_PAD_LEFT);
- $totalGuests = $adults + $teens + $kids;
- $breakdown = $totalGuests . 'G' . $adults . 'A' . $teens . 'T' . $kids . 'K';
- $randomSuffix = generateRandomString(5);
- return $prefix . $sequentialFormatted . '-' . $breakdown . '-' . $randomSuffix;
+    $prefix = 'RES';
+    $sequentialFormatted = str_pad($sequential, 4, '0', STR_PAD_LEFT);
+    $totalGuests = $adults + $teens + $kids;
+    $breakdown = $totalGuests . 'G' . $adults . 'A' . $teens . 'T' . $kids . 'K';
+    $randomSuffix = generateRandomString(5);
+    return $prefix . $sequentialFormatted . '-' . $breakdown . '-' . $randomSuffix;
 }
 ?>
 <!DOCTYPE html>
 <html lang="<?php echo $lang; ?>" dir="<?php echo getDirection(); ?>">
 
 <head>
- <meta charset="UTF-8">
- <meta name="viewport" content="width=device-width, initial-scale=1.0">
- <title><?php echo t('new_reservation'); ?> - <?php echo t('ticketing_system'); ?></title>
- <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
- <style>
-  * {
-   margin: 0;
-   padding: 0;
-   box-sizing: border-box;
-  }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?php echo t('new_reservation'); ?> - <?php echo t('ticketing_system'); ?></title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-  body {
-   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-   background: #f0f2f5;
-   padding: 20px;
-  }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f0f2f5;
+            padding: 20px;
+        }
 
-  body.dark-mode {
-   background: #0f172a;
-   color: #e2e8f0;
-  }
+        body.dark-mode {
+            background: #0f172a;
+            color: #e2e8f0;
+        }
 
-  .container {
-   max-width: 800px;
-   margin: 0 auto;
-  }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
 
-  .navbar {
-   background: white;
-   border-radius: 24px;
-   padding: 16px 24px;
-   margin-bottom: 24px;
-   display: flex;
-   justify-content: space-between;
-   align-items: center;
-   flex-wrap: wrap;
-   gap: 15px;
-   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  }
+        .navbar {
+            background: white;
+            border-radius: 24px;
+            padding: 16px 24px;
+            margin-bottom: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
 
-  body.dark-mode .navbar {
-   background: #1e293b;
-  }
+        body.dark-mode .navbar {
+            background: #1e293b;
+        }
 
-  .card {
-   background: white;
-   border-radius: 24px;
-   padding: 24px;
-   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  }
+        .card {
+            background: white;
+            border-radius: 24px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
 
-  body.dark-mode .card {
-   background: #1e293b;
-  }
+        body.dark-mode .card {
+            background: #1e293b;
+        }
 
-  .card-header {
-   margin-bottom: 20px;
-   padding-bottom: 15px;
-   border-bottom: 2px solid #e2e8f0;
-  }
+        .card-header {
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e2e8f0;
+        }
 
-  body.dark-mode .card-header {
-   border-bottom-color: #334155;
-  }
+        body.dark-mode .card-header {
+            border-bottom-color: #334155;
+        }
 
-  .event-badge {
-   background: linear-gradient(135deg, #4f46e5, #4338ca);
-   color: white;
-   padding: 8px 16px;
-   border-radius: 40px;
-   font-size: 14px;
-   display: inline-flex;
-   align-items: center;
-   gap: 8px;
-  }
+        .event-badge {
+            background: linear-gradient(135deg, #4f46e5, #4338ca);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 40px;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
 
-  .form-group {
-   margin-bottom: 20px;
-  }
+        .form-group {
+            margin-bottom: 20px;
+        }
 
-  .form-group label {
-   display: block;
-   margin-bottom: 8px;
-   font-weight: 600;
-   font-size: 14px;
-   color: #334155;
-  }
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            font-size: 14px;
+            color: #334155;
+        }
 
-  body.dark-mode .form-group label {
-   color: #cbd5e1;
-  }
+        body.dark-mode .form-group label {
+            color: #cbd5e1;
+        }
 
-  .form-group input,
-  .form-group select,
-  .form-group textarea {
-   width: 100%;
-   padding: 12px;
-   border: 1px solid #cbd5e1;
-   border-radius: 12px;
-   font-size: 14px;
-   transition: all 0.2s;
-  }
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
 
-  body.dark-mode .form-group input,
-  body.dark-mode .form-group select,
-  body.dark-mode .form-group textarea {
-   background: #0f172a;
-   border-color: #334155;
-   color: #e2e8f0;
-  }
+        body.dark-mode .form-group input,
+        body.dark-mode .form-group select,
+        body.dark-mode .form-group textarea {
+            background: #0f172a;
+            border-color: #334155;
+            color: #e2e8f0;
+        }
 
-  .form-group input:focus,
-  .form-group select:focus,
-  .form-group textarea:focus {
-   outline: none;
-   border-color: #4f46e5;
-   box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
-  }
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        }
 
-  .form-row {
-   display: grid;
-   grid-template-columns: repeat(3, 1fr);
-   gap: 15px;
-  }
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+        }
 
-  .price-display {
-   background: #f1f5f9;
-   padding: 15px;
-   border-radius: 12px;
-   margin-top: 10px;
-  }
+        .price-display {
+            background: #f1f5f9;
+            padding: 15px;
+            border-radius: 12px;
+            margin-top: 10px;
+        }
 
-  body.dark-mode .price-display {
-   background: #0f172a;
-  }
+        body.dark-mode .price-display {
+            background: #0f172a;
+        }
 
-  .total-amount {
-   font-size: 24px;
-   font-weight: bold;
-   color: #4f46e5;
-  }
+        .total-amount {
+            font-size: 24px;
+            font-weight: bold;
+            color: #4f46e5;
+        }
 
-  .btn {
-   padding: 10px 20px;
-   border-radius: 10px;
-   border: none;
-   cursor: pointer;
-   text-decoration: none;
-   display: inline-flex;
-   align-items: center;
-   gap: 8px;
-   font-weight: 500;
-   font-size: 14px;
-   transition: all 0.2s;
-  }
+        .btn {
+            padding: 10px 20px;
+            border-radius: 10px;
+            border: none;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 500;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
 
-  .btn-primary {
-   background: #4f46e5;
-   color: white;
-  }
+        .btn-primary {
+            background: #4f46e5;
+            color: white;
+        }
 
-  .btn-primary:hover {
-   background: #4338ca;
-   transform: translateY(-1px);
-  }
+        .btn-primary:hover {
+            background: #4338ca;
+            transform: translateY(-1px);
+        }
 
-  .btn-secondary {
-   background: #64748b;
-   color: white;
-  }
+        .btn-secondary {
+            background: #64748b;
+            color: white;
+        }
 
-  .btn-secondary:hover {
-   background: #475569;
-  }
+        .btn-secondary:hover {
+            background: #475569;
+        }
 
-  .form-actions {
-   display: flex;
-   justify-content: flex-end;
-   gap: 10px;
-   margin-top: 20px;
-   padding-top: 20px;
-   border-top: 1px solid #e2e8f0;
-  }
+        .form-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e2e8f0;
+        }
 
-  body.dark-mode .form-actions {
-   border-top-color: #334155;
-  }
+        body.dark-mode .form-actions {
+            border-top-color: #334155;
+        }
 
-  .alert {
-   padding: 12px 20px;
-   border-radius: 12px;
-   margin-bottom: 20px;
-   display: flex;
-   align-items: center;
-   gap: 10px;
-  }
+        .alert {
+            padding: 15px 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            animation: slideIn 0.3s ease-out;
+        }
 
-  .alert-success {
-   background: #d1fae5;
-   color: #065f46;
-  }
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
 
-  .alert-error {
-   background: #fee2e2;
-   color: #991b1b;
-  }
+        .alert-success {
+            background: #d1fae5;
+            color: #065f46;
+            border-left: 4px solid #10b981;
+        }
 
-  @media (max-width: 768px) {
-   .form-row {
-     grid-template-columns: 1fr;
-   }
+        .alert-error {
+            background: #fee2e2;
+            color: #991b1b;
+            border-left: 4px solid #ef4444;
+        }
 
-   .navbar {
-     flex-direction: column;
-     text-align: center;
-   }
-  }
- </style>
+        .alert-warning {
+            background: #fef3c7;
+            color: #92400e;
+            border-left: 4px solid #f59e0b;
+        }
+
+        .alert i {
+            font-size: 20px;
+        }
+
+        .alert .close-btn {
+            margin-left: auto;
+            cursor: pointer;
+            background: none;
+            border: none;
+            font-size: 18px;
+            opacity: 0.7;
+        }
+
+        .alert .close-btn:hover {
+            opacity: 1;
+        }
+
+        .table-status {
+            font-size: 12px;
+            margin-top: 5px;
+        }
+
+        .table-status.available {
+            color: #10b981;
+        }
+
+        .table-status.reserved {
+            color: #f59e0b;
+        }
+
+        .table-status.occupied {
+            color: #ef4444;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+            .navbar {
+                flex-direction: column;
+                text-align: center;
+            }
+        }
+    </style>
 </head>
 
 <body>
- <div class="container">
-  <div class="navbar">
-   <h1><i class="bi bi-plus-circle"></i> <?php echo t('new_reservation'); ?></h1>
-   <div>
-     <div class="event-badge">
-        <i class="bi bi-calendar-event"></i>
-        <?php echo htmlspecialchars($selected_event_name); ?>
-     </div>
-     <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> <?php echo t('back_to_dashboard'); ?></a>
-   </div>
-  </div>
+    <div class="container">
+        <div class="navbar">
+            <h1><i class="bi bi-plus-circle"></i> <?php echo t('new_reservation'); ?></h1>
+            <div>
+                <div class="event-badge">
+                    <i class="bi bi-calendar-event"></i>
+                    <?php echo htmlspecialchars($selected_event_name); ?>
+                </div>
+                <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> <?php echo t('back_to_dashboard'); ?></a>
+            </div>
+        </div>
 
-  <?php if ($message): ?>
-   <div class="alert alert-<?php echo $messageType; ?>">
-     <i class="bi bi-<?php echo $messageType == 'success' ? 'check-circle' : 'exclamation-circle'; ?>"></i>
-     <?php echo $message; ?>
-   </div>
-  <?php endif; ?>
+        <?php if ($message): ?>
+            <div class="alert alert-<?php echo $messageType; ?>">
+                <i class="bi bi-<?php echo $messageType == 'success' ? 'check-circle-fill' : ($messageType == 'error' ? 'exclamation-triangle-fill' : 'info-circle-fill'); ?>"></i>
+                <?php echo $message; ?>
+                <button class="close-btn" onclick="this.parentElement.style.display='none'">×</button>
+            </div>
+        <?php endif; ?>
 
-  <div class="card">
-   <div class="card-header">
-     <h2><i class="bi bi-person-plus"></i> Customer Information</h2>
-   </div>
+        <div class="card">
+            <div class="card-header">
+                <h2><i class="bi bi-person-plus"></i> Customer Information</h2>
+            </div>
 
-   <form method="POST" onsubmit="return validateForm()">
-     <div class="form-group">
-        <label><i class="bi bi-person"></i> Full Name *</label>
-        <input type="text" name="name" required value="<?php echo htmlspecialchars($_POST['name'] ?? ''); ?>" placeholder="Enter customer name">
-     </div>
+            <form method="POST" onsubmit="return validateForm()">
+                <div class="form-group">
+                    <label><i class="bi bi-person"></i> Full Name *</label>
+                    <input type="text" name="name" required value="<?php echo htmlspecialchars($_POST['name'] ?? ''); ?>" placeholder="Enter customer name">
+                </div>
 
-     <div class="form-group">
-        <label><i class="bi bi-telephone"></i> Phone Number *</label>
-        <input type="tel" name="phone" required value="<?php echo htmlspecialchars($_POST['phone'] ?? ''); ?>" placeholder="+962XXXXXXXXX">
-     </div>
+                <div class="form-group">
+                    <label><i class="bi bi-telephone"></i> Phone Number *</label>
+                    <input type="tel" name="phone" required value="<?php echo htmlspecialchars($_POST['phone'] ?? ''); ?>" placeholder="+962XXXXXXXXX">
+                </div>
 
-     <div class="form-group">
-    <label><i class="bi bi-grid-3x3-gap-fill"></i> Table Number *</label>
-    <div style="display: flex; gap: 10px;">
-        <select name="table_id" required style="flex: 1;">
-            <option value="">Select a table</option>
-            <?php foreach ($tables as $table): ?>
-                <option value="<?php echo htmlspecialchars($table); ?>" <?php echo (($_POST['table_id'] ?? '') == $table) ? 'selected' : ''; ?>>
-                    Table <?php echo htmlspecialchars($table); ?> (Available)
-                </option>
-            <?php endforeach; ?>
-        </select>
-        <a href="refresh_tables.php" class="btn btn-secondary" style="padding: 12px;" title="Refresh available tables">
-            <i class="bi bi-arrow-repeat"></i>
-        </a>
+                <div class="form-group">
+                    <label><i class="bi bi-grid-3x3-gap-fill"></i> Table Number *</label>
+                    <div style="display: flex; gap: 10px;">
+                        <select name="table_id" required style="flex: 1;">
+                            <option value="">Select a table</option>
+                            <?php foreach ($tables as $table): ?>
+                                <option value="<?php echo htmlspecialchars($table); ?>" <?php echo (($_POST['table_id'] ?? '') == $table) ? 'selected' : ''; ?>>
+                                    Table <?php echo htmlspecialchars($table); ?> ✓ Available
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <a href="create_reservation.php" class="btn btn-secondary" style="padding: 12px;" title="Refresh available tables">
+                            <i class="bi bi-arrow-repeat"></i>
+                        </a>
+                    </div>
+                    <?php if (empty($tables)): ?>
+                        <div class="table-status reserved" style="margin-top: 8px;">
+                            <i class="bi bi-exclamation-triangle"></i> No tables available. All tables are booked for today.
+                        </div>
+                    <?php else: ?>
+                        <div class="table-status available" style="margin-top: 8px;">
+                            <i class="bi bi-check-circle"></i> <?php echo count($tables); ?> table(s) available
+                        </div>
+                    <?php endif; ?>
+                </div>
+
+                <div class="card-header" style="margin-top: 20px;">
+                    <h2><i class="bi bi-people"></i> Guest Information</h2>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label><i class="bi bi-gender-male"></i> Adults (<?php echo $currencySymbol; ?> <?php echo number_format($adultPrice, 2); ?> each)</label>
+                        <input type="number" name="adults" id="adults" min="0" value="<?php echo $_POST['adults'] ?? 0; ?>" onchange="calculateTotal()">
+                    </div>
+                    <div class="form-group">
+                        <label><i class="bi bi-gender-female"></i> Teens (<?php echo $currencySymbol; ?> <?php echo number_format($teenPrice, 2); ?> each)</label>
+                        <input type="number" name="teens" id="teens" min="0" value="<?php echo $_POST['teens'] ?? 0; ?>" onchange="calculateTotal()">
+                    </div>
+                    <div class="form-group">
+                        <label><i class="bi bi-egg-fried"></i> Kids (<?php echo $currencySymbol; ?> <?php echo number_format($kidPrice, 2); ?> each)</label>
+                        <input type="number" name="kids" id="kids" min="0" value="<?php echo $_POST['kids'] ?? 0; ?>" onchange="calculateTotal()">
+                    </div>
+                </div>
+
+                <div class="price-display">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span><strong>Total Amount:</strong></span>
+                        <span class="total-amount" id="totalAmount">0.00 <?php echo $currencySymbol; ?></span>
+                    </div>
+                    <div style="font-size: 12px; color: #64748b; margin-top: 5px;">
+                        * This amount will be due upon arrival
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label><i class="bi bi-chat"></i> Special Notes</label>
+                    <textarea name="notes" rows="3" placeholder="Any special requests or notes..."><?php echo htmlspecialchars($_POST['notes'] ?? ''); ?></textarea>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" onclick="window.location.href='dashboard.php'" class="btn btn-secondary">
+                        <i class="bi bi-x-circle"></i> Cancel
+                    </button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-circle"></i> Create Reservation
+                    </button>
+                </div>
+            </form>
+        </div>
     </div>
-    <?php if (empty($tables)): ?>
-        <small style="color: #ef4444; display: block; margin-top: 5px;">
-            ⚠️ No tables available. <a href="refresh_tables.php">Click here to refresh</a>
-        </small>
-    <?php endif; ?>
-</div>
 
-     <div class="card-header" style="margin-top: 20px;">
-        <h2><i class="bi bi-people"></i> Guest Information</h2>
-     </div>
+    <script>
+        const adultPrice = <?php echo $adultPrice; ?>;
+        const teenPrice = <?php echo $teenPrice; ?>;
+        const kidPrice = <?php echo $kidPrice; ?>;
+        const currencySymbol = '<?php echo $currencySymbol; ?>';
 
-     <div class="form-row">
-        <div class="form-group">
-             <label><i class="bi bi-gender-male"></i> Adults (<?php echo $currencySymbol; ?> <?php echo number_format($adultPrice, 2); ?> each)</label>
-             <input type="number" name="adults" id="adults" min="0" value="<?php echo $_POST['adults'] ?? 0; ?>" onchange="calculateTotal()">
-        </div>
-        <div class="form-group">
-             <label><i class="bi bi-gender-female"></i> Teens (<?php echo $currencySymbol; ?> <?php echo number_format($teenPrice, 2); ?> each)</label>
-             <input type="number" name="teens" id="teens" min="0" value="<?php echo $_POST['teens'] ?? 0; ?>" onchange="calculateTotal()">
-        </div>
-        <div class="form-group">
-             <label><i class="bi bi-egg-fried"></i> Kids (<?php echo $currencySymbol; ?> <?php echo number_format($kidPrice, 2); ?> each)</label>
-             <input type="number" name="kids" id="kids" min="0" value="<?php echo $_POST['kids'] ?? 0; ?>" onchange="calculateTotal()">
-        </div>
-     </div>
+        function calculateTotal() {
+            const adults = parseInt(document.getElementById('adults').value) || 0;
+            const teens = parseInt(document.getElementById('teens').value) || 0;
+            const kids = parseInt(document.getElementById('kids').value) || 0;
 
-     <div class="price-display">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-             <span><strong>Total Amount:</strong></span>
-             <span class="total-amount" id="totalAmount">0.00 <?php echo $currencySymbol; ?></span>
-        </div>
-        <div style="font-size: 12px; color: #64748b; margin-top: 5px;">
-             * This amount will be due upon arrival
-        </div>
-     </div>
+            const total = (adults * adultPrice) + (teens * teenPrice) + (kids * kidPrice);
+            document.getElementById('totalAmount').innerHTML = total.toFixed(2) + ' ' + currencySymbol;
+        }
 
-     <div class="form-group">
-        <label><i class="bi bi-chat"></i> Special Notes</label>
-        <textarea name="notes" rows="3" placeholder="Any special requests or notes..."><?php echo htmlspecialchars($_POST['notes'] ?? ''); ?></textarea>
-     </div>
+        function validateForm() {
+            const name = document.querySelector('input[name="name"]').value.trim();
+            const phone = document.querySelector('input[name="phone"]').value.trim();
+            const table = document.querySelector('select[name="table_id"]').value;
+            const adults = parseInt(document.getElementById('adults').value) || 0;
+            const teens = parseInt(document.getElementById('teens').value) || 0;
+            const kids = parseInt(document.getElementById('kids').value) || 0;
 
-     <div class="form-actions">
-        <button type="button" onclick="window.location.href='dashboard.php'" class="btn btn-secondary">
-             <i class="bi bi-x-circle"></i> Cancel
-        </button>
-        <button type="submit" class="btn btn-primary">
-             <i class="bi bi-check-circle"></i> Create Reservation
-        </button>
-     </div>
-   </form>
-  </div>
- </div>
+            if (!name) {
+                alert('Please enter customer name');
+                return false;
+            }
 
- <script>
-  const adultPrice = <?php echo $adultPrice; ?>;
-  const teenPrice = <?php echo $teenPrice; ?>;
-  const kidPrice = <?php echo $kidPrice; ?>;
-  const currencySymbol = '<?php echo $currencySymbol; ?>';
+            if (!phone) {
+                alert('Please enter phone number');
+                return false;
+            }
 
-  function calculateTotal() {
-   const adults = parseInt(document.getElementById('adults').value) || 0;
-   const teens = parseInt(document.getElementById('teens').value) || 0;
-   const kids = parseInt(document.getElementById('kids').value) || 0;
+            if (!table) {
+                alert('Please select a table');
+                return false;
+            }
 
-   const total = (adults * adultPrice) + (teens * teenPrice) + (kids * kidPrice);
-   document.getElementById('totalAmount').innerHTML = total.toFixed(2) + ' ' + currencySymbol;
-  }
+            if (adults === 0 && teens === 0 && kids === 0) {
+                alert('Please add at least one guest');
+                return false;
+            }
 
-  function validateForm() {
-   const name = document.querySelector('input[name="name"]').value.trim();
-   const phone = document.querySelector('input[name="phone"]').value.trim();
-   const table = document.querySelector('select[name="table_id"]').value;
-   const adults = parseInt(document.getElementById('adults').value) || 0;
-   const teens = parseInt(document.getElementById('teens').value) || 0;
-   const kids = parseInt(document.getElementById('kids').value) || 0;
+            return true;
+        }
 
-   if (!name) {
-     alert('Please enter customer name');
-     return false;
-   }
-
-   if (!phone) {
-     alert('Please enter phone number');
-     return false;
-   }
-
-   if (!table) {
-     alert('Please select a table');
-     return false;
-   }
-
-   if (adults === 0 && teens === 0 && kids === 0) {
-     alert('Please add at least one guest');
-     return false;
-   }
-
-   return true;
-  }
-
-  // Calculate total on page load
-  document.addEventListener('DOMContentLoaded', function() {
-   calculateTotal();
-  });
- </script>
+        // Calculate total on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            calculateTotal();
+        });
+    </script>
 </body>
 
 </html>

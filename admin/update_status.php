@@ -19,8 +19,13 @@ if (empty($reservation_id) || empty($new_status)) {
     exit();
 }
 
-// Get current reservation
-$stmt = $conn->prepare("SELECT * FROM reservations WHERE reservation_id = ?");
+// Get current reservation with table info
+$stmt = $conn->prepare("
+    SELECT r.*, t.id as table_db_id 
+    FROM reservations r
+    LEFT JOIN tables t ON r.table_id = t.table_number
+    WHERE r.reservation_id = ?
+");
 $stmt->bind_param("s", $reservation_id);
 $stmt->execute();
 $reservation = $stmt->get_result()->fetch_assoc();
@@ -33,19 +38,89 @@ if (!$reservation) {
 }
 
 $old_status = $reservation['status'];
+$table_db_id = $reservation['table_db_id'];
 
-// Update status
-$stmt = $conn->prepare("UPDATE reservations SET status = ? WHERE reservation_id = ?");
-$stmt->bind_param("ss", $new_status, $reservation_id);
+// Start transaction
+$conn->begin_transaction();
 
-if ($stmt->execute()) {
-    // Update table availability when cancelling or completing
-    if ($new_status == 'cancelled' || $new_status == 'paid') {
-        updateTableAvailability();
-    }
+try {
+    // Update reservation status
+    $stmt = $conn->prepare("UPDATE reservations SET status = ? WHERE reservation_id = ?");
+    $stmt->bind_param("ss", $new_status, $reservation_id);
     
-    // If marking as paid, generate ticket codes and send WhatsApp
-    if ($new_status == 'paid' && $old_status != 'paid') {
+    if (!$stmt->execute()) {
+        throw new Exception("Error updating status: " . $conn->error);
+    }
+    $stmt->close();
+    
+    // Handle table availability based on status change
+    if ($new_status == 'cancelled' || $new_status == 'expired') {
+        // Release the table back to available
+        if ($table_db_id) {
+            $updateTable = $conn->prepare("
+                UPDATE tables 
+                SET status = 'available', 
+                    current_reservation_id = NULL,
+                    reserved_until = NULL
+                WHERE id = ?
+            ");
+            $updateTable->bind_param("i", $table_db_id);
+            $updateTable->execute();
+            $updateTable->close();
+        }
+        
+        $_SESSION['success'] = "Reservation " . ucfirst($new_status) . " and table has been released.";
+        
+    } elseif ($new_status == 'checked_in') {
+        // Mark table as occupied (customer has arrived)
+        if ($table_db_id) {
+            $updateTable = $conn->prepare("
+                UPDATE tables 
+                SET status = 'occupied',
+                    current_reservation_id = ?,
+                    reserved_until = NULL
+                WHERE id = ?
+            ");
+            $updateTable->bind_param("si", $reservation_id, $table_db_id);
+            $updateTable->execute();
+            $updateTable->close();
+        }
+        
+        $_SESSION['success'] = "Customer checked in. Table marked as occupied.";
+        
+    } elseif ($new_status == 'completed') {
+        // Event completed, release table
+        if ($table_db_id) {
+            $updateTable = $conn->prepare("
+                UPDATE tables 
+                SET status = 'available',
+                    current_reservation_id = NULL,
+                    reserved_until = NULL
+                WHERE id = ? AND current_reservation_id = ?
+            ");
+            $updateTable->bind_param("is", $table_db_id, $reservation_id);
+            $updateTable->execute();
+            $updateTable->close();
+        }
+        
+        $_SESSION['success'] = "Event completed. Table released.";
+        
+    } elseif ($new_status == 'paid') {
+        // When paid, keep table as reserved with 2 hour hold
+        if ($old_status != 'paid' && $table_db_id) {
+            $reserved_until = date('Y-m-d H:i:s', strtotime('+2 hours'));
+            $updateTable = $conn->prepare("
+                UPDATE tables 
+                SET status = 'reserved',
+                    current_reservation_id = ?,
+                    reserved_until = ?
+                WHERE id = ?
+            ");
+            $updateTable->bind_param("ssi", $reservation_id, $reserved_until, $table_db_id);
+            $updateTable->execute();
+            $updateTable->close();
+        }
+        
         // Generate ticket codes if not exist
         $checkTickets = $conn->query("SELECT COUNT(*) as count FROM ticket_codes WHERE reservation_id = '$reservation_id'");
         $ticketCount = $checkTickets->fetch_assoc()['count'];
@@ -67,18 +142,23 @@ if ($stmt->execute()) {
             }
         }
         
-        // Send tickets as QR code images (like in process_split_payment)
+        // Send tickets as QR code images
         sendTicketsAsQRCodeImages($reservation_id, $reservation['phone'], $reservation['name']);
         
-        $_SESSION['success'] = "Reservation marked as paid! Tickets sent via WhatsApp as QR code images.";
+        $_SESSION['success'] = "Reservation marked as paid! Tickets sent via WhatsApp. Table reserved for 2 hours.";
+        
     } else {
         $_SESSION['success'] = "Status updated to " . ucfirst($new_status) . " successfully!";
     }
-} else {
-    $_SESSION['error'] = "Error updating status: " . $conn->error;
+    
+    // Commit transaction
+    $conn->commit();
+    
+} catch (Exception $e) {
+    $conn->rollback();
+    $_SESSION['error'] = $e->getMessage();
 }
 
-$stmt->close();
 $conn->close();
 
 if ($redirect == 'edit') {
@@ -99,7 +179,7 @@ function generateTicketId($reservationId, $type, $number) {
     return $reservationId . '-' . $typeCode . str_pad($number, 4, '0', STR_PAD_LEFT);
 }
 
-// Function to send tickets as QR code images using URL method (works reliably)
+// Function to send tickets as QR code images
 function sendTicketsAsQRCodeImages($reservation_id, $customerPhone, $customerName) {
     $conn = getConnection();
     
@@ -137,14 +217,13 @@ function sendTicketsAsQRCodeImages($reservation_id, $customerPhone, $customerNam
     
     sendWhatsAppMessage($cleanPhone, $headerMessage);
     
-    // Send each ticket as QR code image using URL method (proven to work)
+    // Send each ticket as QR code image
     $ticketCount = 0;
     foreach ($tickets as $ticket) {
         $ticketCount++;
         $typeLabel = ucfirst($ticket['guest_type']);
         $ticketNumber = str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT);
         
-        // Generate QR code URL (no local file needed)
         $qrUrl = "https://quickchart.io/qr?text=" . urlencode($ticket['ticket_code']) . "&size=250&margin=2";
         
         $caption = "🎫 *{$typeLabel} Ticket #{$ticketNumber}*\n";
@@ -152,15 +231,7 @@ function sendTicketsAsQRCodeImages($reservation_id, $customerPhone, $customerNam
         $caption .= "Valid for one-time entry\n";
         $caption .= "Show this QR code at the entrance";
         
-        // Send using URL method (works!)
-        $result = sendWhatsAppImage($cleanPhone, $qrUrl, $caption);
-        
-        if ($result) {
-            error_log("Ticket sent: {$ticket['ticket_code']}");
-        } else {
-            error_log("Failed to send ticket: {$ticket['ticket_code']}");
-        }
-        
+        sendWhatsAppImage($cleanPhone, $qrUrl, $caption);
         usleep(500000); // 0.5 sec delay
     }
     
