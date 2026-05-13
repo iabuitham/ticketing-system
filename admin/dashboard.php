@@ -1272,7 +1272,7 @@ $conn->close();
              <tr>
                      <td colspan="9" style="text-align: center; padding: 60px;">
                                   <i class="bi bi-inbox" style="font-size: 48px; opacity: 0.5;"></i>
-                                  <p style="margin-top: 10px;"><?php echo t('no_reservations'); ?></p>
+                                  <p style="margin-top: 10px;"><?php echo t('No Reservations'); ?></p>
                      </td>
              </tr>
         <?php endif; ?>
