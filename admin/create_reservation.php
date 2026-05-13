@@ -1,8 +1,12 @@
 <?php
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+ini_set('max_execution_time', 300);
 session_start();
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
 require_once '../includes/language.php';
+require_once '../includes/early_bird.php';
 
 if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
     header('Location: login.php');
@@ -16,12 +20,15 @@ $messageType = '';
 // Get selected event info
 $selected_event_id = $_SESSION['selected_event_id'] ?? 0;
 $selected_event_name = $_SESSION['selected_event_name'] ?? 'No Event Selected';
+$selected_event_date = $_SESSION['selected_event_date'] ?? '';
 
 // Get event-specific ticket prices
 $event_ticket_prices = $_SESSION['event_ticket_prices'] ?? null;
+$earlyBirdActive = false;
+$earlyBirdDeadline = null;
 
 if (!$event_ticket_prices && $selected_event_id > 0) {
-    $stmt = $conn->prepare("SELECT ticket_price_adult, ticket_price_teen, ticket_price_kid, event_name FROM event_settings WHERE id = ?");
+    $stmt = $conn->prepare("SELECT ticket_price_adult, ticket_price_teen, ticket_price_kid, event_name, event_date, early_bird_enabled, early_bird_deadline, early_bird_price_adult, early_bird_price_teen, early_bird_price_kid FROM event_settings WHERE id = ?");
     $stmt->bind_param("i", $selected_event_id);
     $stmt->execute();
     $event_data = $stmt->get_result()->fetch_assoc();
@@ -35,6 +42,25 @@ if (!$event_ticket_prices && $selected_event_id > 0) {
         ];
         $_SESSION['event_ticket_prices'] = $event_ticket_prices;
         $_SESSION['selected_event_name'] = $event_data['event_name'];
+        $_SESSION['selected_event_date'] = $event_data['event_date'];
+        
+        // Store early bird info in session
+        $_SESSION['early_bird_enabled'] = $event_data['early_bird_enabled'];
+        $_SESSION['early_bird_deadline'] = $event_data['early_bird_deadline'];
+        $_SESSION['early_bird_prices'] = [
+            'adult' => $event_data['early_bird_price_adult'],
+            'teen' => $event_data['early_bird_price_teen'],
+            'kid' => $event_data['early_bird_price_kid']
+        ];
+        
+        // Set early bird variables for this page
+        if ($event_data['early_bird_enabled'] && $event_data['early_bird_deadline']) {
+            $today = date('Y-m-d');
+            if ($today <= $event_data['early_bird_deadline']) {
+                $earlyBirdActive = true;
+                $earlyBirdDeadline = $event_data['early_bird_deadline'];
+            }
+        }
     }
 }
 
@@ -42,6 +68,13 @@ if (!$event_ticket_prices && $selected_event_id > 0) {
 $adultPrice = $event_ticket_prices['adult'] ?? getSetting('ticket_price_adult', 10);
 $teenPrice = $event_ticket_prices['teen'] ?? getSetting('ticket_price_teen', 10);
 $kidPrice = $event_ticket_prices['kid'] ?? getSetting('ticket_price_kid', 0);
+
+// Apply early bird prices if active
+if ($earlyBirdActive && isset($_SESSION['early_bird_prices'])) {
+    if ($_SESSION['early_bird_prices']['adult'] > 0) $adultPrice = $_SESSION['early_bird_prices']['adult'];
+    if ($_SESSION['early_bird_prices']['teen'] > 0) $teenPrice = $_SESSION['early_bird_prices']['teen'];
+    if ($_SESSION['early_bird_prices']['kid'] > 0) $kidPrice = $_SESSION['early_bird_prices']['kid'];
+}
 
 $currencySymbol = getCurrencySymbol();
 
@@ -58,7 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Calculate total amount
     $total_amount = ($adults * $adultPrice) + ($teens * $teenPrice) + ($kids * $kidPrice);
 
-    // ========== DOUBLE BOOKING CHECK WITH NICE UI ==========
+    // Double booking check
     $doubleBookingError = '';
     
     // Check for existing reservation with same phone number
@@ -267,6 +300,7 @@ if (empty($tables) && $_SERVER['REQUEST_METHOD'] !== 'POST') {
     $messageType = "warning";
 }
 
+// Close connection ONLY at the very end
 $conn->close();
 
 // Helper function to generate reservation ID with specific sequential number
@@ -281,7 +315,7 @@ function generateReservationIdWithSeq($adults, $teens, $kids, $sequential)
 }
 ?>
 <!DOCTYPE html>
-<html lang="<?php echo $lang; ?>" dir="<?php echo getDirection(); ?>">
+<html lang="<?php echo getCurrentLanguage(); ?>" dir="<?php echo getDirection(); ?>">
 
 <head>
     <meta charset="UTF-8">
@@ -619,6 +653,32 @@ function generateReservationIdWithSeq($adults, $teens, $kids, $sequential)
                         </div>
                     <?php endif; ?>
                 </div>
+
+                <!-- FIXED EARLY BIRD DISPLAY - NO DATABASE QUERY HERE -->
+                <?php if ($earlyBirdActive && $earlyBirdDeadline): ?>
+                <div class="alert alert-success" style="background: #d1fae5; color: #065f46; margin-bottom: 15px;">
+                    <i class="bi bi-gift-fill"></i> 
+                    <strong>Early Bird Discount Active!</strong> 
+                    You're getting discounted prices for this event.
+                    <?php 
+                        // Use PHP calculation instead of database query
+                        $now = new DateTime();
+                        $deadline = new DateTime($earlyBirdDeadline);
+                        if ($now < $deadline) {
+                            $diff = $now->diff($deadline);
+                            if ($diff->days > 0) {
+                                echo '<br><small>🎫 Early Bird ends in ' . $diff->days . ' days!</small>';
+                            } elseif ($diff->h > 0) {
+                                echo '<br><small>🎫 Early Bird ends in ' . $diff->h . ' hours!</small>';
+                            } else {
+                                echo '<br><small>⚠️ Early Bird ends today!</small>';
+                            }
+                        } else {
+                            echo '<br><small>⚠️ Early Bird offer has expired</small>';
+                        }
+                    ?>
+                </div>
+                <?php endif; ?>
 
                 <div class="card-header" style="margin-top: 20px;">
                     <h2><i class="bi bi-people"></i> Guest Information</h2>

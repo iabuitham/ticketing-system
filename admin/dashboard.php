@@ -184,7 +184,7 @@ $conn_count->close();
 $conn->close();
 ?>
 <!DOCTYPE html>
-<html lang="<?php echo $lang; ?>" dir="<?php echo getDirection(); ?>">
+<html lang="<?php echo getCurrentLanguage(); ?>" dir="<?php echo getDirection(); ?>">
 
 <head>
  <meta charset="UTF-8">
@@ -1033,32 +1033,32 @@ $conn->close();
   <div class="navbar">
    <h1><i class="bi bi-ticket-perforated"></i> <?php echo htmlspecialchars($siteName); ?></h1>
    <div class="nav-links">
-     <div class="event-info">
-        <i class="bi bi-calendar-event"></i>
-        <div>
-             <strong><?php echo htmlspecialchars($selected_event_name); ?></strong>
-             <br>
-             <small><?php echo $selected_event_date ? date('M d, Y', strtotime($selected_event_date)) : ''; ?></small>
-        </div>
-        <?php if ($activeEventCount > 1): ?>
-             <a href="logout.php?switch_event=1" class="btn btn-sm btn-secondary" style="padding: 4px 8px;" title="Switch to another event">
-                     <i class="bi bi-arrow-repeat"></i> Switch
-             </a>
-        <?php else: ?>
-             <button class="btn btn-sm btn-secondary" style="padding: 4px 8px; opacity: 0.5; cursor: not-allowed;" disabled title="Only one event available">
-                     <i class="bi bi-arrow-repeat"></i> Switch
-             </button>
-        <?php endif; ?>
-     </div>
+<div class="event-info">
+    <i class="bi bi-calendar-event"></i>
+    <div>
+        <strong><?php echo htmlspecialchars($selected_event_name); ?></strong>
+        <br>
+        <small><?php echo $selected_event_date ? date('M d, Y', strtotime($selected_event_date)) : ''; ?></small>
+    </div>
+    <?php if ($activeEventCount > 1): ?>
+        <a href="switch_event.php" class="btn btn-sm btn-secondary" style="padding: 4px 12px;">
+            <i class="bi bi-arrow-repeat"></i> Switch
+        </a>
+    <?php else: ?>
+        <button class="btn btn-sm btn-secondary" style="padding: 4px 12px; opacity: 0.5;" disabled title="Only one event available">
+            <i class="bi bi-arrow-repeat"></i> Switch
+        </button>
+    <?php endif; ?>
+</div>
      <div class="header-controls">
         <button id="darkModeToggle" class="dark-mode-toggle"><i class="bi bi-moon-fill"></i></button>
         <div class="language-switcher">
-             <button onclick="setLanguage('en')" class="<?php echo $lang == 'en' ? 'active' : ''; ?>">EN</button>
-             <button onclick="setLanguage('ar')" class="<?php echo $lang == 'ar' ? 'active' : ''; ?>">AR</button>
+             <button onclick="setLanguage('en')" class="<?php echo getCurrentLanguage() == 'en' ? 'active' : ''; ?>">EN</button>
+             <button onclick="setLanguage('ar')" class="<?php echo getCurrentLanguage() == 'ar' ? 'active' : ''; ?>">AR</button>
         </div>
         <button id="soundToggle" onclick="toggleSound()" class="btn btn-secondary" style="background: #10b981;"><i class="bi bi-volume-up-fill"></i> Sound On</button>
-        <span><i class="bi bi-person-circle"></i> <?php echo t('welcome'); ?>, <?php echo htmlspecialchars($_SESSION['admin_username']); ?></span>
-        <a href="logout.php" class="btn-logout"><i class="bi bi-box-arrow-right"></i> <?php echo t('logout'); ?></a>
+        <span><i class="bi bi-person-circle"></i> <?php echo t('Welcome'); ?>, <?php echo htmlspecialchars($_SESSION['admin_username']); ?></span>
+        <a href="logout.php" class="btn-logout"><i class="bi bi-box-arrow-right"></i> <?php echo t('Logout'); ?></a>
      </div>
    </div>
   </div>
@@ -1073,18 +1073,18 @@ $conn->close();
   <div class="stats-grid">
    <div class="stat-card primary">
      <div class="stat-number"><?php echo number_format(floatval($attendeeStats['total_attendees'])); ?></div>
-     <div class="stat-label"><i class="bi bi-people-fill"></i> <?php echo t('total_attendees'); ?></div>
+     <div class="stat-label"><i class="bi bi-people-fill"></i> <?php echo t('Total Attendees'); ?></div>
      <div class="stat-details">
         <div class="detail-item">
-             <span><i class="bi bi-gender-male"></i> <?php echo t('adults'); ?></span>
+             <span><i class="bi bi-gender-male"></i> <?php echo t('Adults'); ?></span>
              <span><?php echo number_format(floatval($attendeeStats['total_adults'])); ?></span>
         </div>
         <div class="detail-item">
-             <span><i class="bi bi-gender-female"></i> <?php echo t('teens'); ?></span>
+             <span><i class="bi bi-gender-female"></i> <?php echo t('Teens'); ?></span>
              <span><?php echo number_format(floatval($attendeeStats['total_teens'])); ?></span>
         </div>
         <div class="detail-item">
-             <span><i class="bi bi-egg-fried"></i> <?php echo t('kids'); ?></span>
+             <span><i class="bi bi-egg-fried"></i> <?php echo t('Kids'); ?></span>
              <span><?php echo number_format(floatval($attendeeStats['total_kids'])); ?></span>
         </div>
      </div>
@@ -1092,14 +1092,14 @@ $conn->close();
 
    <div class="stat-card warning">
      <div class="stat-number"><?php echo number_format(floatval($attendeeStats['pending_attendees'])); ?></div>
-     <div class="stat-label"><i class="bi bi-hourglass-split"></i> <?php echo t('pending_attendees'); ?></div>
+     <div class="stat-label"><i class="bi bi-hourglass-split"></i> <?php echo t('Pending Attendees'); ?></div>
      <div class="stat-details">
         <div class="detail-item">
-             <span><i class="bi bi-currency-dollar"></i> <?php echo t('amount_due'); ?></span>
+             <span><i class="bi bi-currency-dollar"></i> <?php echo t('Amount Due'); ?></span>
              <span><?php echo number_format(floatval($stats['total_additional_due']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
-             <span><i class="bi bi-clock-history"></i> <?php echo t('pending'); ?></span>
+             <span><i class="bi bi-clock-history"></i> <?php echo t('Pending'); ?></span>
              <span><?php echo intval($stats['pending']) + intval($stats['registered']); ?> <?php echo t('reservations'); ?></span>
         </div>
      </div>
@@ -1107,34 +1107,34 @@ $conn->close();
 
 <div class="stat-card success">
     <div class="stat-number"><?php echo number_format(floatval($netRevenue), 2); ?> <?php echo $currencySymbol; ?></div>
-    <div class="stat-label"><i class="bi bi-graph-up"></i> <?php echo t('net_revenue'); ?></div>
+    <div class="stat-label"><i class="bi bi-graph-up"></i> <?php echo t('Net Revenue'); ?></div>
     <div class="stat-details">
         <div class="detail-item">
-            <span><i class="bi bi-cash-stack"></i> <?php echo t('cash'); ?></span>
+            <span><i class="bi bi-cash-stack"></i> <?php echo t('Cash'); ?></span>
             <span><?php echo number_format(floatval($revenue['cash']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
-            <span><i class="bi bi-phone"></i> <?php echo t('cliq'); ?></span>
+            <span><i class="bi bi-phone"></i> <?php echo t('Cliq'); ?></span>
             <span><?php echo number_format(floatval($revenue['cliq']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
-            <span><i class="bi bi-credit-card"></i> <?php echo t('visa'); ?></span>
+            <span><i class="bi bi-credit-card"></i> <?php echo t('Visa'); ?></span>
             <span><?php echo number_format(floatval($revenue['visa']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
-            <span><i class="bi bi-receipt"></i> <?php echo t('total_payments'); ?></span>
+            <span><i class="bi bi-receipt"></i> <?php echo t('Total Payments'); ?></span>
             <span><?php echo number_format(floatval($revenue['total']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
-            <span><i class="bi bi-arrow-return-left"></i> <?php echo t('refunds'); ?></span>
+            <span><i class="bi bi-arrow-return-left"></i> <?php echo t('Refunds'); ?></span>
             <span class="detail-value" style="color: #f59e0b;">- <?php echo number_format(floatval($totalRefunded), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item" style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 5px; padding-top: 8px;">
-            <span><strong><i class="bi bi-calculator"></i> <?php echo t('net_revenue'); ?></strong></span>
+            <span><strong><i class="bi bi-calculator"></i> <?php echo t('Net Revenue'); ?></strong></span>
             <span><strong><?php echo number_format(floatval($netRevenue), 2); ?> <?php echo $currencySymbol; ?></strong></span>
         </div>
         <div class="detail-item">
-            <span><i class="bi bi-x-circle"></i> <?php echo t('cancelled'); ?></span>
+            <span><i class="bi bi-x-circle"></i> <?php echo t('Cancelled'); ?></span>
             <span class="detail-value" style="color: #fecaca;">- <?php echo number_format(floatval($cancelledRevenue), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
     </div>
@@ -1142,22 +1142,22 @@ $conn->close();
 
    <div class="stat-card info">
      <div class="stat-number"><?php echo intval($stats['total']); ?></div>
-     <div class="stat-label"><i class="bi bi-calendar-check"></i> <?php echo t('total_reservations'); ?></div>
+     <div class="stat-label"><i class="bi bi-calendar-check"></i> <?php echo t('Total Reservations'); ?></div>
      <div class="stat-details">
         <div class="detail-item">
-             <span><i class="bi bi-hourglass-top"></i> <?php echo t('pending'); ?></span>
+             <span><i class="bi bi-hourglass-top"></i> <?php echo t('Pending'); ?></span>
              <span><?php echo intval($stats['pending']); ?></span>
         </div>
         <div class="detail-item">
-             <span><i class="bi bi-check-circle"></i> <?php echo t('registered'); ?></span>
+             <span><i class="bi bi-check-circle"></i> <?php echo t('Registered'); ?></span>
              <span><?php echo intval($stats['registered']); ?></span>
         </div>
         <div class="detail-item">
-             <span><i class="bi bi-check-circle-fill"></i> <?php echo t('paid'); ?></span>
+             <span><i class="bi bi-check-circle-fill"></i> <?php echo t('Paid'); ?></span>
              <span><?php echo intval($stats['paid']); ?></span>
         </div>
         <div class="detail-item">
-             <span><i class="bi bi-slash-circle"></i> <?php echo t('cancelled'); ?></span>
+             <span><i class="bi bi-slash-circle"></i> <?php echo t('Cancelled'); ?></span>
              <span><?php echo intval($stats['cancelled']); ?></span>
         </div>
      </div>
@@ -1167,25 +1167,25 @@ $conn->close();
   <div class="filters-bar">
    <div class="search-box">
      <i class="bi bi-search search-icon"></i>
-     <input type="text" id="search" placeholder="<?php echo t('search'); ?>" value="<?php echo htmlspecialchars($search); ?>">
+     <input type="text" id="search" placeholder="<?php echo t('Search'); ?>" value="<?php echo htmlspecialchars($search); ?>">
      <select id="statusFilter">
-        <option value="all" <?php echo $status_filter == 'all' ? 'selected' : ''; ?>><?php echo t('all'); ?></option>
-        <option value="pending" <?php echo $status_filter == 'pending' ? 'selected' : ''; ?>><?php echo t('pending'); ?></option>
-        <option value="registered" <?php echo $status_filter == 'registered' ? 'selected' : ''; ?>><?php echo t('registered'); ?></option>
+        <option value="all" <?php echo $status_filter == 'all' ? 'selected' : ''; ?>><?php echo t('All'); ?></option>
+        <option value="pending" <?php echo $status_filter == 'pending' ? 'selected' : ''; ?>><?php echo t('Pending'); ?></option>
+        <option value="registered" <?php echo $status_filter == 'registered' ? 'selected' : ''; ?>><?php echo t('Registered'); ?></option>
         <option value="paid" <?php echo $status_filter == 'paid' ? 'selected' : ''; ?>><?php echo t('paid'); ?></option>
-        <option value="cancelled" <?php echo $status_filter == 'cancelled' ? 'selected' : ''; ?>><?php echo t('cancelled'); ?></option>
+        <option value="cancelled" <?php echo $status_filter == 'cancelled' ? 'selected' : ''; ?>><?php echo t('Cancelled'); ?></option>
      </select>
-     <button onclick="applyFilters()" class="btn btn-primary"><i class="bi bi-funnel"></i> <?php echo t('apply'); ?></button>
-     <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-repeat"></i> <?php echo t('reset'); ?></a>
+     <button onclick="applyFilters()" class="btn btn-primary"><i class="bi bi-funnel"></i> <?php echo t('Apply'); ?></button>
+     <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-repeat"></i> <?php echo t('Reset'); ?></a>
    </div>
    <div>
-     <a href="create_reservation.php" class="btn btn-primary"><i class="bi bi-plus-circle"></i> <?php echo t('new_reservation'); ?></a>
-     <a href="bulk_whatsapp.php" class="btn btn-success"><i class="bi bi-whatsapp"></i> <?php echo t('bulk_whatsapp'); ?></a>
-     <button onclick="openExportModal()" class="btn btn-info"><i class="bi bi-filetype-csv"></i> <?php echo t('export_csv'); ?></button>
-     <a href="print_statement.php" class="btn btn-secondary"><i class="bi bi-printer"></i> <?php echo t('print_statement'); ?></a>
-     <a href="manager_report.php" class="btn btn-secondary"><i class="bi bi-bar-chart-steps"></i> <?php echo t('analytics'); ?></a>
+     <a href="create_reservation.php" class="btn btn-primary"><i class="bi bi-plus-circle"></i> <?php echo t('New Reservation'); ?></a>
+     <a href="bulk_whatsapp.php" class="btn btn-success"><i class="bi bi-whatsapp"></i> <?php echo t('Bulk Whatsapp'); ?></a>
+     <button onclick="openExportModal()" class="btn btn-info"><i class="bi bi-filetype-csv"></i> <?php echo t('Export CSV'); ?></button>
+     <a href="print_statement.php" class="btn btn-secondary"><i class="bi bi-printer"></i> <?php echo t('Print Statement'); ?></a>
+     <a href="manager_report.php" class="btn btn-secondary"><i class="bi bi-bar-chart-steps"></i> <?php echo t('Analytics'); ?></a>
      <a href="tables.php" class="btn btn-secondary"><i class="bi bi-grid-3x3-gap-fill"></i> Tables</a>
-     <a href="settings.php" class="btn btn-secondary"><i class="bi bi-gear"></i> <?php echo t('system_settings'); ?></a>
+     <a href="settings.php" class="btn btn-secondary"><i class="bi bi-gear"></i> <?php echo t('System Settings'); ?></a>
      <a href="tickets_dashboard.php" class="btn btn-info"><i class="bi bi-ticket-perforated"></i> Ticket Dashboard</a>
    </div>
   </div>
@@ -1200,7 +1200,7 @@ $conn->close();
              <th style="min-width: 80px;"><i class="bi bi-grid-3x3-gap-fill"></i> <?php echo t('table_id'); ?></th>
              <th style="min-width: 120px;"><i class="bi bi-people"></i> <?php echo t('guests'); ?></th>
              <th style="min-width: 100px;"><i class="bi bi-info-circle"></i> <?php echo t('status'); ?></th>
-             <th style="min-width: 100px;"><i class="bi bi-currency-dollar"></i> <?php echo t('amount_due'); ?></th>
+             <th style="min-width: 100px;"><i class="bi bi-currency-dollar"></i> <?php echo t('Amount Due'); ?></th>
              <th style="min-width: 120px;"><i class="bi bi-calendar3"></i> <?php echo t('created'); ?></th>
              <th style="min-width: 220px;"><i class="bi bi-gear"></i> <?php echo t('actions'); ?></th>
         </tr>
@@ -1610,124 +1610,82 @@ $conn->close();
    }
   }
 
-  async function processSplitPayments() {
-   const splits = [];
-   const splitItems = document.querySelectorAll('.payment-split-item');
-   let totalAmount = 0;
-
-   for (let item of splitItems) {
-     const method = item.querySelector('.payment-method').value;
-     const amount = parseFloat(item.querySelector('.payment-amount').value);
-
-     if (!method) {
-        alert('Please select a payment method for all splits');
+async function processSplitPayments() {
+    const splits = [];
+    const splitItems = document.querySelectorAll('.payment-split-item');
+    let totalAmount = 0;
+    
+    const formData = new FormData();
+    formData.append('reservation_id', currentReservationId);
+    
+    for (let i = 0; i < splitItems.length; i++) {
+        const item = splitItems[i];
+        const method = item.querySelector('.payment-method').value;
+        const amount = parseFloat(item.querySelector('.payment-amount').value);
+        
+        if (!method || isNaN(amount) || amount <= 0) {
+            alert('Please fill all payment details');
+            return;
+        }
+        
+        totalAmount += amount;
+        
+        const splitData = { method: method, amount: amount };
+        
+        if (method === 'cash') {
+            const receivedBy = item.querySelector('.received-by')?.value;
+            if (!receivedBy) {
+                alert('Please enter who received the cash');
+                return;
+            }
+            splitData.received_by = receivedBy;
+        } else if (method === 'cliq') {
+            const fileInput = item.querySelector('.proof-file');
+            if (fileInput && fileInput.files[0]) {
+                formData.append('proof_' + i, fileInput.files[0]);
+            }
+        } else if (method === 'visa') {
+            const receiptId = item.querySelector('.receipt-id')?.value;
+            if (!receiptId) {
+                alert('Please enter receipt ID');
+                return;
+            }
+            splitData.receipt_id = receiptId;
+        }
+        
+        splits.push(splitData);
+    }
+    
+    totalAmount = Math.round(totalAmount * 100) / 100;
+    if (Math.abs(totalAmount - currentAmountDue) > 0.02) {
+        alert(`Total (${totalAmount.toFixed(2)}) does not match amount due (${currentAmountDue.toFixed(2)})`);
         return;
-     }
-
-     if (isNaN(amount) || amount <= 0) {
-        alert('Please enter valid amount for all splits');
-        return;
-     }
-
-     totalAmount += amount;
-
-     const splitData = {
-        method: method,
-        amount: amount
-     };
-
-     if (method === 'cash') {
-        const receivedBy = item.querySelector('.received-by')?.value;
-        if (!receivedBy) {
-             alert('Please enter who received the cash payment');
-             return;
-        }
-        splitData.received_by = receivedBy;
-     } else if (method === 'cliq') {
-        const fileInput = item.querySelector('.proof-file');
-        if (!fileInput.files[0]) {
-             alert('Please upload a screenshot for CliQ payment');
-             return;
-        }
-        splitData.hasFile = true;
-     } else if (method === 'visa') {
-        const receiptId = item.querySelector('.receipt-id')?.value;
-        if (!receiptId) {
-             alert('Please enter receipt ID for Visa payment');
-             return;
-        }
-        splitData.receipt_id = receiptId;
-     }
-
-     splits.push(splitData);
-   }
-
-   // Round to 2 decimal places
-   totalAmount = Math.round(totalAmount * 100) / 100;
-   const amountDue = Math.round(currentAmountDue * 100) / 100;
-
-   console.log("Total Amount to Pay:", totalAmount);
-   console.log("Amount Due:", amountDue);
-
-   // Check if total matches the amount due (allow 0.01 tolerance)
-   if (Math.abs(totalAmount - amountDue) > 0.02) {
-     if (totalAmount < amountDue) {
-        alert(`Total payment (${totalAmount.toFixed(2)}) is less than amount due (${amountDue.toFixed(2)}). Please add more.`);
-     } else {
-        alert(`Total payment (${totalAmount.toFixed(2)}) exceeds amount due (${amountDue.toFixed(2)}). Please reduce the amount.`);
-     }
-     return;
-   }
-
-   // Use the exact amount due (not the total from inputs)
-   const exactAmount = amountDue;
-
-   // Adjust the last split to match exact amount if needed
-   if (Math.abs(totalAmount - exactAmount) > 0.01) {
-     const lastSplit = splits[splits.length - 1];
-     lastSplit.amount = exactAmount - (totalAmount - lastSplit.amount);
-   }
-
-   showLoading('Processing payments...');
-
-   const formData = new FormData();
-   formData.append('reservation_id', currentReservationId);
-   formData.append('splits', JSON.stringify(splits));
-
-   try {
-     const response = await fetch('process_split_payment.php', {
-        method: 'POST',
-        body: formData
-     });
-
-     const text = await response.text();
-     console.log("Raw response:", text);
-
-     let data;
-     try {
-        data = JSON.parse(text);
-     } catch (e) {
-        console.error("Failed to parse JSON:", text);
-        alert("Server error. Check logs.");
+    }
+    
+    formData.append('splits', JSON.stringify(splits));
+    
+    showLoading('Processing payment...');
+    
+    try {
+        const response = await fetch('process_split_payment.php', { 
+            method: 'POST', 
+            body: formData 
+        });
+        const data = await response.json();
         hideLoading();
-        return;
-     }
-
-     hideLoading();
-
-     if (data.success) {
-        alert('✓ Payment processed successfully!');
-        closePaymentModal();
-        location.reload();
-     } else {
-        alert('Error: ' + (data.error || 'Payment failed'));
-     }
-   } catch (error) {
-     hideLoading();
-     alert('Error: ' + error.message);
-     console.error(error);
-   }
-  }
+        
+        if (data.success) {
+            showNotification('Payment processed successfully!', 'success');
+            closePaymentModal();
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showNotification('Error: ' + (data.error || 'Payment failed'), 'error');
+        }
+    } catch (error) {
+        hideLoading();
+        showNotification('Error: ' + error.message, 'error');
+    }
+}
 
   function deleteReservation(reservationId, element) {
    const password = prompt('⚠️ SECURITY VERIFICATION REQUIRED\n\nEnter admin password to delete this reservation:\n(Default: AdminDelete2026)');
@@ -1831,7 +1789,7 @@ $conn->close();
   function applyFilters() {
    const search = document.getElementById('search').value;
    const status = document.getElementById('statusFilter').value;
-   let url = `dashboard.php?search=${encodeURIComponent(search)}&status=${status}&lang=<?php echo $lang; ?>`;
+   let url = `dashboard.php?search=${encodeURIComponent(search)}&status=${status}&lang=<?php echo getCurrentLanguage(); ?>`;
    window.location.href = url;
   }
 

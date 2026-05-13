@@ -6,10 +6,16 @@ ini_set('display_errors', 0);
 session_start();
 header('Content-Type: application/json');
 
+// Include your existing files
+require_once '../includes/db.php';
+require_once '../includes/functions.php';
+require_once '../includes/language.php';
+
 // Simple response function
-function sendResponse($success, $error = null) {
+function sendResponse($success, $error = null, $data = null) {
     $response = ['success' => $success];
     if ($error) $response['error'] = $error;
+    if ($data) $response['data'] = $data;
     echo json_encode($response);
     exit();
 }
@@ -19,28 +25,46 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
     sendResponse(false, 'Unauthorized');
 }
 
-// Database connection
-$conn = new mysqli('localhost', 'root', '', 'ticketing_system');
-if ($conn->connect_error) {
-    sendResponse(false, 'Database connection failed');
-}
+// Get database connection using your function
+$conn = getConnection();
 
 // Get POST data
 $reservation_id = isset($_POST['reservation_id']) ? trim($_POST['reservation_id']) : '';
-$total_amount = isset($_POST['total_amount']) ? floatval($_POST['total_amount']) : 0;
 $splits_json = isset($_POST['splits']) ? $_POST['splits'] : '';
 $splits = json_decode($splits_json, true);
 
-if (empty($reservation_id) || empty($splits) || $total_amount <= 0) {
+if (empty($reservation_id) || empty($splits)) {
     sendResponse(false, 'Invalid request data');
 }
 
-// Get reservation
-$result = $conn->query("SELECT * FROM reservations WHERE reservation_id = '$reservation_id'");
+// Get reservation using prepared statement
+$stmt = $conn->prepare("SELECT * FROM reservations WHERE reservation_id = ?");
+$stmt->bind_param("s", $reservation_id);
+$stmt->execute();
+$result = $stmt->get_result();
+
 if (!$result || $result->num_rows === 0) {
     sendResponse(false, 'Reservation not found');
 }
-$res = $result->fetch_assoc();
+$reservation = $result->fetch_assoc();
+$stmt->close();
+
+// Calculate total payment amount
+$total_amount = 0;
+foreach ($splits as $split) {
+    $total_amount += floatval($split['amount']);
+}
+
+// Get current total paid
+$stmt = $conn->prepare("SELECT COALESCE(SUM(amount), 0) as total_paid FROM split_payments WHERE reservation_id = ?");
+$stmt->bind_param("s", $reservation_id);
+$stmt->execute();
+$paidResult = $stmt->get_result()->fetch_assoc();
+$current_paid = floatval($paidResult['total_paid']);
+$stmt->close();
+
+$new_total_paid = $current_paid + $total_amount;
+$total_amount_due = floatval($reservation['total_amount']);
 
 // Create uploads directory if needed
 $uploadDir = '../uploads/';
@@ -51,54 +75,16 @@ if (!file_exists($uploadDir)) {
 $conn->begin_transaction();
 
 try {
-    // Update additional amount due
-    $new_additional_due = max(0, $res['additional_amount_due'] - $total_amount);
-    
-    // Update paid guests counts
-    $adultPrice = 10;
-    $teenPrice = 10;
-    $priceResult = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key = 'ticket_price_adult'");
-    if ($priceResult && $row = $priceResult->fetch_assoc()) {
-        $adultPrice = floatval($row['setting_value']);
-    }
-    $priceResult = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key = 'ticket_price_teen'");
-    if ($priceResult && $row = $priceResult->fetch_assoc()) {
-        $teenPrice = floatval($row['setting_value']);
-    }
-    
-    $remaining = $total_amount;
-    $new_paid_adults = $res['paid_adults'];
-    $new_paid_teens = $res['paid_teens'];
-    $total_adults = $res['adults'];
-    $total_teens = $res['teens'];
-    
-    while ($remaining >= $adultPrice && $new_paid_adults < $total_adults) {
-        $remaining -= $adultPrice;
-        $new_paid_adults++;
-    }
-    while ($remaining >= $teenPrice && $new_paid_teens < $total_teens) {
-        $remaining -= $teenPrice;
-        $new_paid_teens++;
-    }
-    
-    // Update reservation
-    $updateSql = "UPDATE reservations SET 
-        additional_amount_due = $new_additional_due,
-        paid_adults = $new_paid_adults,
-        paid_teens = $new_paid_teens
-        WHERE reservation_id = '$reservation_id'";
-    
-    if (!$conn->query($updateSql)) {
-        throw new Exception("Failed to update reservation: " . $conn->error);
-    }
-    
-    // Insert split payments
+    // Insert each split payment
     $proofCounter = 0;
     foreach ($splits as $split) {
         $method = $split['method'];
-        $amount = $split['amount'];
+        $amount = floatval($split['amount']);
         $receipt_id = isset($split['receipt_id']) ? $split['receipt_id'] : null;
-        $proof_path = null;
+        $received_by = isset($split['received_by']) ? $split['received_by'] : ($_SESSION['admin_username'] ?? 'Admin');
+        $proof_file = null;
+        $transaction_id = null;
+        $notes = null;
         
         // Handle file upload for CliQ
         if ($method == 'cliq') {
@@ -107,59 +93,121 @@ try {
                 $ext = strtolower(pathinfo($_FILES[$fileKey]['name'], PATHINFO_EXTENSION));
                 $allowed = ['jpg', 'jpeg', 'png', 'gif', 'pdf'];
                 if (in_array($ext, $allowed)) {
-                    $fileName = 'proof_' . $reservation_id . '_' . time() . '_' . $proofCounter . '.' . $ext;
+                    $fileName = 'cliq_' . $reservation_id . '_' . time() . '_' . $proofCounter . '.' . $ext;
                     if (move_uploaded_file($_FILES[$fileKey]['tmp_name'], $uploadDir . $fileName)) {
-                        $proof_path = 'uploads/' . $fileName;
+                        $proof_file = $fileName;  // Store just filename, not full path
                     }
                 }
             }
+            $transaction_id = 'CLIQ-' . strtoupper(uniqid());
+            $notes = "CliQ payment " . ($proof_file ? "with proof" : "without proof");
             $proofCounter++;
         }
         
-        $insertSql = "INSERT INTO split_payments (reservation_id, payment_method, amount, receipt_id, proof_path, payment_type) 
-                     VALUES ('$reservation_id', '$method', $amount, " . ($receipt_id ? "'$receipt_id'" : "NULL") . ", " . ($proof_path ? "'$proof_path'" : "NULL") . ", 'additional')";
-        
-        if (!$conn->query($insertSql)) {
-            throw new Exception("Failed to insert split payment: " . $conn->error);
+        // Handle Visa payment
+        if ($method == 'visa') {
+            $transaction_id = $receipt_id ?? 'VISA-' . strtoupper(uniqid());
+            $notes = "Visa payment with receipt ID: $receipt_id";
         }
+        
+        // Handle Cash payment
+        if ($method == 'cash') {
+            $notes = "Cash payment received by: $received_by";
+        }
+        
+        // Insert using prepared statement with correct column names
+        $stmt = $conn->prepare("
+            INSERT INTO split_payments 
+            (reservation_id, payment_method, amount, received_by, receipt_id, proof_file, transaction_id, notes, created_at) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        ");
+        
+        // Ensure no NULL values
+        $received_by = $received_by ?? 'System';
+        $receipt_id = $receipt_id ?? '';
+        $proof_file = $proof_file ?? '';
+        $transaction_id = $transaction_id ?? '';
+        $notes = $notes ?? '';
+        
+        $stmt->bind_param("ssdsssss", 
+            $reservation_id, 
+            $method, 
+            $amount, 
+            $received_by, 
+            $receipt_id, 
+            $proof_file, 
+            $transaction_id, 
+            $notes
+        );
+        
+        if (!$stmt->execute()) {
+            throw new Exception("Failed to insert split payment: " . $stmt->error);
+        }
+        $stmt->close();
+    }
+    
+    // Update reservation status if fully paid
+    $new_status = $reservation['status'];
+    if ($new_total_paid >= $total_amount_due) {
+        $new_status = 'paid';
+        $updateStmt = $conn->prepare("UPDATE reservations SET status = ? WHERE reservation_id = ?");
+        $updateStmt->bind_param("ss", $new_status, $reservation_id);
+        $updateStmt->execute();
+        $updateStmt->close();
     }
     
     $conn->commit();
-    sendResponse(true);
+    
+    // Send WhatsApp confirmation for additional payment
+    sendPaymentConfirmation($reservation_id, $total_amount, $splits);
+    
+    sendResponse(true, null, ['total_paid' => $new_total_paid, 'status' => $new_status]);
     
 } catch (Exception $e) {
     $conn->rollback();
     sendResponse(false, $e->getMessage());
 }
 
-// Add this function for additional payment confirmations
-function sendAdditionalPaymentConfirmation($reservation_id, $total_amount, $splits) {
+$conn->close();
+
+/**
+ * Send payment confirmation via WhatsApp
+ */
+function sendPaymentConfirmation($reservation_id, $total_amount, $splits) {
     $conn = getConnection();
-    $res = $conn->query("SELECT * FROM reservations WHERE reservation_id = '$reservation_id'")->fetch_assoc();
+    
+    $stmt = $conn->prepare("SELECT * FROM reservations WHERE reservation_id = ?");
+    $stmt->bind_param("s", $reservation_id);
+    $stmt->execute();
+    $reservation = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
     $conn->close();
     
-    $baseUrl = getBaseUrl();
-    $ticketLink = $baseUrl . "admin/print_ticket.php?reservation_id=" . urlencode($reservation_id);
-    $currency = getSetting('currency', 'JOD');
+    if (!$reservation) return;
     
-    $message = "✅ *ADDITIONAL PAYMENT CONFIRMED!* ✅\n\n";
-    $message .= "Dear {$res['name']},\n\n";
-    $message .= "Your additional payment of " . number_format($total_amount, 2) . " {$currency} has been successfully verified.\n\n";
+    $baseUrl = getSetting('base_url', 'https://restorandticketingsystem.unaux.com');
+    $ticketLink = $baseUrl . "public/reservation_tickets.php?id=" . urlencode($reservation_id);
+    $currencySymbol = getCurrencySymbol();
+    
+    $message = "✅ *PAYMENT CONFIRMED!* ✅\n\n";
+    $message .= "Dear {$reservation['name']},\n\n";
+    $message .= "Your payment of " . $currencySymbol . " " . number_format($total_amount, 2) . " has been successfully processed.\n\n";
     
     $message .= "💰 *Payment Breakdown:*\n";
     foreach ($splits as $split) {
-        $methodName = $split['method'] == 'cash' ? 'Cash' : ($split['method'] == 'cliq' ? 'CliQ' : 'Visa');
-        $message .= "• $methodName: " . number_format($split['amount'], 2) . " {$currency}\n";
+        $methodName = ucfirst($split['method']);
+        $message .= "• $methodName: " . $currencySymbol . " " . number_format($split['amount'], 2) . "\n";
     }
     
-    $message .= "\n🎫 *Your updated ticket is ready!*\n";
-    $message .= "Click the link below to view your ticket:\n";
+    $message .= "\n📋 *Reservation ID:* {$reservation_id}\n";
+    $message .= "🍽️ *Table:* {$reservation['table_id']}\n";
+    
+    $message .= "\n🎫 *View your tickets:*\n";
     $message .= $ticketLink . "\n\n";
     
     $message .= "🎉 Thank you for your payment! 🎉";
     
-    sendWhatsAppMessage($res['phone'], $message);
+    // Try to send WhatsApp message
+    sendWhatsAppMessage($reservation['phone'], $message);
 }
-
-$conn->close();
 ?>
