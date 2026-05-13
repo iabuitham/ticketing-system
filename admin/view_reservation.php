@@ -538,12 +538,16 @@ $conn->close();
              <small>Adults: <?php echo $reservation['adults']; ?> | Teens: <?php echo $reservation['teens']; ?> | Kids: <?php echo $reservation['kids']; ?></small>
         </div>
      </div>
-     <?php if (!empty($reservation['notes'])): ?>
-        <div class="info-item">
-             <div class="info-label"><i class="bi bi-chat"></i> <?php echo t('notes'); ?></div>
-             <div class="info-value"><?php echo nl2br(htmlspecialchars($reservation['notes'])); ?></div>
+     <div class="info-item">
+        <div class="info-label"><i class="bi bi-people"></i> <?php echo t('Notes'); ?></div>
+        <div class="info-value">
+             <?php if (!empty($payment['notes'])): ?>
+    <div style="font-size: 11px; color: var(--text-secondary); margin-top: 5px;">
+        <i class="bi bi-chat"></i> <?php echo htmlspecialchars($payment['notes']); ?>
+    </div>
+            <?php endif; ?>
         </div>
-     <?php endif; ?>
+     </div>
    </div>
   </div>
 
@@ -553,7 +557,7 @@ $conn->close();
      <h2><i class="bi bi-credit-card"></i> <?php echo t('Payment Transactions'); ?></h2>
      <?php if ($reservation['status'] != 'paid' && $reservation['status'] != 'cancelled' && $amount_due > 0): ?>
         <a href="dashboard.php" class="btn btn-success btn-sm">
-             <i class="bi bi-plus-circle"></i> <?php echo t('add_payment'); ?>
+             <i class="bi bi-plus-circle"></i> <?php echo t('Add Payment'); ?>
         </a>
      <?php endif; ?>
    </div>
@@ -583,10 +587,10 @@ $conn->close();
    <?php if (empty($payments)): ?>
      <div style="text-align: center; padding: 60px 20px;">
         <i class="bi bi-inbox" style="font-size: 64px; opacity: 0.3; display: block; margin-bottom: 15px;"></i>
-        <p style="color: #64748b;"><?php echo t('no_payment_transactions'); ?></p>
+        <p style="color: #64748b;"><?php echo t('No Payment Transactions'); ?></p>
         <?php if ($reservation['status'] != 'paid' && $reservation['status'] != 'cancelled' && $amount_due > 0): ?>
              <a href="dashboard.php" class="btn btn-success" style="margin-top: 15px;">
-                     <i class="bi bi-plus-circle"></i> <?php echo t('record_first_payment'); ?>
+                     <i class="bi bi-plus-circle"></i> <?php echo t('Record First Payment'); ?>
              </a>
         <?php endif; ?>
      </div>
@@ -692,7 +696,7 @@ $conn->close();
   <!-- Action Buttons -->
   <div class="button-group">
    <a href="edit_reservation.php?id=<?php echo urlencode($reservation_id); ?>" class="btn btn-warning">
-     <i class="bi bi-pencil"></i> <?php echo t('Edit_reservation'); ?>
+     <i class="bi bi-pencil"></i> <?php echo t('Edit Reservation'); ?>
    </a>
    <a href="/public/reservation_tickets.php?id=<?php echo urlencode($reservation_id); ?>" class="btn btn-info">
      <i class="bi bi-ticket-perforated"></i> View Tickets

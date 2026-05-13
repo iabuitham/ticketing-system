@@ -1,17 +1,13 @@
 <?php
-// Disable error reporting for clean JSON output
 error_reporting(0);
 ini_set('display_errors', 0);
 
 session_start();
 header('Content-Type: application/json');
 
-// Include your existing files
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
-require_once '../includes/language.php';
 
-// Simple response function
 function sendResponse($success, $error = null, $data = null) {
     $response = ['success' => $success];
     if ($error) $response['error'] = $error;
@@ -20,15 +16,12 @@ function sendResponse($success, $error = null, $data = null) {
     exit();
 }
 
-// Check authentication
 if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
     sendResponse(false, 'Unauthorized');
 }
 
-// Get database connection
 $conn = getConnection();
 
-// Get POST data
 $reservation_id = isset($_POST['reservation_id']) ? trim($_POST['reservation_id']) : '';
 $splits_json = isset($_POST['splits']) ? $_POST['splits'] : '';
 $splits = json_decode($splits_json, true);
@@ -75,15 +68,13 @@ if (!file_exists($uploadDir)) {
 $conn->begin_transaction();
 
 try {
-    // Insert each split payment
     $proofCounter = 0;
     foreach ($splits as $split) {
         $method = $split['method'];
         $amount = floatval($split['amount']);
         $receipt_id = isset($split['receipt_id']) ? $split['receipt_id'] : null;
         $received_by = isset($split['received_by']) ? $split['received_by'] : ($_SESSION['admin_username'] ?? 'Admin');
-        $payment_proof = null;  // ← Changed from proof_file to payment_proof
-        $transaction_id = null;
+        $proof_file = null;
         $notes = null;
         
         // Handle file upload for CliQ
@@ -95,18 +86,22 @@ try {
                 if (in_array($ext, $allowed)) {
                     $fileName = 'cliq_' . $reservation_id . '_' . time() . '_' . $proofCounter . '.' . $ext;
                     if (move_uploaded_file($_FILES[$fileKey]['tmp_name'], $uploadDir . $fileName)) {
-                        $payment_proof = $fileName;  // ← Changed to payment_proof
+                        $proof_file = $fileName;
                     }
                 }
             }
-            $transaction_id = 'CLIQ-' . strtoupper(uniqid());
-            $notes = "CliQ payment " . ($payment_proof ? "with proof" : "without proof");
+            if (empty($receipt_id)) {
+                $receipt_id = 'CLIQ-' . strtoupper(uniqid());
+            }
+            $notes = "CliQ payment " . ($proof_file ? "with proof" : "without proof");
             $proofCounter++;
         }
         
         // Handle Visa payment
         if ($method == 'visa') {
-            $transaction_id = $receipt_id ?? 'VISA-' . strtoupper(uniqid());
+            if (empty($receipt_id)) {
+                $receipt_id = 'VISA-' . strtoupper(uniqid());
+            }
             $notes = "Visa payment with receipt ID: $receipt_id";
         }
         
@@ -115,23 +110,28 @@ try {
             $notes = "Cash payment received by: $received_by";
         }
         
-// Insert using prepared statement - REMOVE payment_proof column
-$stmt = $conn->prepare("
-    INSERT INTO split_payments 
-    (reservation_id, payment_method, amount, received_by, receipt_id, transaction_id, notes, created_at) 
-    VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
-");
-
-// Remove $payment_proof from bind_param
-$stmt->bind_param("ssdssss", 
-    $reservation_id, 
-    $method, 
-    $amount, 
-    $received_by, 
-    $receipt_id, 
-    $transaction_id, 
-    $notes
-);
+        // INSERT with correct column names from your database
+        $stmt = $conn->prepare("
+            INSERT INTO split_payments 
+            (reservation_id, payment_method, amount, receipt_id, proof_file, payment_type, received_by, notes, created_at) 
+            VALUES (?, ?, ?, ?, ?, 'additional', ?, ?, NOW())
+        ");
+        
+        // Ensure no NULL values
+        $receipt_id = $receipt_id ?? '';
+        $proof_file = $proof_file ?? '';
+        $received_by = $received_by ?? 'System';
+        $notes = $notes ?? '';
+        
+        $stmt->bind_param("ssdssss", 
+            $reservation_id, 
+            $method, 
+            $amount, 
+            $receipt_id, 
+            $proof_file, 
+            $received_by, 
+            $notes
+        );
         
         if (!$stmt->execute()) {
             throw new Exception("Failed to insert split payment: " . $stmt->error);
@@ -151,8 +151,8 @@ $stmt->bind_param("ssdssss",
     
     $conn->commit();
     
-    // Send WhatsApp confirmation
-    sendPaymentConfirmation($reservation_id, $total_amount, $splits, $new_total_paid, $total_amount_due);
+    // Send WhatsApp confirmation (optional - uncomment if needed)
+    // sendPaymentConfirmation($reservation_id, $total_amount, $splits, $new_total_paid, $total_amount_due);
     
     sendResponse(true, null, ['total_paid' => $new_total_paid, 'status' => $new_status]);
     
@@ -164,7 +164,7 @@ $stmt->bind_param("ssdssss",
 $conn->close();
 
 /**
- * Send payment confirmation via WhatsApp
+ * Send payment confirmation via WhatsApp (optional)
  */
 function sendPaymentConfirmation($reservation_id, $total_amount, $splits, $new_total_paid, $total_amount_due) {
     $conn = getConnection();
@@ -195,7 +195,6 @@ function sendPaymentConfirmation($reservation_id, $total_amount, $splits, $new_t
     $message .= "\n📋 *Reservation ID:* {$reservation_id}\n";
     $message .= "🍽️ *Table:* {$reservation['table_id']}\n";
     
-    // Show payment status
     if ($new_total_paid >= $total_amount_due) {
         $message .= "\n✅ *Status:* FULLY PAID\n";
         $message .= "\n🎫 *Your tickets are ready!*\n";
@@ -207,7 +206,6 @@ function sendPaymentConfirmation($reservation_id, $total_amount, $splits, $new_t
     
     $message .= "🎉 Thank you for your payment! 🎉";
     
-    // Try to send WhatsApp message
     sendWhatsAppMessage($reservation['phone'], $message);
 }
 ?>
