@@ -47,8 +47,8 @@ $search = isset($_GET['search']) ? sanitizeInput($_GET['search']) : '';
 
 // Build query with total paid from split_payments
 $query = "SELECT r.*, 
-  COALESCE((SELECT SUM(amount) FROM split_payments WHERE reservation_id = r.reservation_id), 0) as total_paid
-  FROM reservations r WHERE 1=1";
+ COALESCE((SELECT SUM(amount) FROM split_payments WHERE reservation_id = r.reservation_id), 0) as total_paid
+ FROM reservations r WHERE 1=1";
 $params = [];
 $types = "";
 
@@ -133,18 +133,18 @@ $attendeeStats = [
 
 // Get revenue by payment method from split_payments
 $revenueResult = $conn->query("SELECT 
-    SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END) as cash,
-    SUM(CASE WHEN payment_method = 'cliq' THEN amount ELSE 0 END) as cliq,
-    SUM(CASE WHEN payment_method = 'visa' THEN amount ELSE 0 END) as visa,
-    SUM(amount) as total
+  SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END) as cash,
+  SUM(CASE WHEN payment_method = 'cliq' THEN amount ELSE 0 END) as cliq,
+  SUM(CASE WHEN payment_method = 'visa' THEN amount ELSE 0 END) as visa,
+  SUM(amount) as total
 FROM split_payments");
 
 $revenue = $revenueResult->fetch_assoc();
 $revenue = [
-    'cash' => $revenue['cash'] ?? 0,
-    'cliq' => $revenue['cliq'] ?? 0,
-    'visa' => $revenue['visa'] ?? 0,
-    'total' => $revenue['total'] ?? 0
+ 'cash' => $revenue['cash'] ?? 0,
+ 'cliq' => $revenue['cliq'] ?? 0,
+ 'visa' => $revenue['visa'] ?? 0,
+ 'total' => $revenue['total'] ?? 0
 ];
 
 // Get cancelled revenue
@@ -1033,23 +1033,23 @@ $conn->close();
   <div class="navbar">
    <h1><i class="bi bi-ticket-perforated"></i> <?php echo htmlspecialchars($siteName); ?></h1>
    <div class="nav-links">
-<div class="event-info">
-    <i class="bi bi-calendar-event"></i>
-    <div>
-        <strong><?php echo htmlspecialchars($selected_event_name); ?></strong>
-        <br>
-        <small><?php echo $selected_event_date ? date('M d, Y', strtotime($selected_event_date)) : ''; ?></small>
-    </div>
-    <?php if ($activeEventCount > 1): ?>
-        <a href="switch_event.php" class="btn btn-sm btn-secondary" style="padding: 4px 12px;">
-            <i class="bi bi-arrow-repeat"></i> Switch
-        </a>
-    <?php else: ?>
-        <button class="btn btn-sm btn-secondary" style="padding: 4px 12px; opacity: 0.5;" disabled title="Only one event available">
-            <i class="bi bi-arrow-repeat"></i> Switch
-        </button>
-    <?php endif; ?>
-</div>
+     <div class="event-info">
+        <i class="bi bi-calendar-event"></i>
+        <div>
+             <strong><?php echo htmlspecialchars($selected_event_name); ?></strong>
+             <br>
+             <small><?php echo $selected_event_date ? date('M d, Y', strtotime($selected_event_date)) : ''; ?></small>
+        </div>
+        <?php if ($activeEventCount > 1): ?>
+             <a href="switch_event.php" class="btn btn-sm btn-secondary" style="padding: 4px 12px;">
+                     <i class="bi bi-arrow-repeat"></i> Switch
+             </a>
+        <?php else: ?>
+             <button class="btn btn-sm btn-secondary" style="padding: 4px 12px; opacity: 0.5;" disabled title="Only one event available">
+                     <i class="bi bi-arrow-repeat"></i> Switch
+             </button>
+        <?php endif; ?>
+     </div>
      <div class="header-controls">
         <button id="darkModeToggle" class="dark-mode-toggle"><i class="bi bi-moon-fill"></i></button>
         <div class="language-switcher">
@@ -1105,40 +1105,40 @@ $conn->close();
      </div>
    </div>
 
-<div class="stat-card success">
-    <div class="stat-number"><?php echo number_format(floatval($netRevenue), 2); ?> <?php echo $currencySymbol; ?></div>
-    <div class="stat-label"><i class="bi bi-graph-up"></i> <?php echo t('Net Revenue'); ?></div>
-    <div class="stat-details">
+   <div class="stat-card success">
+     <div class="stat-number"><?php echo number_format(floatval($netRevenue), 2); ?> <?php echo $currencySymbol; ?></div>
+     <div class="stat-label"><i class="bi bi-graph-up"></i> <?php echo t('Net Revenue'); ?></div>
+     <div class="stat-details">
         <div class="detail-item">
-            <span><i class="bi bi-cash-stack"></i> <?php echo t('Cash'); ?></span>
-            <span><?php echo number_format(floatval($revenue['cash']), 2); ?> <?php echo $currencySymbol; ?></span>
+             <span><i class="bi bi-cash-stack"></i> <?php echo t('Cash'); ?></span>
+             <span><?php echo number_format(floatval($revenue['cash']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
-            <span><i class="bi bi-phone"></i> <?php echo t('Cliq'); ?></span>
-            <span><?php echo number_format(floatval($revenue['cliq']), 2); ?> <?php echo $currencySymbol; ?></span>
+             <span><i class="bi bi-phone"></i> <?php echo t('Cliq'); ?></span>
+             <span><?php echo number_format(floatval($revenue['cliq']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
-            <span><i class="bi bi-credit-card"></i> <?php echo t('Visa'); ?></span>
-            <span><?php echo number_format(floatval($revenue['visa']), 2); ?> <?php echo $currencySymbol; ?></span>
+             <span><i class="bi bi-credit-card"></i> <?php echo t('Visa'); ?></span>
+             <span><?php echo number_format(floatval($revenue['visa']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
-            <span><i class="bi bi-receipt"></i> <?php echo t('Total Payments'); ?></span>
-            <span><?php echo number_format(floatval($revenue['total']), 2); ?> <?php echo $currencySymbol; ?></span>
+             <span><i class="bi bi-receipt"></i> <?php echo t('Total Payments'); ?></span>
+             <span><?php echo number_format(floatval($revenue['total']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
-            <span><i class="bi bi-arrow-return-left"></i> <?php echo t('Refunds'); ?></span>
-            <span class="detail-value" style="color: #f59e0b;">- <?php echo number_format(floatval($totalRefunded), 2); ?> <?php echo $currencySymbol; ?></span>
+             <span><i class="bi bi-arrow-return-left"></i> <?php echo t('Refunds'); ?></span>
+             <span class="detail-value" style="color: #f59e0b;">- <?php echo number_format(floatval($totalRefunded), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item" style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 5px; padding-top: 8px;">
-            <span><strong><i class="bi bi-calculator"></i> <?php echo t('Net Revenue'); ?></strong></span>
-            <span><strong><?php echo number_format(floatval($netRevenue), 2); ?> <?php echo $currencySymbol; ?></strong></span>
+             <span><strong><i class="bi bi-calculator"></i> <?php echo t('Net Revenue'); ?></strong></span>
+             <span><strong><?php echo number_format(floatval($netRevenue), 2); ?> <?php echo $currencySymbol; ?></strong></span>
         </div>
         <div class="detail-item">
-            <span><i class="bi bi-x-circle"></i> <?php echo t('Cancelled'); ?></span>
-            <span class="detail-value" style="color: #fecaca;">- <?php echo number_format(floatval($cancelledRevenue), 2); ?> <?php echo $currencySymbol; ?></span>
+             <span><i class="bi bi-x-circle"></i> <?php echo t('Cancelled'); ?></span>
+             <span class="detail-value" style="color: #fecaca;">- <?php echo number_format(floatval($cancelledRevenue), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
-    </div>
-</div>
+     </div>
+   </div>
 
    <div class="stat-card info">
      <div class="stat-number"><?php echo intval($stats['total']); ?></div>
@@ -1422,27 +1422,27 @@ $conn->close();
    splitDiv.className = 'payment-split-item';
    splitDiv.setAttribute('data-split-index', splitIndex);
    splitDiv.innerHTML = `
-     <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-bottom: 10px; align-items: end;">
-        <div class="form-group">
+  <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-bottom: 10px; align-items: end;">
+     <div class="form-group">
              <label>Payment Method</label>
              <select class="payment-method" onchange="togglePaymentFields(this, ${splitIndex})">
-                     <option value="">Select</option>
-                     <option value="cash">Cash</option>
-                     <option value="cliq">CliQ</option>
-                     <option value="visa">Visa</option>
+                                                                                         <option value="">Select</option>
+                                                                                         <option value="cash">Cash</option>
+                                                                                         <option value="cliq">CliQ</option>
+                                                                                         <option value="visa">Visa</option>
              </select>
-        </div>
-        <div class="form-group">
+     </div>
+     <div class="form-group">
              <label>Amount (<?php echo $currencySymbol; ?>)</label>
              <input type="number" class="payment-amount" step="0.01" placeholder="0.00" onkeyup="updateRemainingAmount()">
-        </div>
-        <div class="form-group">
+     </div>
+     <div class="form-group">
              <label>&nbsp;</label>
              <button type="button" class="btn btn-danger btn-sm" onclick="removePaymentSplit(this)">Remove</button>
-        </div>
      </div>
-     <div class="payment-fields" style="display: none;"></div>
-   `;
+  </div>
+  <div class="payment-fields" style="display: none;"></div>
+ `;
 
    container.appendChild(splitDiv);
    paymentSplitCount++;
@@ -1464,30 +1464,30 @@ $conn->close();
 
    if (method === 'cash') {
      paymentFields.innerHTML = `
-        <div class="form-group">
+     <div class="form-group">
              <label><i class="bi bi-person"></i> Received By (Staff Name)</label>
              <input type="text" class="received-by" placeholder="Enter staff name" required>
-        </div>
-     `;
+     </div>
+  `;
      paymentFields.style.display = 'block';
    } else if (method === 'cliq') {
      paymentFields.innerHTML = `
-        <div class="form-group">
+     <div class="form-group">
              <label><i class="bi bi-image"></i> Upload Screenshot Evidence</label>
              <input type="file" class="proof-file" accept="image/*" onchange="previewImage(this)">
              <div class="cliq-preview"></div>
              <small style="color: #64748b;">Please upload a screenshot of the CliQ payment confirmation</small>
-        </div>
-     `;
+     </div>
+  `;
      paymentFields.style.display = 'block';
    } else if (method === 'visa') {
      paymentFields.innerHTML = `
-        <div class="form-group">
+     <div class="form-group">
              <label><i class="bi bi-receipt"></i> Receipt ID / Transaction ID</label>
              <input type="text" class="receipt-id" placeholder="Enter Visa receipt ID" required>
              <small style="color: #64748b;">Enter the receipt number from the Visa transaction</small>
-        </div>
-     `;
+     </div>
+  `;
      paymentFields.style.display = 'block';
    } else {
      paymentFields.style.display = 'none';
@@ -1560,28 +1560,28 @@ $conn->close();
    splitDiv.className = 'payment-split-item';
    splitDiv.setAttribute('data-split-index', splitIndex);
    splitDiv.innerHTML = `
-  <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-bottom: 10px; align-items: end;">
-   <div class="form-group">
-     <label>Payment Method</label>
-     <select class="payment-method" onchange="togglePaymentFields(this, ${splitIndex})">
-        <option value="">Select</option>
-        <option value="cash">Cash</option>
-        <option value="cliq">CliQ</option>
-        <option value="visa">Visa</option>
-     </select>
-   </div>
-   <div class="form-group">
-     <label>Amount (<?php echo $currencySymbol; ?>)</label>
-     <input type="number" class="payment-amount" step="0.01" placeholder="0.00" 
-        onkeyup="updateRemainingAmount()" 
-        onchange="validateSplitAmount(this)">
-   </div>
-   <div class="form-group">
-     <label>&nbsp;</label>
-     <button type="button" class="btn btn-danger btn-sm" onclick="removePaymentSplit(this)">Remove</button>
-   </div>
-  </div>
-  <div class="payment-fields" style="display: none;"></div>
+ <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-bottom: 10px; align-items: end;">
+ <div class="form-group">
+  <label>Payment Method</label>
+  <select class="payment-method" onchange="togglePaymentFields(this, ${splitIndex})">
+     <option value="">Select</option>
+     <option value="cash">Cash</option>
+     <option value="cliq">CliQ</option>
+     <option value="visa">Visa</option>
+  </select>
+ </div>
+ <div class="form-group">
+  <label>Amount (<?php echo $currencySymbol; ?>)</label>
+  <input type="number" class="payment-amount" step="0.01" placeholder="0.00" 
+     onkeyup="updateRemainingAmount()" 
+     onchange="validateSplitAmount(this)">
+ </div>
+ <div class="form-group">
+  <label>&nbsp;</label>
+  <button type="button" class="btn btn-danger btn-sm" onclick="removePaymentSplit(this)">Remove</button>
+ </div>
+ </div>
+ <div class="payment-fields" style="display: none;"></div>
  `;
 
    container.appendChild(splitDiv);
@@ -1610,82 +1610,85 @@ $conn->close();
    }
   }
 
-async function processSplitPayments() {
-    const splits = [];
-    const splitItems = document.querySelectorAll('.payment-split-item');
-    let totalAmount = 0;
-    
-    const formData = new FormData();
-    formData.append('reservation_id', currentReservationId);
-    
-    for (let i = 0; i < splitItems.length; i++) {
-        const item = splitItems[i];
-        const method = item.querySelector('.payment-method').value;
-        const amount = parseFloat(item.querySelector('.payment-amount').value);
-        
-        if (!method || isNaN(amount) || amount <= 0) {
-            alert('Please fill all payment details');
-            return;
-        }
-        
-        totalAmount += amount;
-        
-        const splitData = { method: method, amount: amount };
-        
-        if (method === 'cash') {
-            const receivedBy = item.querySelector('.received-by')?.value;
-            if (!receivedBy) {
-                alert('Please enter who received the cash');
-                return;
-            }
-            splitData.received_by = receivedBy;
-        } else if (method === 'cliq') {
-            const fileInput = item.querySelector('.proof-file');
-            if (fileInput && fileInput.files[0]) {
-                formData.append('proof_' + i, fileInput.files[0]);
-            }
-        } else if (method === 'visa') {
-            const receiptId = item.querySelector('.receipt-id')?.value;
-            if (!receiptId) {
-                alert('Please enter receipt ID');
-                return;
-            }
-            splitData.receipt_id = receiptId;
-        }
-        
-        splits.push(splitData);
-    }
-    
-    totalAmount = Math.round(totalAmount * 100) / 100;
-    if (Math.abs(totalAmount - currentAmountDue) > 0.02) {
-        alert(`Total (${totalAmount.toFixed(2)}) does not match amount due (${currentAmountDue.toFixed(2)})`);
+  async function processSplitPayments() {
+   const splits = [];
+   const splitItems = document.querySelectorAll('.payment-split-item');
+   let totalAmount = 0;
+
+   const formData = new FormData();
+   formData.append('reservation_id', currentReservationId);
+
+   for (let i = 0; i < splitItems.length; i++) {
+     const item = splitItems[i];
+     const method = item.querySelector('.payment-method').value;
+     const amount = parseFloat(item.querySelector('.payment-amount').value);
+
+     if (!method || isNaN(amount) || amount <= 0) {
+        alert('Please fill all payment details');
         return;
-    }
-    
-    formData.append('splits', JSON.stringify(splits));
-    
-    showLoading('Processing payment...');
-    
-    try {
-        const response = await fetch('process_split_payment.php', { 
-            method: 'POST', 
-            body: formData 
-        });
-        const data = await response.json();
-        hideLoading();
-        
-        if (data.success) {
-            showNotification('Payment processed successfully!', 'success');
-            closePaymentModal();
-            setTimeout(() => location.reload(), 1500);
-        } else {
-            showNotification('Error: ' + (data.error || 'Payment failed'), 'error');
+     }
+
+     totalAmount += amount;
+
+     const splitData = {
+        method: method,
+        amount: amount
+     };
+
+     if (method === 'cash') {
+        const receivedBy = item.querySelector('.received-by')?.value;
+        if (!receivedBy) {
+             alert('Please enter who received the cash');
+             return;
         }
-    } catch (error) {
-        hideLoading();
-        showNotification('Error: ' + error.message, 'error');
-    }
-}
+        splitData.received_by = receivedBy;
+     } else if (method === 'cliq') {
+        const fileInput = item.querySelector('.proof-file');
+        if (fileInput && fileInput.files[0]) {
+             formData.append('proof_' + i, fileInput.files[0]);
+        }
+     } else if (method === 'visa') {
+        const receiptId = item.querySelector('.receipt-id')?.value;
+        if (!receiptId) {
+             alert('Please enter receipt ID');
+             return;
+        }
+        splitData.receipt_id = receiptId;
+     }
+
+     splits.push(splitData);
+   }
+
+   totalAmount = Math.round(totalAmount * 100) / 100;
+   if (Math.abs(totalAmount - currentAmountDue) > 0.02) {
+     alert(`Total (${totalAmount.toFixed(2)}) does not match amount due (${currentAmountDue.toFixed(2)})`);
+     return;
+   }
+
+   formData.append('splits', JSON.stringify(splits));
+
+   showLoading('Processing payment...');
+
+   try {
+     const response = await fetch('process_split_payment.php', {
+        method: 'POST',
+        body: formData
+     });
+     const data = await response.json();
+     hideLoading();
+
+     if (data.success) {
+        showNotification('Payment processed successfully!', 'success');
+        closePaymentModal();
+        setTimeout(() => location.reload(), 1500);
+     } else {
+        showNotification('Error: ' + (data.error || 'Payment failed'), 'error');
+     }
+   } catch (error) {
+     hideLoading();
+     showNotification('Error: ' + error.message, 'error');
+   }
+  }
 
   function deleteReservation(reservationId, element) {
    const password = prompt('⚠️ SECURITY VERIFICATION REQUIRED\n\nEnter admin password to delete this reservation:\n(Default: AdminDelete2026)');
@@ -1734,23 +1737,79 @@ async function processSplitPayments() {
 
   let soundEnabled = localStorage.getItem('soundEnabled') === 'true';
 
-  function playNotificationSound() {
-   if (!soundEnabled) return;
+  let audioContext = null;
+
+  function initAudio() {
+   if (audioContext) return;
    try {
-     const audioContext = new(window.AudioContext || window.webkitAudioContext)();
-     const oscillator = audioContext.createOscillator();
-     const gainNode = audioContext.createGain();
-     oscillator.connect(gainNode);
-     gainNode.connect(audioContext.destination);
-     oscillator.frequency.value = 880;
-     gainNode.gain.value = 0.3;
-     oscillator.start();
-     gainNode.gain.exponentialRampToValueAtTime(0.00001, audioContext.currentTime + 0.5);
-     oscillator.stop(audioContext.currentTime + 0.5);
-     if (audioContext.state === 'suspended') audioContext.resume();
-   } catch (e) {}
+     audioContext = new(window.AudioContext || window.webkitAudioContext)();
+   } catch (e) {
+     console.log('Web Audio not supported');
+   }
   }
 
+  function playNotificationSound() {
+   if (!soundEnabled) return;
+
+   initAudio();
+
+   if (!audioContext) return;
+
+   try {
+     // Resume if suspended
+     if (audioContext.state === 'suspended') {
+        audioContext.resume();
+     }
+
+     const now = audioContext.currentTime;
+     const oscillator = audioContext.createOscillator();
+     const gainNode = audioContext.createGain();
+
+     oscillator.connect(gainNode);
+     gainNode.connect(audioContext.destination);
+
+     oscillator.frequency.value = 880;
+     gainNode.gain.value = 0.15;
+
+     oscillator.start();
+     gainNode.gain.exponentialRampToValueAtTime(0.00001, now + 0.3);
+     oscillator.stop(now + 0.3);
+   } catch (e) {
+     console.log('Sound error:', e);
+   }
+  }
+
+  // Initialize audio on first user click anywhere
+  document.addEventListener('click', function initAudioOnClick() {
+   initAudio();
+   if (audioContext && audioContext.state === 'suspended') {
+     audioContext.resume();
+   }
+   document.removeEventListener('click', initAudioOnClick);
+  });
+
+  // Update sound button UI
+  function updateSoundButton() {
+   const soundBtn = document.getElementById('soundToggle');
+   if (soundBtn) {
+     soundBtn.innerHTML = soundEnabled ? '<i class="bi bi-volume-up-fill"></i> Sound On' : '<i class="bi bi-volume-mute-fill"></i> Sound Off';
+     soundBtn.style.background = soundEnabled ? '#10b981' : '#64748b';
+   }
+  }
+
+  function toggleSound() {
+   soundEnabled = !soundEnabled;
+   localStorage.setItem('soundEnabled', soundEnabled);
+   updateSoundButton();
+   showNotification(`Sound ${soundEnabled ? 'enabled' : 'disabled'}`, 'info');
+  }
+
+  // Call this when page loads
+  document.addEventListener('DOMContentLoaded', function() {
+   updateSoundButton();
+  });
+
+  // Your existing showNotification function remains the same
   function showNotification(message, type = 'info') {
    const notification = document.createElement('div');
    notification.className = 'sound-notification';
