@@ -61,7 +61,7 @@ $conn->close();
 <head>
  <meta charset="UTF-8">
  <meta name="viewport" content="width=device-width, initial-scale=1.0">
- <title><?php echo t('view_reservation'); ?> - <?php echo t('ticketing_system'); ?></title>
+ <title><?php echo t('View Reservation'); ?> - <?php echo t('ticketing_system'); ?></title>
  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
  <style>
   * {
@@ -493,7 +493,7 @@ $conn->close();
    <h1><i class="bi bi-ticket-perforated"></i> <?php echo t('ticketing_system'); ?></h1>
    <div>
      <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> <?php echo t('Back To Dashboard'); ?></a>
-     <a href="logout.php" class="btn-logout"><i class="bi bi-box-arrow-right"></i> <?php echo t('logout'); ?></a>
+     <a href="logout.php" class="btn-logout"><i class="bi bi-box-arrow-right"></i> <?php echo t('Logout'); ?></a>
    </div>
   </div>
 

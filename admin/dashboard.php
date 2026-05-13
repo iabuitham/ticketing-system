@@ -189,7 +189,7 @@ $conn->close();
 <head>
  <meta charset="UTF-8">
  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
- <title><?php echo t('dashboard'); ?> - <?php echo htmlspecialchars($siteName); ?></title>
+ <title><?php echo t('Dashboard'); ?> - <?php echo htmlspecialchars($siteName); ?></title>
  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
  <style>
   * {
