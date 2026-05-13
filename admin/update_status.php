@@ -56,18 +56,16 @@ try {
     // Handle table availability based on status change
     if ($new_status == 'cancelled' || $new_status == 'expired') {
         // Release the table back to available
-        if ($table_db_id) {
-            $updateTable = $conn->prepare("
+        $updateTable = $conn->prepare("
                 UPDATE tables 
                 SET status = 'available', 
                     current_reservation_id = NULL,
                     reserved_until = NULL
-                WHERE id = ?
+                WHERE table_number = ?
             ");
-            $updateTable->bind_param("i", $table_db_id);
+            $updateTable->bind_param("s", $table_id);
             $updateTable->execute();
             $updateTable->close();
-        }
         
         $_SESSION['success'] = "Reservation " . ucfirst($new_status) . " and table has been released.";
         

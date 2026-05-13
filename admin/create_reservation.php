@@ -160,7 +160,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $stmt->close();
 
-            // Update table status to reserved in tables table
+            // After successfully creating reservation, update table status
             $updateTable = $conn->prepare("
                 UPDATE tables 
                 SET status = 'reserved', 

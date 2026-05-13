@@ -38,7 +38,7 @@ if (empty($reservation_id)) {
 
 $conn = getConnection();
 
-// Get table_id before deleting reservation
+// Get table_id and table_number before deleting reservation
 $stmt = $conn->prepare("SELECT table_id FROM reservations WHERE reservation_id = ?");
 $stmt->bind_param("s", $reservation_id);
 $stmt->execute();
@@ -50,7 +50,7 @@ if (!$reservation) {
     sendDeleteResponse(false, 'Reservation not found');
 }
 
-$table_id = $reservation['table_id'];
+$table_number = $reservation['table_id'];
 
 // Start transaction
 $conn->begin_transaction();
@@ -74,7 +74,7 @@ try {
     $stmt->execute();
     $stmt->close();
     
-    // Release the table back to available
+    // IMPORTANT: Release the table back to available
     $updateTable = $conn->prepare("
         UPDATE tables 
         SET status = 'available', 
@@ -82,7 +82,7 @@ try {
             reserved_until = NULL
         WHERE table_number = ?
     ");
-    $updateTable->bind_param("s", $table_id);
+    $updateTable->bind_param("s", $table_number);
     $updateTable->execute();
     $updateTable->close();
     
