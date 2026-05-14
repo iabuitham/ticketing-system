@@ -1,7 +1,7 @@
 <?php
-// No spaces or ANYTHING before <?php
-error_reporting(0);
-ini_set('display_errors', 0);
+// Enable temporarily for debugging - remove after testing
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 
 session_start();
 require_once '../includes/db.php';
@@ -9,25 +9,22 @@ require_once '../includes/functions.php';
 
 header('Content-Type: application/json');
 
-// Simple response function
-function sendDeleteResponse($success, $error = null) {
+function sendDeleteResponse($success, $error = null, $debug = null) {
     $response = ['success' => $success];
     if ($error) $response['error'] = $error;
+    if ($debug) $response['debug'] = $debug;
     echo json_encode($response);
     exit();
 }
 
-// Check authentication
 if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
     sendDeleteResponse(false, 'Unauthorized');
 }
 
-// Get input data
 $input = json_decode(file_get_contents('php://input'), true);
 $reservation_id = $input['reservation_id'] ?? '';
 $password = $input['password'] ?? '';
 
-// Verify password
 if ($password !== 'AdminDelete2026') {
     sendDeleteResponse(false, 'Invalid password');
 }
@@ -38,7 +35,10 @@ if (empty($reservation_id)) {
 
 $conn = getConnection();
 
-// Get table_id and table_number before deleting reservation
+// Debug info
+$debug = [];
+
+// Get table_id BEFORE deleting
 $stmt = $conn->prepare("SELECT table_id FROM reservations WHERE reservation_id = ?");
 $stmt->bind_param("s", $reservation_id);
 $stmt->execute();
@@ -50,49 +50,42 @@ if (!$reservation) {
     sendDeleteResponse(false, 'Reservation not found');
 }
 
-$table_number = $reservation['table_id'];
+$table_id = $reservation['table_id'];
+$debug['table_id'] = $table_id;
 
-// Start transaction
 $conn->begin_transaction();
 
 try {
-    // Delete from split_payments first
+    // Delete related records
     $stmt = $conn->prepare("DELETE FROM split_payments WHERE reservation_id = ?");
     $stmt->bind_param("s", $reservation_id);
     $stmt->execute();
     $stmt->close();
     
-    // Delete from ticket_codes
     $stmt = $conn->prepare("DELETE FROM ticket_codes WHERE reservation_id = ?");
     $stmt->bind_param("s", $reservation_id);
     $stmt->execute();
     $stmt->close();
     
-    // Delete the reservation
     $stmt = $conn->prepare("DELETE FROM reservations WHERE reservation_id = ?");
     $stmt->bind_param("s", $reservation_id);
     $stmt->execute();
     $stmt->close();
     
-    // IMPORTANT: Release the table back to available
-    $updateTable = $conn->prepare("
-        UPDATE tables 
-        SET status = 'available', 
-            current_reservation_id = NULL,
-            reserved_until = NULL
-        WHERE table_number = ?
-    ");
-    $updateTable->bind_param("s", $table_number);
+    // Release the table
+    $updateTable = $conn->prepare("UPDATE tables SET status = 'available', current_reservation_id = NULL, reserved_until = NULL WHERE table_number = ?");
+    $updateTable->bind_param("s", $table_id);
     $updateTable->execute();
+    $debug['table_updated'] = $updateTable->affected_rows;
     $updateTable->close();
     
     $conn->commit();
     
-    sendDeleteResponse(true);
+    sendDeleteResponse(true, null, $debug);
     
 } catch (Exception $e) {
     $conn->rollback();
-    sendDeleteResponse(false, $e->getMessage());
+    sendDeleteResponse(false, $e->getMessage(), $debug);
 }
 
 $conn->close();

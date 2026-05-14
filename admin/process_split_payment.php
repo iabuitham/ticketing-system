@@ -65,6 +65,9 @@ if (!file_exists($uploadDir)) {
     mkdir($uploadDir, 0777, true);
 }
 
+// Fix timezone issue - set to Asia/Amman
+date_default_timezone_set('Asia/Amman');
+
 $conn->begin_transaction();
 
 try {
@@ -75,11 +78,14 @@ try {
         $receipt_id = isset($split['receipt_id']) ? $split['receipt_id'] : null;
         $received_by = isset($split['received_by']) ? $split['received_by'] : ($_SESSION['admin_username'] ?? 'Admin');
         $proof_file = null;
+        $proof_text = null;  // NEW: for text-based proof
         $notes = null;
         
-        // Handle file upload for CliQ
+        // Handle CliQ payment - supports BOTH screenshot AND text proof
         if ($method == 'cliq') {
             $fileKey = "proof_$proofCounter";
+            
+            // Check for file upload (screenshot)
             if (isset($_FILES[$fileKey]) && $_FILES[$fileKey]['error'] === UPLOAD_ERR_OK) {
                 $ext = strtolower(pathinfo($_FILES[$fileKey]['name'], PATHINFO_EXTENSION));
                 $allowed = ['jpg', 'jpeg', 'png', 'gif', 'pdf'];
@@ -87,13 +93,28 @@ try {
                     $fileName = 'cliq_' . $reservation_id . '_' . time() . '_' . $proofCounter . '.' . $ext;
                     if (move_uploaded_file($_FILES[$fileKey]['tmp_name'], $uploadDir . $fileName)) {
                         $proof_file = $fileName;
+                        $notes = "CliQ payment with screenshot proof";
                     }
                 }
             }
+            
+            // Check for text proof (transaction ID or reference number)
+            if (isset($split['proof_text']) && !empty($split['proof_text'])) {
+                $proof_text = $split['proof_text'];
+                $notes = "CliQ payment with reference: " . $proof_text;
+            }
+            
+            // If no proof provided but receipt_id exists
+            if (empty($proof_file) && empty($proof_text) && !empty($receipt_id)) {
+                $proof_text = $receipt_id;
+                $notes = "CliQ payment with reference: " . $receipt_id;
+            }
+            
+            // Generate receipt_id if not provided
             if (empty($receipt_id)) {
                 $receipt_id = 'CLIQ-' . strtoupper(uniqid());
             }
-            $notes = "CliQ payment " . ($proof_file ? "with proof" : "without proof");
+            
             $proofCounter++;
         }
         
@@ -110,25 +131,26 @@ try {
             $notes = "Cash payment received by: $received_by";
         }
         
-        // INSERT with correct column names from your database
+        // Insert into split_payments
         $stmt = $conn->prepare("
             INSERT INTO split_payments 
-            (reservation_id, payment_method, amount, receipt_id, proof_file, payment_type, received_by, notes, created_at) 
-            VALUES (?, ?, ?, ?, ?, 'additional', ?, ?, NOW())
+            (reservation_id, payment_method, amount, receipt_id, proof_file, proof_path, payment_type, received_by, notes, created_at) 
+            VALUES (?, ?, ?, ?, ?, ?, 'additional', ?, ?, NOW())
         ");
         
-        // Ensure no NULL values
         $receipt_id = $receipt_id ?? '';
         $proof_file = $proof_file ?? '';
+        $proof_text_for_db = $proof_text ?? '';  // Store text proof in proof_path column
         $received_by = $received_by ?? 'System';
         $notes = $notes ?? '';
         
-        $stmt->bind_param("ssdssss", 
+        $stmt->bind_param("ssdsssss", 
             $reservation_id, 
             $method, 
             $amount, 
             $receipt_id, 
             $proof_file, 
+            $proof_text_for_db, 
             $received_by, 
             $notes
         );
@@ -151,8 +173,8 @@ try {
     
     $conn->commit();
     
-    // Send WhatsApp confirmation (optional - uncomment if needed)
-    // sendPaymentConfirmation($reservation_id, $total_amount, $splits, $new_total_paid, $total_amount_due);
+    // Send WhatsApp confirmation
+    sendPaymentConfirmation($reservation_id, $total_amount, $splits, $new_total_paid, $total_amount_due);
     
     sendResponse(true, null, ['total_paid' => $new_total_paid, 'status' => $new_status]);
     
@@ -163,9 +185,6 @@ try {
 
 $conn->close();
 
-/**
- * Send payment confirmation via WhatsApp (optional)
- */
 function sendPaymentConfirmation($reservation_id, $total_amount, $splits, $new_total_paid, $total_amount_due) {
     $conn = getConnection();
     
@@ -182,29 +201,32 @@ function sendPaymentConfirmation($reservation_id, $total_amount, $splits, $new_t
     $ticketLink = $baseUrl . "public/reservation_tickets.php?id=" . urlencode($reservation_id);
     $currencySymbol = getCurrencySymbol();
     
-    $message = "✅ *PAYMENT CONFIRMED!* ✅\n\n";
-    $message .= "Dear {$reservation['name']},\n\n";
-    $message .= "Your payment of " . $currencySymbol . " " . number_format($total_amount, 2) . " has been successfully processed.\n\n";
-    
-    $message .= "💰 *Payment Breakdown:*\n";
+    $paymentBreakdown = "";
     foreach ($splits as $split) {
         $methodName = ucfirst($split['method']);
-        $message .= "• $methodName: " . $currencySymbol . " " . number_format($split['amount'], 2) . "\n";
+        $paymentBreakdown .= "• $methodName: " . $currencySymbol . " " . number_format($split['amount'], 2) . "\n";
     }
-    
-    $message .= "\n📋 *Reservation ID:* {$reservation_id}\n";
-    $message .= "🍽️ *Table:* {$reservation['table_id']}\n";
     
     if ($new_total_paid >= $total_amount_due) {
-        $message .= "\n✅ *Status:* FULLY PAID\n";
-        $message .= "\n🎫 *Your tickets are ready!*\n";
+        $message = "✅ *PAYMENT CONFIRMED - FULLY PAID!* ✅\n\n";
+        $message .= "Dear {$reservation['name']},\n\n";
+        $message .= "Your reservation is now **FULLY PAID**.\n\n";
+        $message .= "💰 *Payment Details:*\n" . $paymentBreakdown;
+        $message .= "\n📋 *Reservation ID:* {$reservation_id}\n";
+        $message .= "🍽️ *Table:* {$reservation['table_id']}\n\n";
+        $message .= "🎫 *YOUR TICKETS:*\n";
         $message .= $ticketLink . "\n\n";
+        $message .= "🎉 Thank you! 🎉";
     } else {
         $remaining = $total_amount_due - $new_total_paid;
-        $message .= "\n⚠️ *Remaining Balance:* " . $currencySymbol . " " . number_format($remaining, 2) . "\n";
+        $message = "💰 *PARTIAL PAYMENT RECEIVED* 💰\n\n";
+        $message .= "Dear {$reservation['name']},\n\n";
+        $message .= "Payment received: " . $currencySymbol . " " . number_format($total_amount, 2) . "\n";
+        $message .= "⚠️ *Remaining Balance:* " . $currencySymbol . " " . number_format($remaining, 2) . "\n\n";
+        $message .= "📋 *Reservation ID:* {$reservation_id}\n";
+        $message .= "Complete the payment to receive your tickets.\n\n";
+        $message .= "🎉 Thank you! 🎉";
     }
-    
-    $message .= "🎉 Thank you for your payment! 🎉";
     
     sendWhatsAppMessage($reservation['phone'], $message);
 }

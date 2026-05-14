@@ -16,4 +16,8 @@ function getConnection() {
     
     return $conn;
 }
+
+date_default_timezone_set('Asia/Amman');
+$currentDateTime = date('Y-m-d H:i:s');
+
 ?>

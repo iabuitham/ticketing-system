@@ -41,9 +41,15 @@ $amount_due = $total_amount - $total_paid;
 $currency = getSetting('currency', 'JOD');
 $currencySymbol = getCurrencySymbol();
 
-// Get payment splits (no proof column in split_payments table)
 $stmt = $conn->prepare("
-    SELECT sp.* 
+    SELECT sp.*, 
+           CASE 
+               WHEN sp.payment_method = 'cliq' AND sp.proof_file IS NOT NULL AND sp.proof_file != ''
+               THEN CONCAT('../uploads/', sp.proof_file)
+               WHEN sp.payment_method = 'cliq' AND sp.proof_path IS NOT NULL AND sp.proof_path != ''
+               THEN CONCAT('../uploads/', sp.proof_path)
+               ELSE NULL 
+           END as proof_url
     FROM split_payments sp 
     WHERE sp.reservation_id = ? 
     ORDER BY sp.created_at DESC
@@ -52,6 +58,12 @@ $stmt->bind_param("s", $reservation_id);
 $stmt->execute();
 $payments = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
+
+$total_paid = 0;
+foreach ($payments as $payment) {
+    $total_paid += floatval($payment['amount']);
+}
+$amount_due = floatval($reservation['total_amount']) - $total_paid;
 
 $conn->close();
 ?>

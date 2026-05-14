@@ -1458,44 +1458,46 @@ $conn->close();
    }
   }
 
-  function togglePaymentFields(selectElement, index) {
-   const method = selectElement.value;
-   const paymentFields = selectElement.closest('.payment-split-item').querySelector('.payment-fields');
+function togglePaymentFields(selectElement, index) {
+    const method = selectElement.value;
+    const paymentFields = selectElement.closest('.payment-split-item').querySelector('.payment-fields');
 
-   if (method === 'cash') {
-     paymentFields.innerHTML = `
-     <div class="form-group">
-             <label><i class="bi bi-person"></i> Received By (Staff Name)</label>
-             <input type="text" class="received-by" placeholder="Enter staff name" required>
-     </div>
-  `;
-     paymentFields.style.display = 'block';
-   } else if (method === 'cliq') {
-     paymentFields.innerHTML = `
-     <div class="form-group">
-             <label><i class="bi bi-image"></i> Upload Screenshot Evidence</label>
-             <input type="file" class="proof-file" accept="image/*" onchange="previewImage(this)">
-             <div class="cliq-preview"></div>
-             <small style="color: #64748b;">Please upload a screenshot of the CliQ payment confirmation</small>
-     </div>
-  `;
-     paymentFields.style.display = 'block';
-   } else if (method === 'visa') {
-     paymentFields.innerHTML = `
-     <div class="form-group">
-             <label><i class="bi bi-receipt"></i> Receipt ID / Transaction ID</label>
-             <input type="text" class="receipt-id" placeholder="Enter Visa receipt ID" required>
-             <small style="color: #64748b;">Enter the receipt number from the Visa transaction</small>
-     </div>
-  `;
-     paymentFields.style.display = 'block';
-   } else {
-     paymentFields.style.display = 'none';
-     paymentFields.innerHTML = '';
-   }
-
-   updateRemainingAmount();
-  }
+    if (method === 'cash') {
+        paymentFields.innerHTML = `
+            <div class="form-group">
+                <label><i class="bi bi-person"></i> Received By (Staff Name)</label>
+                <input type="text" class="received-by" placeholder="Enter staff name" required>
+            </div>
+        `;
+        paymentFields.style.display = 'block';
+    } else if (method === 'cliq') {
+        paymentFields.innerHTML = `
+            <div class="form-group">
+                <label><i class="bi bi-image"></i> Upload Screenshot (Optional)</label>
+                <input type="file" class="proof-file" accept="image/*" onchange="previewImage(this)">
+                <div class="cliq-preview"></div>
+            </div>
+            <div class="form-group">
+                <label><i class="bi bi-pencil"></i> Or Enter Reference Number / Transaction ID</label>
+                <input type="text" class="proof-text" placeholder="Enter CliQ reference number or transaction ID">
+                <small style="color: #64748b;">You can either upload a screenshot OR enter the reference number</small>
+            </div>
+        `;
+        paymentFields.style.display = 'block';
+    } else if (method === 'visa') {
+        paymentFields.innerHTML = `
+            <div class="form-group">
+                <label><i class="bi bi-receipt"></i> Receipt ID / Transaction ID</label>
+                <input type="text" class="receipt-id" placeholder="Enter Visa receipt ID" required>
+                <small style="color: #64748b;">Enter the receipt number from the Visa transaction</small>
+            </div>
+        `;
+        paymentFields.style.display = 'block';
+    } else {
+        paymentFields.style.display = 'none';
+        paymentFields.innerHTML = '';
+    }
+}
 
   function previewImage(input) {
    if (input.files && input.files[0]) {
@@ -1610,85 +1612,86 @@ $conn->close();
    }
   }
 
-  async function processSplitPayments() {
-   const splits = [];
-   const splitItems = document.querySelectorAll('.payment-split-item');
-   let totalAmount = 0;
-
-   const formData = new FormData();
-   formData.append('reservation_id', currentReservationId);
-
-   for (let i = 0; i < splitItems.length; i++) {
-     const item = splitItems[i];
-     const method = item.querySelector('.payment-method').value;
-     const amount = parseFloat(item.querySelector('.payment-amount').value);
-
-     if (!method || isNaN(amount) || amount <= 0) {
-        alert('Please fill all payment details');
+async function processSplitPayments() {
+    const splits = [];
+    const splitItems = document.querySelectorAll('.payment-split-item');
+    let totalAmount = 0;
+    
+    const formData = new FormData();
+    formData.append('reservation_id', currentReservationId);
+    
+    for (let i = 0; i < splitItems.length; i++) {
+        const item = splitItems[i];
+        const method = item.querySelector('.payment-method').value;
+        const amount = parseFloat(item.querySelector('.payment-amount').value);
+        
+        if (!method || isNaN(amount) || amount <= 0) {
+            alert('Please fill all payment details');
+            return;
+        }
+        
+        totalAmount += amount;
+        
+        const splitData = { method: method, amount: amount };
+        
+        if (method === 'cash') {
+            const receivedBy = item.querySelector('.received-by')?.value;
+            if (!receivedBy) {
+                alert('Please enter who received the cash');
+                return;
+            }
+            splitData.received_by = receivedBy;
+        } else if (method === 'cliq') {
+            const fileInput = item.querySelector('.proof-file');
+            if (fileInput && fileInput.files[0]) {
+                formData.append('proof_' + i, fileInput.files[0]);
+            }
+            const proofText = item.querySelector('.proof-text')?.value;
+            if (proofText) {
+                splitData.proof_text = proofText;
+            }
+        } else if (method === 'visa') {
+            const receiptId = item.querySelector('.receipt-id')?.value;
+            if (!receiptId) {
+                alert('Please enter receipt ID');
+                return;
+            }
+            splitData.receipt_id = receiptId;
+        }
+        
+        splits.push(splitData);
+    }
+    
+    totalAmount = Math.round(totalAmount * 100) / 100;
+    if (Math.abs(totalAmount - currentAmountDue) > 0.02) {
+        alert(`Total (${totalAmount.toFixed(2)}) does not match amount due (${currentAmountDue.toFixed(2)})`);
         return;
-     }
-
-     totalAmount += amount;
-
-     const splitData = {
-        method: method,
-        amount: amount
-     };
-
-     if (method === 'cash') {
-        const receivedBy = item.querySelector('.received-by')?.value;
-        if (!receivedBy) {
-             alert('Please enter who received the cash');
-             return;
+    }
+    
+    formData.append('splits', JSON.stringify(splits));
+    
+    showLoading('Processing payment...');
+    
+    try {
+        const response = await fetch('process_split_payment.php', { 
+            method: 'POST', 
+            body: formData 
+        });
+        const data = await response.json();
+        hideLoading();
+        
+        if (data.success) {
+            showNotification('Payment processed successfully!', 'success');
+            closePaymentModal();
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showNotification('Error: ' + (data.error || 'Payment failed'), 'error');
         }
-        splitData.received_by = receivedBy;
-     } else if (method === 'cliq') {
-        const fileInput = item.querySelector('.proof-file');
-        if (fileInput && fileInput.files[0]) {
-             formData.append('proof_' + i, fileInput.files[0]);
-        }
-     } else if (method === 'visa') {
-        const receiptId = item.querySelector('.receipt-id')?.value;
-        if (!receiptId) {
-             alert('Please enter receipt ID');
-             return;
-        }
-        splitData.receipt_id = receiptId;
-     }
-
-     splits.push(splitData);
-   }
-
-   totalAmount = Math.round(totalAmount * 100) / 100;
-   if (Math.abs(totalAmount - currentAmountDue) > 0.02) {
-     alert(`Total (${totalAmount.toFixed(2)}) does not match amount due (${currentAmountDue.toFixed(2)})`);
-     return;
-   }
-
-   formData.append('splits', JSON.stringify(splits));
-
-   showLoading('Processing payment...');
-
-   try {
-     const response = await fetch('process_split_payment.php', {
-        method: 'POST',
-        body: formData
-     });
-     const data = await response.json();
-     hideLoading();
-
-     if (data.success) {
-        showNotification('Payment processed successfully!', 'success');
-        closePaymentModal();
-        setTimeout(() => location.reload(), 1500);
-     } else {
-        showNotification('Error: ' + (data.error || 'Payment failed'), 'error');
-     }
-   } catch (error) {
-     hideLoading();
-     showNotification('Error: ' + error.message, 'error');
-   }
-  }
+    } catch (error) {
+        hideLoading();
+        showNotification('Error: ' + error.message, 'error');
+    }
+}
 
   function deleteReservation(reservationId, element) {
    const password = prompt('⚠️ SECURITY VERIFICATION REQUIRED\n\nEnter admin password to delete this reservation:\n(Default: AdminDelete2026)');
