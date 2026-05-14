@@ -236,8 +236,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $whatsappMessage .= "عبر خدمة CliQ إلى:\n";
             $whatsappMessage .= "*Alias | الاسم المستعار: ABUFARES79*\n";
             $whatsappMessage .= "*Bank | البنك: Arab Bank | البنك العربي*\n\n";
-            $whatsappMessage .= "Then send a screenshot of the transfer to this number.\n";
-            $whatsappMessage .= "ثم أرسل صورة إثبات التحويل إلى هذا الرقم.\n\n";
+            $whatsappMessage .= "Then send a screenshot of the transfer to the number 0795410115.\n";
+            $whatsappMessage .= "ثم قم أرسل صورة إثبات التحويل إلى الرقم 0795410115.\n\n";
             $whatsappMessage .= "We look forward to serving you! 🎉\n";
             $whatsappMessage .= "نتطلع لخدمتك! 🎉\n\n";
             $whatsappMessage .= "_Thank you for choosing us | شكرًا لاختياركم لنا_";
