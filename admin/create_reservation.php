@@ -22,58 +22,67 @@ $selected_event_id = $_SESSION['selected_event_id'] ?? 0;
 $selected_event_name = $_SESSION['selected_event_name'] ?? 'No Event Selected';
 $selected_event_date = $_SESSION['selected_event_date'] ?? '';
 
-// Get event-specific ticket prices
-$event_ticket_prices = $_SESSION['event_ticket_prices'] ?? null;
+// ALWAYS fetch fresh data from database - don't rely on session
+$adultPrice = getSetting('ticket_price_adult', 10);
+$teenPrice = getSetting('ticket_price_teen', 10);
+$kidPrice = getSetting('ticket_price_kid', 0);
 $earlyBirdActive = false;
 $earlyBirdDeadline = null;
 
-if (!$event_ticket_prices && $selected_event_id > 0) {
-    $stmt = $conn->prepare("SELECT ticket_price_adult, ticket_price_teen, ticket_price_kid, event_name, event_date, early_bird_enabled, early_bird_deadline, early_bird_price_adult, early_bird_price_teen, early_bird_price_kid FROM event_settings WHERE id = ?");
+if ($selected_event_id > 0) {
+    // Always fetch from database, not just when session is empty
+    $stmt = $conn->prepare("SELECT 
+        ticket_price_adult, 
+        ticket_price_teen, 
+        ticket_price_kid, 
+        event_name, 
+        event_date,
+        early_bird_enabled,
+        early_bird_deadline,
+        early_bird_price_adult,
+        early_bird_price_teen,
+        early_bird_price_kid
+        FROM event_settings WHERE id = ?");
     $stmt->bind_param("i", $selected_event_id);
     $stmt->execute();
     $event_data = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 
     if ($event_data) {
-        $event_ticket_prices = [
-            'adult' => $event_data['ticket_price_adult'],
-            'teen' => $event_data['ticket_price_teen'],
-            'kid' => $event_data['ticket_price_kid']
-        ];
-        $_SESSION['event_ticket_prices'] = $event_ticket_prices;
+        // Set prices from database
+        $adultPrice = $event_data['ticket_price_adult'];
+        $teenPrice = $event_data['ticket_price_teen'];
+        $kidPrice = $event_data['ticket_price_kid'];
+        
+        // Update session for other pages
         $_SESSION['selected_event_name'] = $event_data['event_name'];
         $_SESSION['selected_event_date'] = $event_data['event_date'];
-        
-        // Store early bird info in session
-        $_SESSION['early_bird_enabled'] = $event_data['early_bird_enabled'];
-        $_SESSION['early_bird_deadline'] = $event_data['early_bird_deadline'];
-        $_SESSION['early_bird_prices'] = [
-            'adult' => $event_data['early_bird_price_adult'],
-            'teen' => $event_data['early_bird_price_teen'],
-            'kid' => $event_data['early_bird_price_kid']
+        $_SESSION['event_ticket_prices'] = [
+            'adult' => $adultPrice,
+            'teen' => $teenPrice,
+            'kid' => $kidPrice
         ];
         
-        // Set early bird variables for this page
-        if ($event_data['early_bird_enabled'] && $event_data['early_bird_deadline']) {
+        // Check early bird
+        if ($event_data['early_bird_enabled'] && !empty($event_data['early_bird_deadline'])) {
             $today = date('Y-m-d');
             if ($today <= $event_data['early_bird_deadline']) {
                 $earlyBirdActive = true;
                 $earlyBirdDeadline = $event_data['early_bird_deadline'];
+                
+                // Apply early bird prices if set and greater than 0
+                if (!empty($event_data['early_bird_price_adult']) && $event_data['early_bird_price_adult'] > 0) {
+                    $adultPrice = $event_data['early_bird_price_adult'];
+                }
+                if (!empty($event_data['early_bird_price_teen']) && $event_data['early_bird_price_teen'] > 0) {
+                    $teenPrice = $event_data['early_bird_price_teen'];
+                }
+                if (!empty($event_data['early_bird_price_kid']) && $event_data['early_bird_price_kid'] > 0) {
+                    $kidPrice = $event_data['early_bird_price_kid'];
+                }
             }
         }
     }
-}
-
-// Use event-specific prices or fall back to system settings
-$adultPrice = $event_ticket_prices['adult'] ?? getSetting('ticket_price_adult', 10);
-$teenPrice = $event_ticket_prices['teen'] ?? getSetting('ticket_price_teen', 10);
-$kidPrice = $event_ticket_prices['kid'] ?? getSetting('ticket_price_kid', 0);
-
-// Apply early bird prices if active
-if ($earlyBirdActive && isset($_SESSION['early_bird_prices'])) {
-    if ($_SESSION['early_bird_prices']['adult'] > 0) $adultPrice = $_SESSION['early_bird_prices']['adult'];
-    if ($_SESSION['early_bird_prices']['teen'] > 0) $teenPrice = $_SESSION['early_bird_prices']['teen'];
-    if ($_SESSION['early_bird_prices']['kid'] > 0) $kidPrice = $_SESSION['early_bird_prices']['kid'];
 }
 
 $currencySymbol = getCurrencySymbol();
