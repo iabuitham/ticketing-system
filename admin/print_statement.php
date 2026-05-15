@@ -64,7 +64,7 @@ $conn->close();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <html lang="<?php echo $lang; ?>" dir="<?php echo getDirection(); ?>">
+    <html lang="<?php echo getCurrentLanguage(); ?>" dir="<?php echo getDirection(); ?>">
     <link rel="stylesheet" href="../assets/css/dark-mode.css">
     <title>Reservation Statement - Ticketing System</title>
     <style>

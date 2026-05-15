@@ -129,7 +129,7 @@ $conn->close();
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
     <title>Management Report - Ticketing System</title>
-    <html lang="<?php echo $lang; ?>" dir="<?php echo getDirection(); ?>">
+    <html lang="<?php echo getCurrentLanguage(); ?>" dir="<?php echo getDirection(); ?>">
     <link rel="stylesheet" href="../assets/css/dark-mode.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
