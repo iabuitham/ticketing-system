@@ -12,12 +12,15 @@ function getConnection() {
         die("Connection failed: " . $conn->connect_error);
     }
     
+    // Set charset to utf8mb4 for proper Arabic/unicode support
     $conn->set_charset("utf8mb4");
+    
+    // Force MySQL to use Jordan timezone (UTC+3)
+    $conn->query("SET time_zone = '" . DB_TIMEZONE . "'");
     
     return $conn;
 }
 
-date_default_timezone_set('Asia/Amman');
+// Current datetime in Jordan timezone (use this instead of NOW() if needed)
 $currentDateTime = date('Y-m-d H:i:s');
-
 ?>
