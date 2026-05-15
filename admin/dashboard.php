@@ -93,24 +93,30 @@ foreach ($reservations as &$res) {
 }
 unset($res);
 
-// Get statistics
-$statsResult = $conn->query("SELECT 
- COUNT(*) as total,
- SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
- SUM(CASE WHEN status = 'registered' THEN 1 ELSE 0 END) as registered,
- SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid,
- SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
- SUM(additional_amount_due) as total_additional_due
-FROM reservations");
+// Get statistics - FIXED for correct amount due calculation
+$statsResult = $conn->query("
+    SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN status = 'registered' THEN 1 ELSE 0 END) as registered,
+        SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid,
+        SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
+        (SELECT COALESCE(SUM(r.total_amount), 0) - COALESCE(SUM(sp.amount), 0) 
+         FROM reservations r 
+         LEFT JOIN split_payments sp ON r.reservation_id = sp.reservation_id 
+         WHERE r.status NOT IN ('paid', 'cancelled')
+         GROUP BY r.reservation_id) as total_additional_due
+    FROM reservations
+");
 
 $stats = $statsResult->fetch_assoc();
 $stats = [
- 'total' => $stats['total'] ?? 0,
- 'pending' => $stats['pending'] ?? 0,
- 'registered' => $stats['registered'] ?? 0,
- 'paid' => $stats['paid'] ?? 0,
- 'cancelled' => $stats['cancelled'] ?? 0,
- 'total_additional_due' => $stats['total_additional_due'] ?? 0
+    'total' => $stats['total'] ?? 0,
+    'pending' => $stats['pending'] ?? 0,
+    'registered' => $stats['registered'] ?? 0,
+    'paid' => $stats['paid'] ?? 0,
+    'cancelled' => $stats['cancelled'] ?? 0,
+    'total_additional_due' => $stats['total_additional_due'] ?? 0
 ];
 
 // Get attendee stats
