@@ -275,10 +275,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   if ($guests_increased) {
    $added_guests = $guest_change;
 
-   $message = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
-   $message .= "📢 *RESERVATION UPDATED - GUESTS INCREASED* 📢\n";
+   $message = "📢 *RESERVATION UPDATED - GUESTS INCREASED* 📢\n";
    $message .= "📢 *تم تحديث الحجز - زيادة عدد الضيوف* 📢\n";
-   $message .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
 
    $message .= "Dear {$name},\n";
    $message .= "عزيزنا {$name}،\n\n";
@@ -286,13 +284,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
    $message .= "Your reservation has been updated.\n";
    $message .= "تم تحديث حجزك بنجاح.\n\n";
 
-   $message .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
-   $message .= "📋 *Reservation ID | رقم الحجز:* {$new_reservation_id}\n";
+   $message = "📋 *Reservation ID | رقم الحجز:* {$new_reservation_id}\n";
    $message .= "👥 *Guests added | عدد الضيوف المضافين:* +{$added_guests}\n";
    $message .= "👤 *New total guests | إجمالي الضيوف الجديد:* {$new_total}\n";
    $message .= "🍽️ *Table | الطاولة:* {$table_id}\n";
    $message .= "💰 *Additional amount due | المبلغ الإضافي المستحق:* {$currencySymbol} " . number_format($new_additional_due, 2) . "\n";
-   $message .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
 
    $message .= "Please complete the payment using the steps used before.\n";
    $message .= "يرجى إكمال الدفع باستخدام نفس الخطوات السابقة.\n\n";
@@ -306,10 +302,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   if ($guests_decreased && $credit_amount > 0) {
    $removed_guests = abs($guest_change);
 
-   $message = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
-   $message .= "📢 *RESERVATION UPDATED - GUESTS DECREASED* 📢\n";
+   $message = "📢 *RESERVATION UPDATED - GUESTS DECREASED* 📢\n";
    $message .= "📢 *تم تحديث الحجز - انخفاض عدد الضيوف* 📢\n";
-   $message .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
 
    $message .= "Dear {$name},\n";
    $message .= "عزيزنا {$name}،\n\n";
@@ -317,13 +311,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
    $message .= "Your reservation has been updated.\n";
    $message .= "تم تحديث حجزك بنجاح.\n\n";
 
-   $message .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
-   $message .= "📋 *Reservation ID | رقم الحجز:* {$new_reservation_id}\n";
+   $message = "📋 *Reservation ID | رقم الحجز:* {$new_reservation_id}\n";
    $message .= "👥 *Guests removed | عدد الضيوف المخفضين:* {$removed_guests}\n";
    $message .= "👤 *New total guests | إجمالي الضيوف الجديد:* {$new_total}\n";
    $message .= "🍽️ *Table | الطاولة:* {$table_id}\n";
    $message .= "💰 *Credit amount | قيمة الرصيد الدائن:* {$currencySymbol} " . number_format($credit_amount, 2) . "\n";
-   $message .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
 
    $message .= "A credit note has been created. Our team will contact you regarding the refund.\n";
    $message .= "تم إنشاء إشعار دائن. سيتواصل معك فريقنا بخصوص استرداد المبلغ.\n\n";
