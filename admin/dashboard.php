@@ -1321,39 +1321,39 @@ $conn->close();
  <div id="exportModal" class="modal-overlay">
   <div class="modal-container">
    <div class="modal-header">
-     <h3><i class="bi bi-filetype-csv"></i> <?php echo t('export_csv'); ?></h3>
+     <h3><i class="bi bi-filetype-csv"></i> <?php echo t('Export CSV'); ?></h3>
      <button onclick="closeExportModal()" class="modal-close">&times;</button>
    </div>
    <div class="modal-body">
      <div style="background: #f1f5f9; border-radius: 16px; padding: 16px; margin-bottom: 20px;">
-        <p style="margin: 0; color: #334155;"><i class="bi bi-info-circle"></i> <?php echo t('select_export_options'); ?></p>
+        <p style="margin: 0; color: #334155;"><i class="bi bi-info-circle"></i> <?php echo t('Select Export Options'); ?></p>
      </div>
 
      <form id="exportForm" method="GET" action="export_csv.php">
         <div style="margin-bottom: 20px;">
-             <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #334155; font-size: 14px;"><i class="bi bi-funnel"></i> <?php echo t('filter_by_status'); ?></label>
+             <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #334155; font-size: 14px;"><i class="bi bi-funnel"></i> <?php echo t('Filter By Status'); ?></label>
              <select name="status" style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 12px; font-size: 14px;">
-                     <option value="all"><?php echo t('all'); ?></option>
-                     <option value="pending"><?php echo t('pending'); ?></option>
-                     <option value="registered"><?php echo t('registered'); ?></option>
-                     <option value="paid"><?php echo t('paid'); ?></option>
-                     <option value="cancelled"><?php echo t('cancelled'); ?></option>
+                     <option value="all"><?php echo t('All'); ?></option>
+                     <option value="pending"><?php echo t('Pending'); ?></option>
+                     <option value="registered"><?php echo t('Registered'); ?></option>
+                     <option value="paid"><?php echo t('Paid'); ?></option>
+                     <option value="cancelled"><?php echo t('Cancelled'); ?></option>
              </select>
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
              <div>
-                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #334155; font-size: 14px;"><i class="bi bi-calendar"></i> <?php echo t('from_date'); ?></label>
+                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #334155; font-size: 14px;"><i class="bi bi-calendar"></i> <?php echo t('From Date'); ?></label>
                      <input type="date" name="from" style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 12px; font-size: 14px;">
              </div>
              <div>
-                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #334155; font-size: 14px;"><i class="bi bi-calendar"></i> <?php echo t('to_date'); ?></label>
+                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #334155; font-size: 14px;"><i class="bi bi-calendar"></i> <?php echo t('To Date'); ?></label>
                      <input type="date" name="to" style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 12px; font-size: 14px;">
              </div>
         </div>
 
         <div style="background: #e0e7ff; border-radius: 12px; padding: 12px; margin-bottom: 20px;">
-             <small style="color: #3730a3;"><i class="bi bi-info-square"></i> 📌 <?php echo t('export_note'); ?></small>
+             <small style="color: #3730a3;"><i class="bi bi-info-square"></i> 📌 <?php echo t('Export Note'); ?></small>
         </div>
 
         <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
