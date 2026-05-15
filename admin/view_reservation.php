@@ -703,43 +703,81 @@ $conn->close();
                                         <?php elseif ($payment['payment_method'] == 'cliq'): ?>
     <div class="proof-container">
         <?php 
-        // Clearer detection logic
-        $has_image = !empty($payment['proof_url']) && file_exists(str_replace('../', '', $payment['proof_url']));
-        $has_text_proof = !empty($payment['proof_path']) && 
-                          (strpos($payment['proof_path'], 'CLIQ-') === 0 || 
-                           strpos($payment['proof_path'], 'REF-') === 0 ||
-                           strpos($payment['proof_path'], 'TX-') === 0 ||
-                           (strlen($payment['proof_path']) > 10 && strpos($payment['proof_path'], '.') === false));
+        // CRITICAL: Check for image FIRST - look for file extensions
+        $is_image = false;
+        $image_path = null;
+        
+        // Check proof_file for image extensions
+        if (!empty($payment['proof_file'])) {
+            $ext = strtolower(pathinfo($payment['proof_file'], PATHINFO_EXTENSION));
+            if (in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'])) {
+                $is_image = true;
+                $image_path = '../uploads/' . $payment['proof_file'];
+            }
+        }
+        
+        // Check proof_path for image extensions if not already found
+        if (!$is_image && !empty($payment['proof_path'])) {
+            $ext = strtolower(pathinfo($payment['proof_path'], PATHINFO_EXTENSION));
+            if (in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'])) {
+                $is_image = true;
+                $image_path = '../uploads/' . $payment['proof_path'];
+            }
+        }
+        
+        // Text proof detection (only if not an image)
+        $is_text = false;
+        $text_value = null;
+        
+        if (!$is_image && !empty($payment['proof_path'])) {
+            // Check if it looks like a reference number (starts with CLIQ-, REF-, TX-)
+            if (preg_match('/^(CLIQ-|REF-|TX-|TRX-)/i', $payment['proof_path'])) {
+                $is_text = true;
+                $text_value = $payment['proof_path'];
+            }
+            // Also treat long alphanumeric strings as text proof
+            elseif (preg_match('/^[A-Z0-9-]{10,}$/i', $payment['proof_path'])) {
+                $is_text = true;
+                $text_value = $payment['proof_path'];
+            }
+        }
+        
         $has_receipt = !empty($payment['receipt_id']);
         ?>
         
-        <?php if ($has_image): ?>
-            <!-- Image proof (screenshot) - ONLY show if actual image file exists -->
+        <?php if ($is_image && $image_path): ?>
+            <!-- IMAGE PROOF (Screenshot) -->
             <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                <i class="bi bi-image"></i>
-                <img src="<?php echo $payment['proof_url']; ?>" 
+                <i class="bi bi-image" style="color: #8b5cf6;"></i>
+                <img src="<?php echo $image_path; ?>" 
                      class="proof-thumbnail" 
-                     onclick="window.open('<?php echo $payment['proof_url']; ?>', '_blank')"
-                     alt="CliQ Screenshot">
-                <a href="<?php echo $payment['proof_url']; ?>" download class="btn btn-sm btn-secondary">
+                     onclick="window.open('<?php echo $image_path; ?>', '_blank')"
+                     alt="CliQ Screenshot"
+                     style="max-width: 80px; max-height: 80px; border-radius: 8px; cursor: pointer; border: 1px solid #ddd;">
+                <a href="<?php echo $image_path; ?>" download class="btn btn-sm btn-secondary">
                     <i class="bi bi-download"></i> Download
                 </a>
             </div>
-        <?php elseif ($has_text_proof): ?>
-            <!-- Text proof (reference number) - ONLY show when no image exists -->
+            
+        <?php elseif ($is_text && $text_value): ?>
+            <!-- TEXT PROOF (Reference Number) -->
             <div class="proof-text-reference">
                 <i class="bi bi-file-text"></i>
                 <strong>CliQ Reference Number:</strong><br>
-                <code><?php echo htmlspecialchars($payment['proof_path']); ?></code>
+                <code style="background: #e2e3e5; padding: 4px 8px; border-radius: 4px; font-size: 12px; display: inline-block; margin-top: 5px;">
+                    <?php echo htmlspecialchars($text_value); ?>
+                </code>
             </div>
+            
         <?php elseif ($has_receipt): ?>
-            <!-- Receipt ID only - ONLY when no image and no text proof -->
+            <!-- RECEIPT ID ONLY -->
             <div class="proof-receipt-only">
                 <i class="bi bi-receipt"></i>
                 <strong>Receipt ID:</strong> <?php echo htmlspecialchars($payment['receipt_id']); ?>
             </div>
+            
         <?php else: ?>
-            <!-- No proof at all -->
+            <!-- NO PROOF -->
             <span class="text-muted">No proof provided</span>
         <?php endif; ?>
         
@@ -748,8 +786,7 @@ $conn->close();
                 <i class="bi bi-chat"></i> <?php echo htmlspecialchars($payment['notes']); ?>
             </div>
         <?php endif; ?>
-    </div>
-                                        <?php elseif ($payment['payment_method'] == 'visa'): ?>
+    </div>                                        <?php elseif ($payment['payment_method'] == 'visa'): ?>
                                             <div style="display: flex; align-items: center; gap: 5px;">
                                                 <i class="bi bi-receipt"></i>
                                                 <span><strong>Receipt ID:</strong> <?php echo htmlspecialchars($payment['receipt_id']); ?></span>
