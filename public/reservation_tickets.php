@@ -53,38 +53,59 @@ if (empty($tickets)) {
     <title>Your Tickets - <?php echo htmlspecialchars($reservation['name']); ?></title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * { 
+            margin: 0; 
+            padding: 0; 
+            box-sizing: border-box; 
+        }
+        
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            background: #0A0A0A;
             min-height: 100vh;
             padding: 20px;
         }
-        .container { max-width: 900px; margin: 0 auto; }
         
+        .container { 
+            max-width: 900px; 
+            margin: 0 auto; 
+        }
+        
+        /* Header */
         .header {
             text-align: center;
             margin-bottom: 30px;
-            color: white;
         }
-        .header h1 { font-size: 32px; margin-bottom: 10px; }
-        .header p { opacity: 0.9; }
         
+        .header h1 { 
+            font-size: 32px; 
+            margin-bottom: 10px;
+            color: #C8A96B;
+            font-weight: 600;
+        }
+        
+        .header p { 
+            color: #D88A3D;
+            opacity: 0.9;
+        }
+        
+        /* Reservation Card */
         .reservation-card {
-            background: white;
+            background: #1a1a1a;
             border-radius: 24px;
             padding: 25px;
             margin-bottom: 30px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+            border: 1px solid #5B4633;
         }
         
         .reservation-title {
             font-size: 20px;
             font-weight: bold;
-            color: #1e293b;
+            color: #C8A96B;
             margin-bottom: 15px;
             padding-bottom: 10px;
-            border-bottom: 2px solid #e2e8f0;
+            border-bottom: 2px solid #5B4633;
         }
         
         .info-grid {
@@ -99,19 +120,21 @@ if (empty($tickets)) {
         }
         
         .info-label {
-            font-size: 12px;
-            color: #64748b;
+            font-size: 11px;
+            color: #A86B2A;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 1px;
+            font-weight: 600;
         }
         
         .info-value {
             font-size: 16px;
             font-weight: 600;
-            color: #1e293b;
+            color: #F2ECE2;
             margin-top: 5px;
         }
         
+        /* Ticket Grid */
         .ticket-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
@@ -120,32 +143,34 @@ if (empty($tickets)) {
         }
         
         .ticket-card {
-            background: white;
+            background: #1a1a1a;
             border-radius: 20px;
             overflow: hidden;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-            transition: transform 0.3s ease;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
             break-inside: avoid;
             page-break-inside: avoid;
+            border: 1px solid #5B4633;
         }
         
         .ticket-card:hover {
             transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(200, 169, 107, 0.15);
+            border-color: #C8A96B;
         }
         
-        /* Deactivated ticket style */
         .ticket-card.deactivated {
-            opacity: 0.7;
+            opacity: 0.6;
             filter: grayscale(0.3);
         }
         
         .ticket-card.deactivated .ticket-header {
-            background: linear-gradient(135deg, #64748b, #475569);
+            background: linear-gradient(135deg, #4A1F24, #2a1a1c);
         }
         
         .ticket-header {
-            background: linear-gradient(135deg, #4f46e5, #4338ca);
-            color: white;
+            background: linear-gradient(135deg, #5B4633, #3d2d1f);
+            color: #F2ECE2;
             padding: 15px 20px;
             display: flex;
             justify-content: space-between;
@@ -154,13 +179,15 @@ if (empty($tickets)) {
         
         .ticket-header h3 {
             font-size: 18px;
+            font-weight: 600;
         }
         
         .ticket-number {
-            background: rgba(255,255,255,0.2);
+            background: rgba(200, 169, 107, 0.2);
             padding: 5px 12px;
             border-radius: 20px;
             font-size: 14px;
+            color: #C8A96B;
         }
         
         .ticket-body {
@@ -171,8 +198,9 @@ if (empty($tickets)) {
             text-align: center;
             margin: 15px 0;
             padding: 15px;
-            background: #f8fafc;
+            background: #0f0f0f;
             border-radius: 16px;
+            position: relative;
         }
         
         .qr-code {
@@ -180,7 +208,7 @@ if (empty($tickets)) {
             background: white;
             padding: 10px;
             border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
         }
         
         .qr-code img {
@@ -190,17 +218,13 @@ if (empty($tickets)) {
         }
         
         /* Deactivated QR code overlay */
-        .deactivated .qr-container {
-            position: relative;
-        }
-        
         .deactivated .qr-overlay {
             position: absolute;
             top: 0;
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(0,0,0,0.5);
+            background: rgba(0,0,0,0.7);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -208,8 +232,8 @@ if (empty($tickets)) {
         }
         
         .deactivated .qr-overlay span {
-            background: #ef4444;
-            color: white;
+            background: #4A1F24;
+            color: #D88A3D;
             padding: 8px 16px;
             border-radius: 30px;
             font-size: 14px;
@@ -217,7 +241,7 @@ if (empty($tickets)) {
         }
         
         .ticket-code {
-            background: #f1f5f9;
+            background: #0f0f0f;
             padding: 12px;
             border-radius: 10px;
             font-family: monospace;
@@ -225,13 +249,19 @@ if (empty($tickets)) {
             text-align: center;
             word-break: break-all;
             margin: 15px 0;
+            color: #A86B2A;
+            border: 1px solid #2a2a2a;
+        }
+        
+        .ticket-code strong {
+            color: #C8A96B;
         }
         
         .ticket-detail {
             display: flex;
             justify-content: space-between;
             padding: 10px 0;
-            border-bottom: 1px solid #e2e8f0;
+            border-bottom: 1px solid #2a2a2a;
         }
         
         .ticket-detail:last-child {
@@ -239,15 +269,16 @@ if (empty($tickets)) {
         }
         
         .detail-label {
-            color: #64748b;
+            color: #A86B2A;
             font-size: 13px;
         }
         
         .detail-value {
             font-weight: 600;
-            color: #1e293b;
+            color: #F2ECE2;
         }
         
+        /* Status Badges */
         .status-badge {
             display: inline-block;
             padding: 4px 12px;
@@ -257,69 +288,91 @@ if (empty($tickets)) {
         }
         
         .status-valid {
-            background: #d1fae5;
-            color: #065f46;
+            background: #1a3a2a;
+            color: #C8A96B;
+            border: 1px solid #C8A96B;
         }
         
         .status-used {
-            background: #fef3c7;
-            color: #92400e;
+            background: #4A1F24;
+            color: #D88A3D;
+            border: 1px solid #D88A3D;
         }
         
         .status-inactive {
-            background: #fee2e2;
-            color: #991b1b;
+            background: #3a1a1a;
+            color: #A86B2A;
+            border: 1px solid #A86B2A;
         }
         
+        /* Warning Box */
         .warning-box {
-            background: #fef3c7;
-            border-left: 4px solid #f59e0b;
+            background: #4A1F24;
+            border-left: 4px solid #D88A3D;
             padding: 15px;
             border-radius: 12px;
             margin-bottom: 20px;
+            color: #F2ECE2;
         }
         
+        .warning-box i {
+            color: #D88A3D;
+        }
+        
+        /* Buttons */
         .btn-download {
             display: block;
             width: 100%;
             padding: 12px;
-            background: #10b981;
-            color: white;
+            background: #5B4633;
+            color: #F2ECE2;
             text-align: center;
             text-decoration: none;
             border-radius: 10px;
             font-weight: 600;
             margin-top: 15px;
-            transition: background 0.2s;
+            transition: all 0.2s;
+            border: none;
+            cursor: pointer;
         }
         
         .btn-download:hover {
-            background: #059669;
+            background: #C8A96B;
+            color: #0A0A0A;
+            transform: translateY(-2px);
         }
         
         .btn-disabled {
-            background: #94a3b8;
+            background: #2a2a2a;
             cursor: not-allowed;
             pointer-events: none;
+            color: #666;
         }
         
         .btn-whatsapp {
             background: #25D366;
+            color: white;
             margin-top: 10px;
         }
         
         .btn-whatsapp:hover {
             background: #128C7E;
+            color: white;
         }
         
+        /* Footer */
         .footer {
             text-align: center;
             margin-top: 40px;
-            color: rgba(255,255,255,0.7);
+            color: #5B4633;
             font-size: 12px;
         }
         
-        /* PRINT STYLES - Each ticket on separate page */
+        .footer p {
+            margin-top: 10px;
+        }
+        
+        /* Print Styles */
         @media print {
             body {
                 background: white;
@@ -347,15 +400,11 @@ if (empty($tickets)) {
                 margin: 0;
                 border-radius: 0;
                 position: relative;
-            }
-            
-            .ticket-card:last-child {
-                break-after: auto;
-                page-break-after: auto;
+                background: white;
             }
             
             .ticket-header {
-                background: linear-gradient(135deg, #1e293b, #0f172a);
+                background: #1a1a1a;
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
             }
@@ -374,7 +423,6 @@ if (empty($tickets)) {
                 padding: 20px;
             }
             
-            /* Page number indicator */
             .ticket-card::after {
                 content: "Ticket " counter(ticket) " of <?php echo count($tickets); ?>";
                 counter-increment: ticket;
@@ -382,15 +430,15 @@ if (empty($tickets)) {
                 bottom: 10px;
                 right: 20px;
                 font-size: 10px;
-                color: #94a3b8;
+                color: #999;
             }
         }
         
-        /* Counter for print pages */
         .ticket-grid {
             counter-reset: ticket;
         }
         
+        /* Responsive */
         @media (max-width: 768px) {
             .ticket-grid {
                 grid-template-columns: 1fr;
@@ -399,8 +447,13 @@ if (empty($tickets)) {
                 grid-template-columns: 1fr;
                 gap: 10px;
             }
-            .header h1 { font-size: 24px; }
-            .qr-code img { width: 140px; height: 140px; }
+            .header h1 { 
+                font-size: 24px; 
+            }
+            .qr-code img { 
+                width: 140px; 
+                height: 140px; 
+            }
         }
     </style>
 </head>
@@ -464,7 +517,7 @@ if (empty($tickets)) {
         <!-- Tickets Grid -->
         <div class="ticket-grid">
             <?php
-            $ticketCounter= 0;
+            $ticketCounter = 0;
             foreach ($tickets as $ticket): 
                 $typeLabel = $typeLabels[$ticket['guest_type']];
                 $ticketNumber = str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT);
@@ -531,7 +584,7 @@ if (empty($tickets)) {
                             <i class="bi bi-printer"></i> Print This Ticket
                         </button>
                     <?php else: ?>
-                        <button class="btn-download btn-disabled no-print" disabled style="background: #94a3b8; cursor: not-allowed;">
+                        <button class="btn-download btn-disabled no-print" disabled>
                             <i class="bi bi-x-circle"></i> <?php echo $isUsed ? 'Ticket Already Used' : 'Ticket Deactivated'; ?>
                         </button>
                     <?php endif; ?>
@@ -545,7 +598,7 @@ if (empty($tickets)) {
         </div>
         
         <div class="footer no-print">
-            <p><i class="bi bi-info-circle"></i> Each ticket has a unique QR code. Only valid (green) tickets will be accepted at the entrance.</p>
+            <p><i class="bi bi-info-circle"></i> Each ticket has a unique QR code. Only valid (golden) tickets will be accepted at the entrance.</p>
             <p>© <?php echo date('Y'); ?> <?php echo htmlspecialchars($eventName); ?></p>
             <p style="margin-top: 10px;">
                 <button onclick="window.print()" class="btn-download" style="display: inline-block; width: auto; padding: 10px 20px;">
