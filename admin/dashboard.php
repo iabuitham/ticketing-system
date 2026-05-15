@@ -1363,7 +1363,7 @@ $conn->close();
 
         <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
              <button type="button" onclick="closeExportModal()" style="padding: 10px 20px; background: #64748b; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 500;"><i class="bi bi-x-lg"></i> <?php echo t('cancel'); ?></button>
-             <button type="submit" style="padding: 10px 20px; background: <?php echo $themeColor; ?>; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 500;"><i class="bi bi-download"></i> <?php echo t('export_csv'); ?></button>
+             <button type="submit" style="padding: 10px 20px; background: <?php echo $themeColor; ?>; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 500;"><i class="bi bi-download"></i> <?php echo t('Export CSV'); ?></button>
         </div>
      </form>
    </div>
