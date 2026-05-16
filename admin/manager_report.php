@@ -11,10 +11,50 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
 
 $conn = getConnection();
 
-$date_from = isset($_GET['from']) ? $_GET['from'] : date('Y-m-d', strtotime('-30 days'));
-$date_to = isset($_GET['to']) ? $_GET['to'] : date('Y-m-d');
+// Sanitize date inputs
+$date_from = isset($_GET['from']) ? mysqli_real_escape_string($conn, $_GET['from']) : date('Y-m-d', strtotime('-30 days'));
+$date_to = isset($_GET['to']) ? mysqli_real_escape_string($conn, $_GET['to']) : date('Y-m-d');
 
-// ========== REVENUE BY PAYMENT METHOD ==========
+// ========== FETCH ALL DATA ONCE ==========
+
+// 1. Daily Revenue & Bookings
+$dailyData = [];
+$dailyResult = $conn->query("SELECT DATE(created_at) as date, SUM(total_amount) as revenue, COUNT(*) as bookings 
+                              FROM reservations WHERE status = 'paid' 
+                              AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
+                              GROUP BY DATE(created_at) ORDER BY date");
+while ($row = $dailyResult->fetch_assoc()) {
+    $dailyData[] = $row;
+}
+
+// 2. Weekly Revenue
+$weeklyData = [];
+$weeklyResult = $conn->query("SELECT 
+    YEARWEEK(created_at) as week_num,
+    MIN(DATE(created_at)) as week_start,
+    SUM(total_amount) as revenue,
+    COUNT(*) as bookings
+FROM reservations WHERE status = 'paid' 
+AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
+GROUP BY YEARWEEK(created_at) ORDER BY week_num");
+while ($row = $weeklyResult->fetch_assoc()) {
+    $weeklyData[] = $row;
+}
+
+// 3. Monthly Revenue
+$monthlyData = [];
+$monthlyResult = $conn->query("SELECT 
+    DATE_FORMAT(created_at, '%Y-%m') as month,
+    SUM(total_amount) as revenue,
+    COUNT(*) as bookings
+FROM reservations WHERE status = 'paid' 
+AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
+GROUP BY DATE_FORMAT(created_at, '%Y-%m') ORDER BY month");
+while ($row = $monthlyResult->fetch_assoc()) {
+    $monthlyData[] = $row;
+}
+
+// 4. Revenue by Payment Method
 $revenueQuery = "SELECT 
     SUM(CASE WHEN sp.payment_method = 'cash' THEN sp.amount ELSE 0 END) as cash,
     SUM(CASE WHEN sp.payment_method = 'cliq' THEN sp.amount ELSE 0 END) as cliq,
@@ -25,41 +65,20 @@ JOIN reservations r ON sp.reservation_id = r.reservation_id
 WHERE r.status = 'paid' AND DATE(r.created_at) BETWEEN '$date_from' AND '$date_to'";
 $revenue = $conn->query($revenueQuery)->fetch_assoc();
 
-// ========== DAILY REVENUE TREND ==========
-$dailyRevenue = $conn->query("SELECT DATE(created_at) as date, SUM(total_amount) as revenue, COUNT(*) as bookings 
-                              FROM reservations WHERE status = 'paid' 
-                              AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
-                              GROUP BY DATE(created_at) ORDER BY date");
-
-// ========== WEEKLY REVENUE TREND ==========
-$weeklyRevenue = $conn->query("SELECT 
-    YEARWEEK(created_at) as week_num,
-    MIN(DATE(created_at)) as week_start,
-    SUM(total_amount) as revenue,
-    COUNT(*) as bookings
-FROM reservations WHERE status = 'paid' 
-AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
-GROUP BY YEARWEEK(created_at) ORDER BY week_num");
-
-// ========== MONTHLY REVENUE TREND ==========
-$monthlyRevenue = $conn->query("SELECT 
-    DATE_FORMAT(created_at, '%Y-%m') as month,
-    SUM(total_amount) as revenue,
-    COUNT(*) as bookings
-FROM reservations WHERE status = 'paid' 
-AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
-GROUP BY DATE_FORMAT(created_at, '%Y-%m') ORDER BY month");
-
-// ========== TOP CUSTOMERS ==========
-$topCustomers = $conn->query("SELECT 
+// 5. Top Customers
+$topCustomers = [];
+$topResult = $conn->query("SELECT 
     name, 
     COUNT(*) as bookings, 
     SUM(total_amount) as total_spent
 FROM reservations WHERE status = 'paid' 
 AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
 GROUP BY name ORDER BY total_spent DESC LIMIT 10");
+while ($row = $topResult->fetch_assoc()) {
+    $topCustomers[] = $row;
+}
 
-// ========== GUEST TYPE DISTRIBUTION ==========
+// 6. Guest Distribution
 $guestDistribution = $conn->query("SELECT 
     SUM(adults) as total_adults,
     SUM(teens) as total_teens,
@@ -67,25 +86,34 @@ $guestDistribution = $conn->query("SELECT
 FROM reservations WHERE status = 'paid' 
 AND DATE(created_at) BETWEEN '$date_from' AND '$date_to'")->fetch_assoc();
 
-// ========== POPULAR TABLES ==========
-$popularTables = $conn->query("SELECT 
+// 7. Popular Tables
+$popularTables = [];
+$tablesResult = $conn->query("SELECT 
     table_id, 
     COUNT(*) as bookings, 
     SUM(total_amount) as revenue
 FROM reservations WHERE status = 'paid' 
 AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
 GROUP BY table_id ORDER BY bookings DESC LIMIT 10");
+while ($row = $tablesResult->fetch_assoc()) {
+    $popularTables[] = $row;
+}
 
-// ========== HOURLY BOOKING PATTERN ==========
-$hourlyPattern = $conn->query("SELECT 
+// 8. Hourly Pattern
+$hourlyData = [];
+$hourlyResult = $conn->query("SELECT 
     HOUR(created_at) as hour, 
     COUNT(*) as bookings
 FROM reservations 
 WHERE DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
 GROUP BY HOUR(created_at) ORDER BY hour");
+while ($row = $hourlyResult->fetch_assoc()) {
+    $hourlyData[] = $row;
+}
 
-// ========== DAY OF WEEK PATTERN ==========
-$dayOfWeekPattern = $conn->query("SELECT 
+// 9. Day of Week Pattern
+$dayOfWeekData = [];
+$dowResult = $conn->query("SELECT 
     DAYOFWEEK(created_at) as day_num,
     DAYNAME(created_at) as day_name,
     COUNT(*) as bookings,
@@ -93,27 +121,31 @@ $dayOfWeekPattern = $conn->query("SELECT
 FROM reservations WHERE status = 'paid' 
 AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
 GROUP BY DAYOFWEEK(created_at) ORDER BY day_num");
+while ($row = $dowResult->fetch_assoc()) {
+    $dayOfWeekData[] = $row;
+}
 
-// ========== CANCELLATION RATE ==========
+// 10. Cancellation Rate
 $cancellationStats = $conn->query("SELECT 
     COUNT(CASE WHEN status = 'cancelled' THEN 1 END) as cancelled,
     COUNT(*) as total
 FROM reservations WHERE DATE(created_at) BETWEEN '$date_from' AND '$date_to'")->fetch_assoc();
 $cancellationRate = $cancellationStats['total'] > 0 ? round(($cancellationStats['cancelled'] / $cancellationStats['total']) * 100, 2) : 0;
 
-// ========== CONVERSION RATE ==========
+// 11. Conversion Rate
 $conversionStats = $conn->query("SELECT 
     COUNT(CASE WHEN status = 'paid' THEN 1 END) as paid,
     COUNT(*) as total
 FROM reservations WHERE DATE(created_at) BETWEEN '$date_from' AND '$date_to'")->fetch_assoc();
 $conversionRate = $conversionStats['total'] > 0 ? round(($conversionStats['paid'] / $conversionStats['total']) * 100, 2) : 0;
 
-// ========== AVERAGE GROUP SIZE ==========
-$avgGroupSize = $conn->query("SELECT AVG(adults + teens + kids) as avg_size 
+// 12. Average Group Size
+$avgGroupSizeResult = $conn->query("SELECT AVG(adults + teens + kids) as avg_size 
                               FROM reservations WHERE status = 'paid' 
-                              AND DATE(created_at) BETWEEN '$date_from' AND '$date_to'")->fetch_assoc()['avg_size'] ?? 0;
+                              AND DATE(created_at) BETWEEN '$date_from' AND '$date_to'");
+$avgGroupSize = $avgGroupSizeResult->fetch_assoc()['avg_size'] ?? 0;
 
-// ========== TOTAL STATS ==========
+// 13. Total Stats
 $totalStats = $conn->query("SELECT 
     COUNT(*) as total_reservations,
     SUM(CASE WHEN status = 'paid' THEN total_amount ELSE 0 END) as total_revenue,
@@ -122,22 +154,45 @@ $totalStats = $conn->query("SELECT
 FROM reservations WHERE DATE(created_at) BETWEEN '$date_from' AND '$date_to'")->fetch_assoc();
 
 $conn->close();
+
+// Prepare data for JSON encoding (for JavaScript)
+$dailyDates = json_encode(array_column($dailyData, 'date'));
+$dailyRevenue = json_encode(array_column($dailyData, 'revenue'));
+$dailyBookings = json_encode(array_column($dailyData, 'bookings'));
+
+$weeklyLabels = json_encode(array_column($weeklyData, 'week_start'));
+$weeklyRevenueData = json_encode(array_column($weeklyData, 'revenue'));
+
+$monthlyLabels = json_encode(array_column($monthlyData, 'month'));
+$monthlyRevenueData = json_encode(array_column($monthlyData, 'revenue'));
+$monthlyBookingsData = json_encode(array_column($monthlyData, 'bookings'));
+
+$hourlyLabels = json_encode(array_map(function($h) { return $h['hour'] . ':00'; }, $hourlyData));
+$hourlyBookings = json_encode(array_column($hourlyData, 'bookings'));
+
+$dayNames = json_encode(array_column($dayOfWeekData, 'day_name'));
+$dayRevenue = json_encode(array_column($dayOfWeekData, 'revenue'));
+
+$tableLabels = json_encode(array_column($popularTables, 'table_id'));
+$tableBookings = json_encode(array_column($popularTables, 'bookings'));
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="<?php echo getCurrentLanguage(); ?>" dir="<?php echo getDirection(); ?>">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
     <title>Management Report - Ticketing System</title>
-    <html lang="<?php echo getCurrentLanguage(); ?>" dir="<?php echo getDirection(); ?>">
-    <link rel="stylesheet" href="../assets/css/dark-mode.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #f0f2f5;
             padding: 20px;
+        }
+        body.dark-mode {
+            background: #0f172a;
         }
         .container { max-width: 1400px; margin: 0 auto; }
         
@@ -153,7 +208,12 @@ $conn->close();
             gap: 15px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.05);
         }
+        body.dark-mode .header {
+            background: #1e293b;
+            color: #e2e8f0;
+        }
         .header h1 { font-size: 28px; color: #1a1a2e; }
+        body.dark-mode .header h1 { color: #e2e8f0; }
         .header h1 span { color: #667eea; }
         .report-date { color: #666; font-size: 14px; }
         
@@ -169,8 +229,16 @@ $conn->close();
             gap: 15px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.05);
         }
+        body.dark-mode .filter-bar {
+            background: #1e293b;
+        }
         .date-inputs { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
         .date-inputs input { padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
+        body.dark-mode .date-inputs input {
+            background: #0f172a;
+            border-color: #334155;
+            color: #e2e8f0;
+        }
         .btn {
             padding: 10px 20px;
             border: none;
@@ -183,9 +251,7 @@ $conn->close();
         }
         .btn-primary { background: #667eea; color: white; }
         .btn-secondary { background: #6c757d; color: white; }
-        .btn-success { background: #28a745; color: white; }
         
-        /* KPI Cards */
         .kpi-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -200,14 +266,15 @@ $conn->close();
             box-shadow: 0 2px 10px rgba(0,0,0,0.05);
             transition: transform 0.2s;
         }
+        body.dark-mode .kpi-card {
+            background: #1e293b;
+        }
         .kpi-card:hover { transform: translateY(-3px); }
         .kpi-card .kpi-value { font-size: 32px; font-weight: bold; color: #1a1a2e; }
+        body.dark-mode .kpi-card .kpi-value { color: #e2e8f0; }
         .kpi-card .kpi-label { font-size: 13px; color: #666; margin-top: 8px; }
-        .kpi-card .kpi-trend { font-size: 12px; margin-top: 5px; }
-        .trend-up { color: #28a745; }
-        .trend-down { color: #dc3545; }
+        body.dark-mode .kpi-card .kpi-label { color: #94a3b8; }
         
-        /* Stats Grid */
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
@@ -220,6 +287,9 @@ $conn->close();
             padding: 20px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.05);
         }
+        body.dark-mode .stat-card {
+            background: #1e293b;
+        }
         .stat-card h3 {
             font-size: 16px;
             color: #333;
@@ -227,8 +297,11 @@ $conn->close();
             padding-bottom: 10px;
             border-bottom: 2px solid #f0f0f0;
         }
+        body.dark-mode .stat-card h3 {
+            color: #e2e8f0;
+            border-bottom-color: #334155;
+        }
         
-        /* Charts Grid */
         .charts-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
@@ -241,14 +314,19 @@ $conn->close();
             padding: 20px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.05);
         }
+        body.dark-mode .chart-card {
+            background: #1e293b;
+        }
         .chart-card h3 {
             margin-bottom: 20px;
             color: #333;
             font-size: 18px;
         }
+        body.dark-mode .chart-card h3 {
+            color: #e2e8f0;
+        }
         canvas { max-height: 300px; width: 100% !important; }
         
-        /* Tables */
         .table-container {
             background: white;
             border-radius: 20px;
@@ -256,9 +334,20 @@ $conn->close();
             box-shadow: 0 2px 10px rgba(0,0,0,0.05);
             margin-bottom: 20px;
         }
+        body.dark-mode .table-container {
+            background: #1e293b;
+        }
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 14px 16px; text-align: left; border-bottom: 1px solid #eee; }
+        body.dark-mode th, body.dark-mode td {
+            border-bottom-color: #334155;
+            color: #cbd5e1;
+        }
         th { background: #f8f9fa; font-weight: 600; color: #555; }
+        body.dark-mode th {
+            background: #0f172a;
+            color: #94a3b8;
+        }
         .action-buttons { display: flex; gap: 10px; margin-top: 20px; justify-content: center; flex-wrap: wrap; }
         
         @media (max-width: 768px) {
@@ -277,7 +366,6 @@ $conn->close();
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
         <div class="header">
             <div>
                 <h1>📊 <span>Management Report</span></h1>
@@ -289,7 +377,6 @@ $conn->close();
             </div>
         </div>
         
-        <!-- Date Filter -->
         <div class="filter-bar no-print">
             <form method="GET" style="display: flex; gap: 15px; flex-wrap: wrap; align-items: center;">
                 <div class="date-inputs">
@@ -311,7 +398,6 @@ $conn->close();
             <div class="kpi-card">
                 <div class="kpi-value"><?php echo number_format($totalStats['total_revenue'] ?? 0, 2); ?> JOD</div>
                 <div class="kpi-label">💰 Total Revenue</div>
-                <div class="kpi-trend trend-up">↑ +12.5% from last period</div>
             </div>
             <div class="kpi-card">
                 <div class="kpi-value"><?php echo number_format($totalStats['avg_booking_value'] ?? 0, 2); ?> JOD</div>
@@ -325,7 +411,7 @@ $conn->close();
             <div class="kpi-card">
                 <div class="kpi-value"><?php echo $cancellationRate; ?>%</div>
                 <div class="kpi-label">❌ Cancellation Rate</div>
-                <div class="kpi-trend trend-down"><?php echo $cancellationStats['cancelled']; ?> cancelled</div>
+                <div class="kpi-trend"><?php echo $cancellationStats['cancelled']; ?> cancelled</div>
             </div>
             <div class="kpi-card">
                 <div class="kpi-value"><?php echo number_format($avgGroupSize, 1); ?></div>
@@ -337,7 +423,7 @@ $conn->close();
             </div>
         </div>
         
-        <!-- Revenue Charts -->
+        <!-- Charts -->
         <div class="charts-grid">
             <div class="chart-card">
                 <h3>📈 Daily Revenue Trend</h3>
@@ -373,8 +459,8 @@ $conn->close();
         
         <div class="charts-grid">
             <div class="chart-card">
-                <h3>📊 Weekly Revenue Trend</h3>
-                <canvas id="weeklyRevenueChart"></canvas>
+                <h3>📊 Monthly Revenue & Bookings</h3>
+                <canvas id="monthlyChart"></canvas>
             </div>
             <div class="chart-card">
                 <h3>🪑 Popular Tables Ranking</h3>
@@ -397,7 +483,7 @@ $conn->close();
                 <tbody>
                     <?php 
                     $rank = 1;
-                    while ($customer = $topCustomers->fetch_assoc()): 
+                    foreach ($topCustomers as $customer): 
                     ?>
                     <tr>
                         <td>#<?php echo $rank++; ?></td>
@@ -405,8 +491,8 @@ $conn->close();
                         <td><?php echo $customer['bookings']; ?> bookings</td>
                         <td><strong><?php echo number_format($customer['total_spent'], 2); ?> JOD</strong></td>
                     </tr>
-                    <?php endwhile; ?>
-                    <?php if ($rank == 1): ?>
+                    <?php endforeach; ?>
+                    <?php if (empty($topCustomers)): ?>
                     <tr><td colspan="4" style="text-align: center; padding: 40px;">No data available</td></tr>
                     <?php endif; ?>
                 </tbody>
@@ -426,14 +512,14 @@ $conn->close();
                     </tr>
                 </thead>
                 <tbody>
-                    <?php while ($week = $weeklyRevenue->fetch_assoc()): ?>
+                    <?php foreach ($weeklyData as $week): ?>
                     <tr>
                         <td><?php echo date('M d, Y', strtotime($week['week_start'])); ?></td>
                         <td><?php echo $week['bookings']; ?></td>
                         <td><strong><?php echo number_format($week['revenue'], 2); ?> JOD</strong></td>
                         <td><?php echo number_format($week['bookings'] > 0 ? $week['revenue'] / $week['bookings'] : 0, 2); ?> JOD</td>
                     </tr>
-                    <?php endwhile; ?>
+                    <?php endforeach; ?>
                 </tbody>
             </table>
         </div>
@@ -441,42 +527,46 @@ $conn->close();
 
     <script>
         // Daily Revenue Chart
-        const dailyRevenueCtx = document.getElementById('dailyRevenueChart').getContext('2d');
-        new Chart(dailyRevenueCtx, {
-            type: 'line',
-            data: {
-                labels: <?php echo json_encode(array_column($dailyRevenue->fetch_all(MYSQLI_ASSOC), 'date')); ?>,
-                datasets: [{
-                    label: 'Revenue (JOD)',
-                    data: <?php echo json_encode(array_column($dailyRevenue->fetch_all(MYSQLI_ASSOC), 'revenue')); ?>,
-                    borderColor: '#28a745',
-                    backgroundColor: 'rgba(40, 167, 69, 0.1)',
-                    tension: 0.4,
-                    fill: true
-                }]
-            },
-            options: { responsive: true, maintainAspectRatio: true }
-        });
+        const dailyDates = <?php echo $dailyDates; ?>;
+        const dailyRevenueData = <?php echo $dailyRevenue; ?>;
+        
+        if (dailyDates.length > 0) {
+            new Chart(document.getElementById('dailyRevenueChart'), {
+                type: 'line',
+                data: {
+                    labels: dailyDates,
+                    datasets: [{
+                        label: 'Revenue (JOD)',
+                        data: dailyRevenueData,
+                        borderColor: '#28a745',
+                        backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: true }
+            });
 
-        // Daily Bookings Chart
-        const dailyBookingsCtx = document.getElementById('dailyBookingsChart').getContext('2d');
-        new Chart(dailyBookingsCtx, {
-            type: 'bar',
-            data: {
-                labels: <?php echo json_encode(array_column($dailyRevenue->fetch_all(MYSQLI_ASSOC), 'date')); ?>,
-                datasets: [{
-                    label: 'Number of Bookings',
-                    data: <?php echo json_encode(array_column($dailyRevenue->fetch_all(MYSQLI_ASSOC), 'bookings')); ?>,
-                    backgroundColor: '#667eea',
-                    borderRadius: 8
-                }]
-            },
-            options: { responsive: true, maintainAspectRatio: true }
-        });
+            // Daily Bookings Chart
+            new Chart(document.getElementById('dailyBookingsChart'), {
+                type: 'bar',
+                data: {
+                    labels: dailyDates,
+                    datasets: [{
+                        label: 'Number of Bookings',
+                        data: <?php echo $dailyBookings; ?>,
+                        backgroundColor: '#667eea',
+                        borderRadius: 8
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: true }
+            });
+        } else {
+            document.getElementById('dailyRevenueChart').parentElement.innerHTML = '<p class="text-muted" style="text-align:center; padding:50px;">No data available for selected period</p>';
+        }
 
         // Payment Pie Chart
-        const paymentCtx = document.getElementById('paymentPieChart').getContext('2d');
-        new Chart(paymentCtx, {
+        new Chart(document.getElementById('paymentPieChart'), {
             type: 'pie',
             data: {
                 labels: ['Cash', 'CliQ', 'Visa'],
@@ -496,8 +586,7 @@ $conn->close();
         });
 
         // Guest Type Chart
-        const guestCtx = document.getElementById('guestTypeChart').getContext('2d');
-        new Chart(guestCtx, {
+        new Chart(document.getElementById('guestTypeChart'), {
             type: 'doughnut',
             data: {
                 labels: ['Adults', 'Teens', 'Kids'],
@@ -507,95 +596,120 @@ $conn->close();
                     borderWidth: 0
                 }]
             },
-            options: {
-                responsive: true,
-                plugins: { legend: { position: 'bottom' } }
-            }
+            options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
         });
 
         // Hourly Pattern Chart
-        const hourlyCtx = document.getElementById('hourlyPatternChart').getContext('2d');
-        new Chart(hourlyCtx, {
-            type: 'line',
-            data: {
-                labels: <?php echo json_encode(array_map(function($h) { return $h['hour'] . ':00'; }, $hourlyPattern->fetch_all(MYSQLI_ASSOC))); ?>,
-                datasets: [{
-                    label: 'Bookings',
-                    data: <?php echo json_encode(array_column($hourlyPattern->fetch_all(MYSQLI_ASSOC), 'bookings')); ?>,
-                    borderColor: '#f59e0b',
-                    backgroundColor: 'rgba(245, 158, 11, 0.1)',
-                    fill: true,
-                    tension: 0.4
-                }]
-            },
-            options: { responsive: true, maintainAspectRatio: true }
-        });
+        const hourlyLabels = <?php echo $hourlyLabels; ?>;
+        const hourlyData = <?php echo $hourlyBookings; ?>;
+        
+        if (hourlyLabels.length > 0) {
+            new Chart(document.getElementById('hourlyPatternChart'), {
+                type: 'line',
+                data: {
+                    labels: hourlyLabels,
+                    datasets: [{
+                        label: 'Bookings',
+                        data: hourlyData,
+                        borderColor: '#f59e0b',
+                        backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: true }
+            });
+        }
 
         // Day of Week Chart
-        const dayOfWeekCtx = document.getElementById('dayOfWeekChart').getContext('2d');
-        new Chart(dayOfWeekCtx, {
-            type: 'bar',
-            data: {
-                labels: <?php echo json_encode(array_column($dayOfWeekPattern->fetch_all(MYSQLI_ASSOC), 'day_name')); ?>,
-                datasets: [{
-                    label: 'Revenue (JOD)',
-                    data: <?php echo json_encode(array_column($dayOfWeekPattern->fetch_all(MYSQLI_ASSOC), 'revenue')); ?>,
-                    backgroundColor: '#28a745',
-                    borderRadius: 8
-                }]
-            },
-            options: { responsive: true, maintainAspectRatio: true }
-        });
-
-        // Weekly Revenue Chart
-        const weeklyRevenueCtx = document.getElementById('weeklyRevenueChart').getContext('2d');
-        new Chart(weeklyRevenueCtx, {
-            type: 'bar',
-            data: {
-                labels: <?php echo json_encode(array_column($monthlyRevenue->fetch_all(MYSQLI_ASSOC), 'month')); ?>,
-                datasets: [
-                    {
+        const dayNames = <?php echo $dayNames; ?>;
+        const dayRevenueData = <?php echo $dayRevenue; ?>;
+        
+        if (dayNames.length > 0) {
+            new Chart(document.getElementById('dayOfWeekChart'), {
+                type: 'bar',
+                data: {
+                    labels: dayNames,
+                    datasets: [{
                         label: 'Revenue (JOD)',
-                        data: <?php echo json_encode(array_column($monthlyRevenue->fetch_all(MYSQLI_ASSOC), 'revenue')); ?>,
-                        backgroundColor: '#4f46e5',
-                        borderRadius: 8,
-                        yAxisID: 'y'
-                    },
-                    {
-                        label: 'Bookings',
-                        data: <?php echo json_encode(array_column($monthlyRevenue->fetch_all(MYSQLI_ASSOC), 'bookings')); ?>,
-                        backgroundColor: '#f59e0b',
-                        borderRadius: 8,
-                        yAxisID: 'y1'
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: true,
-                scales: { y: { beginAtZero: true, title: { display: true, text: 'Revenue (JOD)' } }, y1: { position: 'right', beginAtZero: true, title: { display: true, text: 'Bookings' } } }
-            }
-        });
+                        data: dayRevenueData,
+                        backgroundColor: '#28a745',
+                        borderRadius: 8
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: true }
+            });
+        }
 
-        // Popular Tables Chart
-        const tablesCtx = document.getElementById('popularTablesChart').getContext('2d');
-        new Chart(tablesCtx, {
-            type: 'bar',
-            data: {
-                labels: <?php echo json_encode(array_column($popularTables->fetch_all(MYSQLI_ASSOC), 'table_id')); ?>,
-                datasets: [{
-                    label: 'Number of Bookings',
-                    data: <?php echo json_encode(array_column($popularTables->fetch_all(MYSQLI_ASSOC), 'bookings')); ?>,
-                    backgroundColor: '#10b981',
-                    borderRadius: 8
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: true,
-                indexAxis: 'y'
-            }
-        });
+        // Monthly Chart (Revenue + Bookings combined)
+        const monthlyLabels = <?php echo $monthlyLabels; ?>;
+        const monthlyRevenue = <?php echo $monthlyRevenueData; ?>;
+        const monthlyBookings = <?php echo $monthlyBookingsData; ?>;
+        
+        if (monthlyLabels.length > 0) {
+            new Chart(document.getElementById('monthlyChart'), {
+                type: 'bar',
+                data: {
+                    labels: monthlyLabels,
+                    datasets: [
+                        {
+                            label: 'Revenue (JOD)',
+                            data: monthlyRevenue,
+                            backgroundColor: '#4f46e5',
+                            borderRadius: 8,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: 'Bookings',
+                            data: monthlyBookings,
+                            backgroundColor: '#f59e0b',
+                            borderRadius: 8,
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    scales: { 
+                        y: { beginAtZero: true, title: { display: true, text: 'Revenue (JOD)' } }, 
+                        y1: { position: 'right', beginAtZero: true, title: { display: true, text: 'Bookings' } } 
+                    }
+                }
+            });
+        }
+
+        // Popular Tables Chart (Horizontal Bar)
+        const tableLabels = <?php echo $tableLabels; ?>;
+        const tableBookingsData = <?php echo $tableBookings; ?>;
+        
+        if (tableLabels.length > 0) {
+            new Chart(document.getElementById('popularTablesChart'), {
+                type: 'bar',
+                data: {
+                    labels: tableLabels,
+                    datasets: [{
+                        label: 'Number of Bookings',
+                        data: tableBookingsData,
+                        backgroundColor: '#10b981',
+                        borderRadius: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    indexAxis: 'y'
+                }
+            });
+        }
+
+        // Dark mode toggle
+        const darkModeToggle = document.createElement('button');
+        darkModeToggle.innerHTML = '🌙';
+        darkModeToggle.style.cssText = 'position:fixed; bottom:20px; right:20px; background:#667eea; color:white; border:none; border-radius:50%; width:50px; height:50px; cursor:pointer; z-index:1000;';
+        darkModeToggle.onclick = () => document.body.classList.toggle('dark-mode');
+        if (localStorage.getItem('darkMode') === 'true') document.body.classList.add('dark-mode');
+        document.body.appendChild(darkModeToggle);
     </script>
 </body>
 </html>
