@@ -243,10 +243,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $whatsappMessage .= "قم بتحويل المبلغ {$currencySymbol}" . number_format($total_amount, 2) . "\n\n";
             $whatsappMessage .= "Via CliQ transfer to:\n";
             $whatsappMessage .= "عبر خدمة CliQ إلى:\n";
-            $whatsappMessage .= "*Alias | الاسم المستعار: ABUFARES79*\n";
+            $whatsappMessage .= "*Number | الرقم: 00962795402462*\n";
             $whatsappMessage .= "*Bank | البنك: Arab Bank | البنك العربي*\n\n";
             $whatsappMessage .= "Then send a screenshot of the transfer to the number 0795410115.\n";
-            $whatsappMessage .= "ثم قم أرسل صورة إثبات التحويل إلى الرقم 0795410115.\n\n";
+            $whatsappMessage .= "ثم قم بأرسال صورة إثبات التحويل إلى الرقم 0795410115.\n\n";
             $whatsappMessage .= "We look forward to serving you! 🎉\n";
             $whatsappMessage .= "نتطلع لخدمتك! 🎉\n\n";
             $whatsappMessage .= "_Thank you for choosing us | شكرًا لاختياركم لنا_";
