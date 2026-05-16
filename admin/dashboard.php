@@ -47,8 +47,11 @@ $search = isset($_GET['search']) ? sanitizeInput($_GET['search']) : '';
 
 // Build query with total paid from split_payments
 $query = "SELECT r.*, 
- COALESCE((SELECT SUM(amount) FROM split_payments WHERE reservation_id = r.reservation_id), 0) as total_paid
- FROM reservations r WHERE 1=1";
+          COALESCE(SUM(sp.amount), 0) as total_paid,
+          (r.total_amount - COALESCE(SUM(sp.amount), 0)) as actual_amount_due
+          FROM reservations r
+          LEFT JOIN split_payments sp ON r.reservation_id = sp.reservation_id
+          WHERE 1=1";
 $params = [];
 $types = "";
 
@@ -67,7 +70,7 @@ if ($search) {
  $types .= "sss";
 }
 
-$query .= " ORDER BY r.created_at DESC";
+$query .= " GROUP BY r.reservation_id ORDER BY r.created_at DESC";
 
 $stmt = $conn->prepare($query);
 if (!empty($params)) {
@@ -93,7 +96,6 @@ foreach ($reservations as &$res) {
 }
 unset($res);
 
-// Get statistics - FIXED for correct amount due calculation
 $statsResult = $conn->query("
     SELECT 
         COUNT(*) as total,
@@ -101,12 +103,15 @@ $statsResult = $conn->query("
         SUM(CASE WHEN status = 'registered' THEN 1 ELSE 0 END) as registered,
         SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid,
         SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
-        (SELECT COALESCE(SUM(r.total_amount), 0) - COALESCE(SUM(sp.amount), 0) 
-         FROM reservations r 
-         LEFT JOIN split_payments sp ON r.reservation_id = sp.reservation_id 
-         WHERE r.status NOT IN ('paid', 'cancelled')
-         GROUP BY r.reservation_id) as total_additional_due
-    FROM reservations
+        SUM(CASE WHEN r.status NOT IN ('paid', 'cancelled') 
+            THEN (r.total_amount - COALESCE(sp.paid, 0))
+            ELSE 0 END) as total_additional_due
+    FROM reservations r
+    LEFT JOIN (
+        SELECT reservation_id, SUM(amount) as paid
+        FROM split_payments
+        GROUP BY reservation_id
+    ) sp ON r.reservation_id = sp.reservation_id
 ");
 
 $stats = $statsResult->fetch_assoc();
@@ -173,7 +178,7 @@ $refundRow = $refundResult->fetch_assoc();
 $totalRefunded = $refundRow['total'] ?? 0;
 
 // Calculate net revenue (total payments minus refunds)
-$netRevenue = max(0, $revenue['total'] - $totalRefunded);
+$netRevenue = max(0, $revenue['total'] - $totalRefunded - $cancelledRevenue);
 
 $currency = getSetting('currency', 'JOD');
 $currencySymbol = getCurrencySymbol();
@@ -1428,7 +1433,7 @@ $conn->close();
    document.getElementById('paymentModal').style.display = 'none';
   }
 
-  function addPaymentSplit() {
+function addPaymentSplit() {
    const container = document.getElementById('paymentSplits');
    const splitIndex = paymentSplitCount;
 
@@ -1436,31 +1441,33 @@ $conn->close();
    splitDiv.className = 'payment-split-item';
    splitDiv.setAttribute('data-split-index', splitIndex);
    splitDiv.innerHTML = `
-  <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-bottom: 10px; align-items: end;">
-     <div class="form-group">
+     <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-bottom: 10px; align-items: end;">
+         <div class="form-group">
              <label>Payment Method</label>
              <select class="payment-method" onchange="togglePaymentFields(this, ${splitIndex})">
-                                                                                         <option value="">Select</option>
-                                                                                         <option value="cash">Cash</option>
-                                                                                         <option value="cliq">CliQ</option>
-                                                                                         <option value="visa">Visa</option>
+                 <option value="">Select</option>
+                 <option value="cash">Cash</option>
+                 <option value="cliq">CliQ</option>
+                 <option value="visa">Visa</option>
              </select>
-     </div>
-     <div class="form-group">
+         </div>
+         <div class="form-group">
              <label>Amount (<?php echo $currencySymbol; ?>)</label>
-             <input type="number" class="payment-amount" step="0.01" placeholder="0.00" onkeyup="updateRemainingAmount()">
-     </div>
-     <div class="form-group">
+             <input type="number" class="payment-amount" step="0.01" placeholder="0.00" 
+                 onkeyup="updateRemainingAmount()" 
+                 onchange="validateSplitAmount(this)">
+         </div>
+         <div class="form-group">
              <label>&nbsp;</label>
              <button type="button" class="btn btn-danger btn-sm" onclick="removePaymentSplit(this)">Remove</button>
+         </div>
      </div>
-  </div>
-  <div class="payment-fields" style="display: none;"></div>
- `;
+     <div class="payment-fields" style="display: none;"></div>
+   `;
 
    container.appendChild(splitDiv);
    paymentSplitCount++;
-  }
+}
 
   function removePaymentSplit(button) {
    const splitItem = button.closest('.payment-split-item');
@@ -1566,42 +1573,6 @@ function togglePaymentFields(selectElement, index) {
         }
      }
    }
-  }
-
-  function addPaymentSplit() {
-   const container = document.getElementById('paymentSplits');
-   const splitIndex = paymentSplitCount;
-
-   const splitDiv = document.createElement('div');
-   splitDiv.className = 'payment-split-item';
-   splitDiv.setAttribute('data-split-index', splitIndex);
-   splitDiv.innerHTML = `
- <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-bottom: 10px; align-items: end;">
- <div class="form-group">
-  <label>Payment Method</label>
-  <select class="payment-method" onchange="togglePaymentFields(this, ${splitIndex})">
-     <option value="">Select</option>
-     <option value="cash">Cash</option>
-     <option value="cliq">CliQ</option>
-     <option value="visa">Visa</option>
-  </select>
- </div>
- <div class="form-group">
-  <label>Amount (<?php echo $currencySymbol; ?>)</label>
-  <input type="number" class="payment-amount" step="0.01" placeholder="0.00" 
-     onkeyup="updateRemainingAmount()" 
-     onchange="validateSplitAmount(this)">
- </div>
- <div class="form-group">
-  <label>&nbsp;</label>
-  <button type="button" class="btn btn-danger btn-sm" onclick="removePaymentSplit(this)">Remove</button>
- </div>
- </div>
- <div class="payment-fields" style="display: none;"></div>
- `;
-
-   container.appendChild(splitDiv);
-   paymentSplitCount++;
   }
 
   function validateSplitAmount(input) {
@@ -1805,14 +1776,13 @@ async function processSplitPayments() {
    document.removeEventListener('click', initAudioOnClick);
   });
 
-  // Update sound button UI
-  function updateSoundButton() {
+function updateSoundButton() {
    const soundBtn = document.getElementById('soundToggle');
    if (soundBtn) {
-     soundBtn.innerHTML = soundEnabled ? '<i class="bi bi-volume-up-fill"></i> Sound On' : '<i class="bi bi-volume-mute-fill"></i> Sound Off';
-     soundBtn.style.background = soundEnabled ? '#10b981' : '#64748b';
+       soundBtn.innerHTML = soundEnabled ? '<i class="bi bi-volume-up-fill"></i> Sound On' : '<i class="bi bi-volume-mute-fill"></i> Sound Off';
+       soundBtn.style.background = soundEnabled ? '#10b981' : '#64748b';
    }
-  }
+}
 
   function toggleSound() {
    soundEnabled = !soundEnabled;
@@ -1837,17 +1807,6 @@ async function processSplitPayments() {
      notification.style.animation = 'fadeOut 0.5s ease forwards';
      setTimeout(() => notification.remove(), 500);
    }, 3000);
-  }
-
-  function toggleSound() {
-   soundEnabled = !soundEnabled;
-   localStorage.setItem('soundEnabled', soundEnabled);
-   const soundBtn = document.getElementById('soundToggle');
-   if (soundBtn) {
-     soundBtn.innerHTML = soundEnabled ? '<i class="bi bi-volume-up-fill"></i> Sound On' : '<i class="bi bi-volume-mute-fill"></i> Sound Off';
-     soundBtn.style.background = soundEnabled ? '#10b981' : '#64748b';
-   }
-   showNotification(`Sound notifications ${soundEnabled ? 'enabled' : 'disabled'}`, 'info');
   }
 
   function checkNewReservations() {
