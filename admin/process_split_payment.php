@@ -232,10 +232,8 @@ function sendPaymentConfirmation($reservation_id, $total_amount, $splits, $new_t
  } else {
   $remaining = $total_amount_due - $new_total_paid;
 
-  $message = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
-  $message .= "💰 *PARTIAL PAYMENT RECEIVED* 💰\n";
+  $message = "💰 *PARTIAL PAYMENT RECEIVED* 💰\n";
   $message .= "💰 *تم استلام دفعة جزئية* 💰\n";
-  $message .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
 
   $message .= "Dear {$reservation['name']} | عزيزنا {$reservation['name']}،\n\n";
 
