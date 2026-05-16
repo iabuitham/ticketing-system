@@ -255,7 +255,7 @@ $currencySymbol = getCurrencySymbol();
                                 <strong><?php echo htmlspecialchars($credit['customer_name'] ?? 'Unknown'); ?></strong><br>
                                 <small><?php echo htmlspecialchars($credit['customer_phone'] ?? 'N/A'); ?></small>
                             </d>
-                            <td> style="color: #10b981; font-weight: bold;"><?php echo number_format(floatval($credit['amount']), 2); ?> <?php echo $currencySymbol; ?></d>
+                            <td style="color: #10b981; font-weight: bold;"><?php echo number_format(floatval($credit['amount']), 2); ?> <?php echo $currencySymbol; ?></d>
                             <td><?php echo htmlspecialchars($credit['reason'] ?? 'Guest count decreased'); ?></d>
                             <td>
                                 <span class="badge badge-<?php echo $credit['status']; ?>">
