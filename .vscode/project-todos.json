@@ -1,5 +1,10 @@
 [
   {
+    "id": "1778925939697",
+    "text": "Edit canceled from revenue stat card",
+    "completed": false
+  },
+  {
     "id": "1778924990612",
     "text": "Edit credit notes",
     "completed": true
@@ -7,11 +12,11 @@
   {
     "id": "1778924987146",
     "text": "Edit message in update_reservation.php",
-    "completed": false
+    "completed": true
   },
   {
     "id": "1778924973466",
     "text": "Edit message in process_split_payment.ph[",
-    "completed": false
+    "completed": true
   }
 ]

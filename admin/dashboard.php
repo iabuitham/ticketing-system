@@ -153,10 +153,19 @@ $revenue = [
  'total' => $revenue['total'] ?? 0
 ];
 
-// Get cancelled revenue
-$cancelledResult = $conn->query("SELECT SUM(total_amount) as total FROM reservations WHERE status = 'cancelled' AND total_amount > 0");
+// Get cancelled revenue - FIXED: Get total payments made on canceled reservations
+$cancelledResult = $conn->query("
+    SELECT COALESCE(SUM(sp.amount), 0) as total 
+    FROM split_payments sp 
+    INNER JOIN reservations r ON sp.reservation_id = r.reservation_id 
+    WHERE r.status = 'cancelled'
+");
 $cancelledRow = $cancelledResult->fetch_assoc();
 $cancelledRevenue = $cancelledRow['total'] ?? 0;
+
+$cancelledCountResult = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE status = 'cancelled'");
+$cancelledCountRow = $cancelledCountResult->fetch_assoc();
+$cancelledCount = $cancelledCountRow['count'] ?? 0;
 
 // Get refunded/credited amounts from credit_notes that have been processed
 $refundResult = $conn->query("SELECT SUM(amount) as total FROM credit_notes WHERE status = 'processed'");
@@ -1146,28 +1155,28 @@ $conn->close();
      </div>
    </div>
 
-   <div class="stat-card info">
-     <div class="stat-number"><?php echo intval($stats['total']); ?></div>
-     <div class="stat-label"><i class="bi bi-calendar-check"></i> <?php echo t('Total Reservations'); ?></div>
-     <div class="stat-details">
+<div class="stat-card info">
+    <div class="stat-number"><?php echo intval($stats['total']); ?></div>
+    <div class="stat-label"><i class="bi bi-calendar-check"></i> <?php echo t('Total Reservations'); ?></div>
+    <div class="stat-details">
         <div class="detail-item">
-             <span><i class="bi bi-hourglass-top"></i> <?php echo t('Pending'); ?></span>
-             <span><?php echo intval($stats['pending']); ?></span>
+            <span><i class="bi bi-hourglass-top"></i> <?php echo t('Pending'); ?></span>
+            <span><?php echo intval($stats['pending']); ?></span>
         </div>
         <div class="detail-item">
-             <span><i class="bi bi-check-circle"></i> <?php echo t('Registered'); ?></span>
-             <span><?php echo intval($stats['registered']); ?></span>
+            <span><i class="bi bi-check-circle"></i> <?php echo t('Registered'); ?></span>
+            <span><?php echo intval($stats['registered']); ?></span>
         </div>
         <div class="detail-item">
-             <span><i class="bi bi-check-circle-fill"></i> <?php echo t('Paid'); ?></span>
-             <span><?php echo intval($stats['paid']); ?></span>
+            <span><i class="bi bi-check-circle-fill"></i> <?php echo t('Paid'); ?></span>
+            <span><?php echo intval($stats['paid']); ?></span>
         </div>
         <div class="detail-item">
-             <span><i class="bi bi-slash-circle"></i> <?php echo t('Cancelled'); ?></span>
-             <span><?php echo intval($stats['cancelled']); ?></span>
+            <span><i class="bi bi-slash-circle"></i> <?php echo t('Cancelled'); ?></span>
+            <span><?php echo intval($cancelledCount); ?> (<?php echo number_format(floatval($cancelledRevenue), 2); ?> <?php echo $currencySymbol; ?> paid)</span>
         </div>
-     </div>
-   </div>
+    </div>
+</div>
   </div>
 
   <div class="filters-bar">
