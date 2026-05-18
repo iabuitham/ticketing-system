@@ -45,7 +45,7 @@ $kidPrice = $event_ticket_prices['kid'] ?? getSetting('ticket_price_kid', 0);
 $status_filter = isset($_GET['status']) ? $_GET['status'] : '';
 $search = isset($_GET['search']) ? sanitizeInput($_GET['search']) : '';
 
-// Build query with total paid from split_payments
+// ========== OPTIMIZED MAIN QUERY (Single query, no N+1) ==========
 $query = "SELECT r.*, 
           COALESCE(SUM(sp.amount), 0) as total_paid,
           (r.total_amount - COALESCE(SUM(sp.amount), 0)) as actual_amount_due
@@ -80,22 +80,10 @@ $stmt->execute();
 $reservations = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
-// Calculate actual amount due for each reservation
-foreach ($reservations as &$res) {
- // Get total paid from split_payments
- $stmt_paid = $conn->prepare("SELECT COALESCE(SUM(amount), 0) as total_paid FROM split_payments WHERE reservation_id = ?");
- $stmt_paid->bind_param("s", $res['reservation_id']);
- $stmt_paid->execute();
- $paidResult = $stmt_paid->get_result()->fetch_assoc();
- $stmt_paid->close();
+// NOTE: actual_amount_due is already calculated in the query above
+// The N+1 loop has been REMOVED - no extra queries per reservation!
 
- $totalPaid = floatval($paidResult['total_paid']);
- $totalAmount = floatval($res['total_amount']);
- $res['actual_amount_due'] = max(0, $totalAmount - $totalPaid);
- $res['total_paid'] = $totalPaid;
-}
-unset($res);
-
+// ========== FIXED STATISTICS QUERY (Includes paid reservations with balance due) ==========
 $statsResult = $conn->query("
     SELECT 
         COUNT(*) as total,
@@ -103,9 +91,13 @@ $statsResult = $conn->query("
         SUM(CASE WHEN status = 'registered' THEN 1 ELSE 0 END) as registered,
         SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid,
         SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
-        SUM(CASE WHEN r.status NOT IN ('paid', 'cancelled') 
-            THEN (r.total_amount - COALESCE(sp.paid, 0))
-            ELSE 0 END) as total_additional_due
+        SUM(CASE 
+            WHEN r.status IN ('pending', 'registered') 
+                THEN (r.total_amount - COALESCE(sp.paid, 0))
+            WHEN r.status = 'paid' AND (r.total_amount - COALESCE(sp.paid, 0)) > 0
+                THEN (r.total_amount - COALESCE(sp.paid, 0))
+            ELSE 0 
+        END) as total_additional_due
     FROM reservations r
     LEFT JOIN (
         SELECT reservation_id, SUM(amount) as paid
@@ -124,7 +116,7 @@ $stats = [
     'total_additional_due' => $stats['total_additional_due'] ?? 0
 ];
 
-// Get attendee stats
+// ========== ATTENDEE STATS ==========
 $attendeeResult = $conn->query("SELECT 
  SUM(CASE WHEN status = 'paid' THEN adults ELSE 0 END) as total_adults,
  SUM(CASE WHEN status = 'paid' THEN teens ELSE 0 END) as total_teens,
@@ -142,7 +134,7 @@ $attendeeStats = [
  'pending_attendees' => $attendeeStats['pending_attendees'] ?? 0
 ];
 
-// Get revenue by payment method from split_payments
+// ========== REVENUE BY PAYMENT METHOD ==========
 $revenueResult = $conn->query("SELECT 
   SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END) as cash,
   SUM(CASE WHEN payment_method = 'cliq' THEN amount ELSE 0 END) as cliq,
@@ -158,7 +150,7 @@ $revenue = [
  'total' => $revenue['total'] ?? 0
 ];
 
-// Get cancelled revenue - FIXED: Get total payments made on canceled reservations
+// ========== CANCELLED REVENUE (Payments made on cancelled reservations) ==========
 $cancelledResult = $conn->query("
     SELECT COALESCE(SUM(sp.amount), 0) as total 
     FROM split_payments sp 
@@ -172,30 +164,31 @@ $cancelledCountResult = $conn->query("SELECT COUNT(*) as count FROM reservations
 $cancelledCountRow = $cancelledCountResult->fetch_assoc();
 $cancelledCount = $cancelledCountRow['count'] ?? 0;
 
-// Get refunded/credited amounts from credit_notes that have been processed
+// ========== REFUNDS ==========
 $refundResult = $conn->query("SELECT SUM(amount) as total FROM credit_notes WHERE status = 'processed'");
 $refundRow = $refundResult->fetch_assoc();
 $totalRefunded = $refundRow['total'] ?? 0;
 
-// Calculate net revenue (total payments minus refunds)
+// ========== NET REVENUE (Fixed: includes cancelled deduction) ==========
 $netRevenue = max(0, $revenue['total'] - $totalRefunded - $cancelledRevenue);
 
+// ========== SYSTEM SETTINGS ==========
 $currency = getSetting('currency', 'JOD');
 $currencySymbol = getCurrencySymbol();
 $siteName = getSetting('site_name', 'Ticketing System');
 $themeColor = getSetting('theme_color', '#4f46e5');
 
-// Get today's stats
+// ========== TODAY'S STATS ==========
 $todayResult = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE DATE(created_at) = CURDATE()");
 $todayCount = $todayResult->fetch_assoc()['count'] ?? 0;
 
-// Check for switch error message
+// ========== SWITCH ERROR MESSAGES ==========
 $switch_error = $_SESSION['switch_error'] ?? '';
 $switch_error_type = $_SESSION['switch_error_type'] ?? '';
 unset($_SESSION['switch_error']);
 unset($_SESSION['switch_error_type']);
 
-// Get event count for switch button
+// ========== EVENT COUNT FOR SWITCH BUTTON ==========
 $conn_count = getConnection();
 $eventCountResult = $conn_count->query("SELECT COUNT(*) as count FROM event_settings WHERE status != 'completed'");
 $activeEventCount = $eventCountResult->fetch_assoc()['count'];
