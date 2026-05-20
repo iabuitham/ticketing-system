@@ -73,8 +73,8 @@ if (!$event_ticket_prices && $selected_event_id > 0) {
 }
 
 // Use event-specific prices or fall back to system settings
-$adultPrice = $event_ticket_prices['adult'] ?? getSetting('ticket_price_adult', 10);
-$teenPrice = $event_ticket_prices['teen'] ?? getSetting('ticket_price_teen', 10);
+$adultPrice = $event_ticket_prices['adult'] ?? getSetting('ticket_price_adult', 8);
+$teenPrice = $event_ticket_prices['teen'] ?? getSetting('ticket_price_teen', 8);
 $kidPrice = $event_ticket_prices['kid'] ?? getSetting('ticket_price_kid', 0);
 $currency = getSetting('currency', 'JOD');
 $currencySymbol = getCurrencySymbol();
