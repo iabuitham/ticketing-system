@@ -45,10 +45,12 @@ $kidPrice = $event_ticket_prices['kid'] ?? getSetting('ticket_price_kid', 0);
 $status_filter = isset($_GET['status']) ? $_GET['status'] : '';
 $search = isset($_GET['search']) ? sanitizeInput($_GET['search']) : '';
 
-// ========== OPTIMIZED MAIN QUERY (Single query, no N+1) ==========
 $query = "SELECT r.*, 
           COALESCE(SUM(sp.amount), 0) as total_paid,
-          (r.total_amount - COALESCE(SUM(sp.amount), 0)) as actual_amount_due
+          CASE 
+              WHEN r.status = 'cancelled' THEN 0
+              ELSE (r.total_amount - COALESCE(SUM(sp.amount), 0))
+          END as actual_amount_due
           FROM reservations r
           LEFT JOIN split_payments sp ON r.reservation_id = sp.reservation_id
           WHERE 1=1";
@@ -80,97 +82,88 @@ $stmt->execute();
 $reservations = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
-// NOTE: actual_amount_due is already calculated in the query above
-// The N+1 loop has been REMOVED - no extra queries per reservation!
+// ========== CORRECTED STATISTICS QUERIES ==========
 
-// ========== FIXED STATISTICS QUERY (Includes paid reservations with balance due) ==========
+// 1. RESERVATION COUNTS (Include ALL reservations)
 $statsResult = $conn->query("
     SELECT 
         COUNT(*) as total,
         SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
         SUM(CASE WHEN status = 'registered' THEN 1 ELSE 0 END) as registered,
         SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid,
-        SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
-        SUM(CASE 
-            WHEN r.status IN ('pending', 'registered') 
-                THEN (r.total_amount - COALESCE(sp.paid, 0))
-            WHEN r.status = 'paid' AND (r.total_amount - COALESCE(sp.paid, 0)) > 0
-                THEN (r.total_amount - COALESCE(sp.paid, 0))
-            ELSE 0 
-        END) as total_additional_due
-    FROM reservations r
-    LEFT JOIN (
-        SELECT reservation_id, SUM(amount) as paid
-        FROM split_payments
-        GROUP BY reservation_id
-    ) sp ON r.reservation_id = sp.reservation_id
+        SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
+    FROM reservations
 ");
-
 $stats = $statsResult->fetch_assoc();
-$stats = [
-    'total' => $stats['total'] ?? 0,
-    'pending' => $stats['pending'] ?? 0,
-    'registered' => $stats['registered'] ?? 0,
-    'paid' => $stats['paid'] ?? 0,
-    'cancelled' => $stats['cancelled'] ?? 0,
-    'total_additional_due' => $stats['total_additional_due'] ?? 0
-];
 
-// ========== ATTENDEE STATS ==========
-$attendeeResult = $conn->query("SELECT 
- SUM(CASE WHEN status = 'paid' THEN adults ELSE 0 END) as total_adults,
- SUM(CASE WHEN status = 'paid' THEN teens ELSE 0 END) as total_teens,
- SUM(CASE WHEN status = 'paid' THEN kids ELSE 0 END) as total_kids,
- SUM(CASE WHEN status = 'paid' THEN adults + teens + kids ELSE 0 END) as total_attendees,
- SUM(CASE WHEN status IN ('pending', 'registered') THEN adults + teens + kids ELSE 0 END) as pending_attendees
-FROM reservations");
+// 2. AMOUNT DUE (Only from pending/registered)
+$amountDueResult = $conn->query("
+    SELECT COALESCE(SUM(additional_amount_due), 0) as total
+    FROM reservations
+    WHERE status IN ('pending', 'registered')
+");
+$totalAmountDue = $amountDueResult->fetch_assoc()['total'];
 
+// 3. ATTENDEE STATS (Separate by status)
+$attendeeResult = $conn->query("
+    SELECT 
+        -- Total booked (all non-cancelled)
+        SUM(CASE WHEN status != 'cancelled' THEN adults ELSE 0 END) as total_adults,
+        SUM(CASE WHEN status != 'cancelled' THEN teens ELSE 0 END) as total_teens,
+        SUM(CASE WHEN status != 'cancelled' THEN kids ELSE 0 END) as total_kids,
+        SUM(CASE WHEN status != 'cancelled' THEN adults + teens + kids ELSE 0 END) as total_attendees,
+        
+        -- Paid attendees (actual)
+        SUM(CASE WHEN status = 'paid' THEN adults ELSE 0 END) as paid_adults,
+        SUM(CASE WHEN status = 'paid' THEN teens ELSE 0 END) as paid_teens,
+        SUM(CASE WHEN status = 'paid' THEN kids ELSE 0 END) as paid_kids,
+        SUM(CASE WHEN status = 'paid' THEN adults + teens + kids ELSE 0 END) as paid_attendees,
+        
+        -- Pending attendees
+        SUM(CASE WHEN status IN ('pending', 'registered') THEN adults + teens + kids ELSE 0 END) as pending_attendees
+    FROM reservations
+");
 $attendeeStats = $attendeeResult->fetch_assoc();
-$attendeeStats = [
- 'total_adults' => $attendeeStats['total_adults'] ?? 0,
- 'total_teens' => $attendeeStats['total_teens'] ?? 0,
- 'total_kids' => $attendeeStats['total_kids'] ?? 0,
- 'total_attendees' => $attendeeStats['total_attendees'] ?? 0,
- 'pending_attendees' => $attendeeStats['pending_attendees'] ?? 0
-];
 
-// ========== REVENUE BY PAYMENT METHOD ==========
-$revenueResult = $conn->query("SELECT 
-  SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END) as cash,
-  SUM(CASE WHEN payment_method = 'cliq' THEN amount ELSE 0 END) as cliq,
-  SUM(CASE WHEN payment_method = 'visa' THEN amount ELSE 0 END) as visa,
-  SUM(amount) as total
-FROM split_payments");
+// 4. REVENUE FROM ALL PAYMENTS (Include everything)
+$allPaymentsResult = $conn->query("
+    SELECT 
+        SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END) as cash,
+        SUM(CASE WHEN payment_method = 'cliq' THEN amount ELSE 0 END) as cliq,
+        SUM(CASE WHEN payment_method = 'visa' THEN amount ELSE 0 END) as visa,
+        SUM(amount) as total
+    FROM split_payments
+");
+$allPayments = $allPaymentsResult->fetch_assoc();
 
-$revenue = $revenueResult->fetch_assoc();
-$revenue = [
- 'cash' => $revenue['cash'] ?? 0,
- 'cliq' => $revenue['cliq'] ?? 0,
- 'visa' => $revenue['visa'] ?? 0,
- 'total' => $revenue['total'] ?? 0
-];
+// 5. ACTIVE REVENUE (Exclude cancelled for net revenue)
+$activeRevenueResult = $conn->query("
+    SELECT SUM(sp.amount) as total
+    FROM split_payments sp
+    INNER JOIN reservations r ON sp.reservation_id = r.reservation_id
+    WHERE r.status != 'cancelled'
+");
+$activeRevenue = $activeRevenueResult->fetch_assoc()['total'] ?? 0;
 
-// ========== CANCELLED REVENUE (Payments made on cancelled reservations) ==========
+// 6. CANCELLED STATS
 $cancelledResult = $conn->query("
-    SELECT COALESCE(SUM(sp.amount), 0) as total 
-    FROM split_payments sp 
-    INNER JOIN reservations r ON sp.reservation_id = r.reservation_id 
+    SELECT 
+        COUNT(*) as count,
+        COALESCE(SUM(sp.amount), 0) as total_paid
+    FROM reservations r
+    LEFT JOIN split_payments sp ON r.reservation_id = sp.reservation_id
     WHERE r.status = 'cancelled'
 ");
-$cancelledRow = $cancelledResult->fetch_assoc();
-$cancelledRevenue = $cancelledRow['total'] ?? 0;
+$cancelledData = $cancelledResult->fetch_assoc();
+$cancelledCount = $cancelledData['count'] ?? 0;
+$cancelledRevenue = $cancelledData['total_paid'] ?? 0;
 
-$cancelledCountResult = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE status = 'cancelled'");
-$cancelledCountRow = $cancelledCountResult->fetch_assoc();
-$cancelledCount = $cancelledCountRow['count'] ?? 0;
+// 7. REFUNDS
+$refundResult = $conn->query("SELECT COALESCE(SUM(amount), 0) as total FROM credit_notes WHERE status = 'processed'");
+$totalRefunded = $refundResult->fetch_assoc()['total'] ?? 0;
 
-// ========== REFUNDS ==========
-$refundResult = $conn->query("SELECT SUM(amount) as total FROM credit_notes WHERE status = 'processed'");
-$refundRow = $refundResult->fetch_assoc();
-$totalRefunded = $refundRow['total'] ?? 0;
-
-// ========== NET REVENUE (Fixed: includes cancelled deduction) ==========
-$netRevenue = max(0, $revenue['total'] - $totalRefunded - $cancelledRevenue);
+// 8. NET REVENUE
+$netRevenue = max(0, $activeRevenue - $totalRefunded);
 
 // ========== SYSTEM SETTINGS ==========
 $currency = getSetting('currency', 'JOD');
@@ -1109,7 +1102,7 @@ $conn->close();
      <div class="stat-details">
         <div class="detail-item">
              <span><i class="bi bi-currency-dollar"></i> <?php echo t('Amount Due'); ?></span>
-             <span><?php echo number_format(floatval($stats['total_additional_due']), 2); ?> <?php echo $currencySymbol; ?></span>
+            <span><?php echo number_format(floatval($totalAmountDue), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
              <span><i class="bi bi-clock-history"></i> <?php echo t('Pending'); ?></span>
@@ -1118,25 +1111,25 @@ $conn->close();
      </div>
    </div>
 
-   <div class="stat-card success">
+<div class="stat-card success">
      <div class="stat-number"><?php echo number_format(floatval($netRevenue), 2); ?> <?php echo $currencySymbol; ?></div>
      <div class="stat-label"><i class="bi bi-graph-up"></i> <?php echo t('Net Revenue'); ?></div>
      <div class="stat-details">
         <div class="detail-item">
              <span><i class="bi bi-cash-stack"></i> <?php echo t('Cash'); ?></span>
-             <span><?php echo number_format(floatval($revenue['cash']), 2); ?> <?php echo $currencySymbol; ?></span>
+             <span><?php echo number_format(floatval($allPayments['cash']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
              <span><i class="bi bi-phone"></i> <?php echo t('Cliq'); ?></span>
-             <span><?php echo number_format(floatval($revenue['cliq']), 2); ?> <?php echo $currencySymbol; ?></span>
+             <span><?php echo number_format(floatval($allPayments['cliq']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
              <span><i class="bi bi-credit-card"></i> <?php echo t('Visa'); ?></span>
-             <span><?php echo number_format(floatval($revenue['visa']), 2); ?> <?php echo $currencySymbol; ?></span>
+             <span><?php echo number_format(floatval($allPayments['visa']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
              <span><i class="bi bi-receipt"></i> <?php echo t('Total Payments'); ?></span>
-             <span><?php echo number_format(floatval($revenue['total']), 2); ?> <?php echo $currencySymbol; ?></span>
+             <span><?php echo number_format(floatval($allPayments['total']), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
         <div class="detail-item">
              <span><i class="bi bi-arrow-return-left"></i> <?php echo t('Refunds'); ?></span>
@@ -1151,7 +1144,7 @@ $conn->close();
              <span class="detail-value" style="color: #fecaca;">- <?php echo number_format(floatval($cancelledRevenue), 2); ?> <?php echo $currencySymbol; ?></span>
         </div>
      </div>
-   </div>
+</div>
 
 <div class="stat-card info">
     <div class="stat-number"><?php echo intval($stats['total']); ?></div>

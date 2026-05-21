@@ -132,20 +132,20 @@ try {
    $notes = "Cash payment received by: $received_by";
   }
 
-  // Insert into split_payments
-  $stmt = $conn->prepare("
+ // Insert into split_payments
+ $stmt = $conn->prepare("
    INSERT INTO split_payments 
    (reservation_id, payment_method, amount, receipt_id, proof_file, proof_path, payment_type, received_by, notes, created_at) 
    VALUES (?, ?, ?, ?, ?, ?, 'additional', ?, ?, NOW())
-  ");
+ ");
 
-  $receipt_id = $receipt_id ?? '';
-  $proof_file = $proof_file ?? '';
-  $proof_text_for_db = $proof_text ?? '';  // Store text proof in proof_path column
-  $received_by = $received_by ?? 'System';
-  $notes = $notes ?? '';
+ $receipt_id = $receipt_id ?? '';
+ $proof_file = $proof_file ?? '';
+ $proof_text_for_db = $proof_text ?? '';
+ $received_by = $received_by ?? 'System';
+ $notes = $notes ?? '';
 
-  $stmt->bind_param(
+ $stmt->bind_param(
    "ssdsssss",
    $reservation_id,
    $method,
@@ -155,25 +155,34 @@ try {
    $proof_text_for_db,
    $received_by,
    $notes
-  );
+ );
 
-  if (!$stmt->execute()) {
+ if (!$stmt->execute()) {
    throw new Exception("Failed to insert split payment: " . $stmt->error);
-  }
-  $stmt->close();
  }
+ $stmt->close();
+}
 
- // Update reservation status if fully paid
- $new_status = $reservation['status'];
- if ($new_total_paid >= $total_amount_due) {
-  $new_status = 'paid';
-  $updateStmt = $conn->prepare("UPDATE reservations SET status = ? WHERE reservation_id = ?");
-  $updateStmt->bind_param("ss", $new_status, $reservation_id);
-  $updateStmt->execute();
-  $updateStmt->close();
- }
+// ✅ Calculate remaining amount due
+$remaining_due = max(0, $total_amount_due - ($current_paid + $total_amount));
 
- $conn->commit();
+// ✅ Update additional_amount_due in reservations table
+$updateDueStmt = $conn->prepare("UPDATE reservations SET additional_amount_due = ? WHERE reservation_id = ?");
+$updateDueStmt->bind_param("ds", $remaining_due, $reservation_id);
+$updateDueStmt->execute();
+$updateDueStmt->close();
+
+// Update reservation status if fully paid
+$new_status = $reservation['status'];
+if (($current_paid + $total_amount) >= $total_amount_due) {
+ $new_status = 'paid';
+ $updateStmt = $conn->prepare("UPDATE reservations SET status = ? WHERE reservation_id = ?");
+ $updateStmt->bind_param("ss", $new_status, $reservation_id);
+ $updateStmt->execute();
+ $updateStmt->close();
+}
+
+$conn->commit();
 
  // Send WhatsApp confirmation
  sendPaymentConfirmation($reservation_id, $total_amount, $splits, $new_total_paid, $total_amount_due);
