@@ -259,34 +259,82 @@ function preventDoubleBooking($conn, $phone, $table_number, $event_date = null) 
 /**
  * Send WhatsApp text message
  */
+/**
+ * Send WhatsApp text message using Ultramsg
+ */
 function sendWhatsAppMessage($to, $message) {
+    // Log the attempt for debugging
+    error_log("WhatsApp send attempt - To: $to");
+    
     $enabled = getSetting('enable_whatsapp', '0') == '1';
-    if (!$enabled) return false;
+    if (!$enabled) {
+        error_log("WhatsApp is disabled in settings");
+        return false;
+    }
     
     $instanceId = getSetting('ultramsg_instance_id', '');
     $token = getSetting('ultramsg_token', '');
     
-    if (empty($instanceId) || empty($token)) return false;
+    if (empty($instanceId) || empty($token)) {
+        error_log("Missing Ultramsg credentials - Instance ID: " . ($instanceId ? 'set' : 'empty') . ", Token: " . ($token ? 'set' : 'empty'));
+        return false;
+    }
     
+    // Format phone number correctly
     $to = preg_replace('/[^0-9]/', '', $to);
-    $to = ltrim($to, '0');
-    if (substr($to, 0, 3) == '962') $to = substr($to, 3);
-    $to = '962' . $to;
+    if (substr($to, 0, 1) == '0') {
+        $to = substr($to, 1);
+    }
+    if (substr($to, 0, 3) != '962') {
+        $to = '962' . $to;
+    }
     
-    $data = ['token' => $token, 'to' => $to, 'body' => $message, 'priority' => 1];
+    error_log("Formatted phone: $to");
+    
+    // Prepare the request
+    $data = [
+        'token' => $token,
+        'to' => $to,
+        'body' => $message,
+        'priority' => 1
+    ];
+    
+    $url = "https://api.ultramsg.com/{$instanceId}/messages/chat";
     
     $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, "https://api.ultramsg.com/{$instanceId}/messages/chat");
+    curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
     curl_close($ch);
     
+    error_log("Ultramsg Response - HTTP: $httpCode");
+    error_log("Response body: $response");
+    if ($curlError) {
+        error_log("CURL Error: $curlError");
+    }
+    
+    // Check for success
     $responseData = json_decode($response, true);
-    return ($httpCode == 200 && isset($responseData['sent']) && $responseData['sent']);
+    if ($httpCode == 200 && isset($responseData['sent']) && ($responseData['sent'] === true || $responseData['sent'] === 1 || $responseData['sent'] === '1')) {
+        error_log("WhatsApp sent successfully to: $to");
+        return true;
+    }
+    
+    // Also accept if there's no error and message was sent
+    if ($httpCode == 200 && !isset($responseData['error'])) {
+        error_log("WhatsApp likely sent successfully to: $to");
+        return true;
+    }
+    
+    error_log("Failed to send WhatsApp to: $to - Response: $response");
+    return false;
 }
 /**
  * Send WhatsApp image using Ultramsg
