@@ -787,6 +787,7 @@ $conn->close();
             <a href="tables.php" class="btn btn-secondary"><i class="bi bi-grid-3x3-gap-fill"></i> Tables</a>
             <a href="tickets_dashboard.php" class="btn btn-info"><i class="bi bi-ticket-perforated"></i> Ticket Dashboard</a>
             <a href="floor_plan.php" class="btn btn-secondary"><i class="bi bi-map"></i> Floor Plan</a>
+            <a href="loyalty_dashboard.php" class="btn btn-warning"><i class="bi bi-star-fill"></i> Loyalty Points</a>
         </div>
     </div>
 
