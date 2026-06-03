@@ -67,17 +67,27 @@ try {
     $stmt->execute();
     $stmt->close();
     
+    // Delete loyalty transactions if they exist
+    $stmt = $conn->prepare("DELETE FROM loyalty_points_transactions WHERE reservation_id = ?");
+    $stmt->bind_param("s", $reservation_id);
+    $stmt->execute();
+    $stmt->close();
+    
     $stmt = $conn->prepare("DELETE FROM reservations WHERE reservation_id = ?");
     $stmt->bind_param("s", $reservation_id);
     $stmt->execute();
     $stmt->close();
     
-    // Release the table
-    $updateTable = $conn->prepare("UPDATE tables SET status = 'available', current_reservation_id = NULL, reserved_until = NULL WHERE table_number = ?");
-    $updateTable->bind_param("s", $table_id);
-    $updateTable->execute();
-    $debug['table_updated'] = $updateTable->affected_rows;
-    $updateTable->close();
+    // Release the table (only if a table was assigned)
+    if (!empty($table_id)) {
+        $updateTable = $conn->prepare("UPDATE tables SET status = 'available', current_reservation_id = NULL, reserved_until = NULL WHERE table_number = ?");
+        $updateTable->bind_param("s", $table_id);
+        $updateTable->execute();
+        $debug['table_updated'] = $updateTable->affected_rows;
+        $updateTable->close();
+    } else {
+        $debug['table_updated'] = 'No table was assigned';
+    }
     
     $conn->commit();
     
