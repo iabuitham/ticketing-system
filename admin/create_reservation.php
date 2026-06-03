@@ -85,6 +85,59 @@ if ($selected_event_id > 0) {
 
 $currencySymbol = getCurrencySymbol();
 
+// Function to save or update customer
+function saveCustomer($conn, $name, $phone, $total_amount) {
+    // Check if customer exists
+    $checkStmt = $conn->prepare("SELECT id, total_visits, total_spent FROM customers WHERE phone = ?");
+    $checkStmt->bind_param("s", $phone);
+    $checkStmt->execute();
+    $result = $checkStmt->get_result();
+    $existing = $result->fetch_assoc();
+    $checkStmt->close();
+    
+    if ($existing) {
+        // Update existing customer
+        $new_visits = $existing['total_visits'] + 1;
+        $new_spent = $existing['total_spent'] + $total_amount;
+        $updateStmt = $conn->prepare("
+            UPDATE customers 
+            SET name = ?, 
+                total_visits = ?, 
+                total_spent = ?, 
+                last_visit_date = NOW() 
+            WHERE phone = ?
+        ");
+        $updateStmt->bind_param("sids", $name, $new_visits, $new_spent, $phone);
+        $updateStmt->execute();
+        $updateStmt->close();
+        return $existing['id'];
+    } else {
+        // Insert new customer
+        $insertStmt = $conn->prepare("
+            INSERT INTO customers (name, phone, total_visits, total_spent, first_visit_date, last_visit_date) 
+            VALUES (?, ?, 1, ?, NOW(), NOW())
+        ");
+        $insertStmt->bind_param("ssd", $name, $phone, $total_amount);
+        $insertStmt->execute();
+        $new_id = $insertStmt->insert_id;
+        $insertStmt->close();
+        
+        // Send welcome message for new customers
+        $welcomeMsg = "⭐ *WELCOME TO OUR CUSTOMER PROGRAM!* ⭐\n\n";
+        $welcomeMsg .= "Dear {$name},\n\n";
+        $welcomeMsg .= "Thank you for choosing us! You've been automatically enrolled in our customer program.\n\n";
+        $welcomeMsg .= "🎁 Benefits:\n";
+        $welcomeMsg .= "• Track your visits and spending\n";
+        $welcomeMsg .= "• Special offers on future events\n";
+        $welcomeMsg .= "• Priority support\n\n";
+        $welcomeMsg .= "We look forward to serving you! 🎉";
+        
+        sendWhatsAppMessage($phone, $welcomeMsg);
+        
+        return $new_id;
+    }
+}
+
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $name = sanitizeInput($_POST['name']);
@@ -141,10 +194,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $conn->begin_transaction();
         
         try {
-            // SIMPLIFIED: Use a direct query with escaped values to avoid bind_param issues
             $status = 'pending';
             $additional_amount_due = $total_amount;
-            $created_at = date('Y-m-d H:i:s');
             
             $sql = "INSERT INTO reservations (
                 reservation_id, 
@@ -217,6 +268,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $conn->commit();
             
+            // Save customer to customers table
+            saveCustomer($conn, $name, $phone, $total_amount);
+            
             $message = "✅ Reservation created successfully!<br>";
             $message .= "📋 Reservation ID: <strong>" . $reservation_id . "</strong><br>";
             $message .= "🎫 Tickets generated: " . $adultCount . " Adult, " . $teenCount . " Teen, " . $kidCount . " Kid<br>";
@@ -249,21 +303,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $whatsappMessage .= "نتطلع لخدمتك! 🎉\n\n";
             $whatsappMessage .= "_Thank you for choosing us | شكرًا لاختياركم لنا_";
             
-            // Debug: Log the message and phone
-            error_log("Attempting to send WhatsApp to: " . $phone);
-            error_log("Message length: " . strlen($whatsappMessage));
-            
             $whatsappSent = sendWhatsAppMessage($phone, $whatsappMessage);
-            
-            // Debug: Log the result
-            error_log("WhatsApp send result: " . ($whatsappSent ? "TRUE" : "FALSE"));
             
             if ($whatsappSent) {
                 $message .= "<br>📱 WhatsApp confirmation sent to customer!";
             } else {
-                $message .= "<br>⚠️ WhatsApp could not be sent. Please check WhatsApp settings in System Settings.";
-                // Add more debug info for admin
-                $message .= "<br><small>Debug: Check error logs for details. Make sure Ultramsg credentials are configured.</small>";
+                $message .= "<br>⚠️ WhatsApp could not be sent. Please check WhatsApp settings.";
             }
             
             $messageType = "success";
