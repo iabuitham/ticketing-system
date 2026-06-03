@@ -50,8 +50,6 @@ $message .= "Here is the floor plan for {$eventName}.\n";
 $message .= "هذا هو مخطط الطاولات لحدث {$eventName}.\n\n";
 $message .= "Please check available tables and choose your preferred one.\n";
 $message .= "يرجى الاطلاع على الطاولات المتاحة واختيار ما يناسبك.\n\n";
-$message .= "Once you arrive at the venue, our staff will guide you to your table.\n";
-$message .= "عند وصولك إلى المكان، سيقوم فريقنا بتوجيهك إلى طاولتك.\n\n";
 $message .= "We look forward to welcoming you! 🎉\n";
 $message .= "نتطلع لاستقبالك! 🎉";
 

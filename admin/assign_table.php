@@ -46,42 +46,6 @@ $updateStmt = $conn->prepare("UPDATE reservations SET table_id = ? WHERE reserva
 $updateStmt->bind_param("ss", $table_number, $reservation_id);
 
 if ($updateStmt->execute()) {
-    // Get reservation details for WhatsApp notification
-    $resStmt = $conn->prepare("SELECT name, phone FROM reservations WHERE reservation_id = ?");
-    $resStmt->bind_param("s", $reservation_id);
-    $resStmt->execute();
-    $reservation = $resStmt->get_result()->fetch_assoc();
-    $resStmt->close();
-    
-    if ($reservation) {
-        // Format phone number
-        $cleanPhone = preg_replace('/[^0-9]/', '', $reservation['phone']);
-        if (substr($cleanPhone, 0, 1) == '0') $cleanPhone = substr($cleanPhone, 1);
-        if (substr($cleanPhone, 0, 3) != '962') $cleanPhone = '962' . $cleanPhone;
-        
-        // Get event name
-        $eventStmt = $conn->prepare("SELECT event_name FROM event_settings WHERE id = ?");
-        $eventStmt->bind_param("i", $selected_event_id);
-        $eventStmt->execute();
-        $event = $eventStmt->get_result()->fetch_assoc();
-        $eventStmt->close();
-        $eventName = $event['event_name'] ?? 'Event';
-        
-        // Bilingual WhatsApp message
-        $message = "🍽️ *TABLE ASSIGNED | تم تخصيص الطاولة* 🍽️\n\n";
-        $message .= "Dear {$reservation['name']} | عزيزنا {$reservation['name']},\n\n";
-        $message .= "Your table has been assigned for {$eventName}.\n";
-        $message .= "تم تخصيص طاولتك لحدث {$eventName}.\n\n";
-        $message .= "📋 *Reservation ID | رقم الحجز:* {$reservation_id}\n";
-        $message .= "🍽️ *Table Number | رقم الطاولة:* {$table_number}\n\n";
-        $message .= "Please proceed to your assigned table upon arrival.\n";
-        $message .= "يرجى التوجه إلى طاولتك المخصصة عند الوصول.\n\n";
-        $message .= "We look forward to serving you! 🎉\n";
-        $message .= "نتطلع لخدمتك! 🎉";
-        
-        sendWhatsAppMessage($cleanPhone, $message);
-    }
-    
     echo json_encode(['success' => true]);
 } else {
     echo json_encode(['success' => false, 'error' => $conn->error]);
