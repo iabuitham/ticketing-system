@@ -14,15 +14,24 @@ $messageType = '';
 
 // Handle bulk action - Deactivate tickets
 if (isset($_POST['bulk_deactivate']) && isset($_POST['ticket_ids'])) {
-    $ticket_ids = $_POST['ticket_ids'];
+    // Decode JSON string to array
+    $ticket_ids = json_decode($_POST['ticket_ids'], true);
+    
+    // If it's still a string (not JSON), convert to array
+    if (!is_array($ticket_ids)) {
+        $ticket_ids = explode(',', $_POST['ticket_ids']);
+    }
+    
     $count = 0;
     
-    foreach ($ticket_ids as $ticket_id) {
-        $stmt = $conn->prepare("UPDATE ticket_codes SET is_active = 0, deactivated_at = NOW(), deactivated_by = ? WHERE id = ? AND is_scanned = 0");
-        $stmt->bind_param("si", $_SESSION['admin_username'], $ticket_id);
-        $stmt->execute();
-        $count += $stmt->affected_rows;
-        $stmt->close();
+    if (is_array($ticket_ids)) {
+        foreach ($ticket_ids as $ticket_id) {
+            $stmt = $conn->prepare("UPDATE ticket_codes SET is_active = 0, deactivated_at = NOW(), deactivated_by = ? WHERE id = ? AND is_scanned = 0");
+            $stmt->bind_param("si", $_SESSION['admin_username'], $ticket_id);
+            $stmt->execute();
+            $count += $stmt->affected_rows;
+            $stmt->close();
+        }
     }
     
     $message = "$count ticket(s) deactivated successfully!";
@@ -31,15 +40,24 @@ if (isset($_POST['bulk_deactivate']) && isset($_POST['ticket_ids'])) {
 
 // Handle bulk action - Activate tickets
 if (isset($_POST['bulk_activate']) && isset($_POST['ticket_ids'])) {
-    $ticket_ids = $_POST['ticket_ids'];
+    // Decode JSON string to array
+    $ticket_ids = json_decode($_POST['ticket_ids'], true);
+    
+    // If it's still a string (not JSON), convert to array
+    if (!is_array($ticket_ids)) {
+        $ticket_ids = explode(',', $_POST['ticket_ids']);
+    }
+    
     $count = 0;
     
-    foreach ($ticket_ids as $ticket_id) {
-        $stmt = $conn->prepare("UPDATE ticket_codes SET is_active = 1, deactivated_at = NULL, deactivated_by = NULL WHERE id = ?");
-        $stmt->bind_param("i", $ticket_id);
-        $stmt->execute();
-        $count += $stmt->affected_rows;
-        $stmt->close();
+    if (is_array($ticket_ids)) {
+        foreach ($ticket_ids as $ticket_id) {
+            $stmt = $conn->prepare("UPDATE ticket_codes SET is_active = 1, deactivated_at = NULL, deactivated_by = NULL WHERE id = ?");
+            $stmt->bind_param("i", $ticket_id);
+            $stmt->execute();
+            $count += $stmt->affected_rows;
+            $stmt->close();
+        }
     }
     
     $message = "$count ticket(s) activated successfully!";
@@ -348,7 +366,7 @@ $conn->close();
                             <th>Status</th>
                             <th>Created</th>
                             <th>Actions</th>
-                        </td>
+                        </tr>
                     </thead>
                     <tbody>
                         <?php foreach ($tickets as $ticket): ?>
@@ -372,18 +390,17 @@ $conn->close();
                              </d>
                             <td><?php echo date('M d, H:i', strtotime($ticket['created_at'])); ?> </d>
                             <td>
-                                    <?php if (!$ticket['is_scanned']): ?>
-                                        <?php if ($ticket['is_active']): ?>
-                                            <a href="?toggle=1&id=<?php echo $ticket['id']; ?>" class="btn btn-sm btn-warning" onclick="return confirm('Deactivate this ticket?')">
-                                                <i class="bi bi-ban"></i>
-                                            </a>
-                                        <?php else: ?>
-                                            <a href="?toggle=1&id=<?php echo $ticket['id']; ?>" class="btn btn-sm btn-success" onclick="return confirm('Activate this ticket?')">
-                                                <i class="bi bi-check-circle"></i>
-                                            </a>
-                                        <?php endif; ?>
+                                <?php if (!$ticket['is_scanned']): ?>
+                                    <?php if ($ticket['is_active']): ?>
+                                        <a href="?toggle=1&id=<?php echo $ticket['id']; ?>" class="btn btn-sm btn-warning" onclick="return confirm('Deactivate this ticket?')">
+                                            <i class="bi bi-ban"></i>
+                                        </a>
+                                    <?php else: ?>
+                                        <a href="?toggle=1&id=<?php echo $ticket['id']; ?>" class="btn btn-sm btn-success" onclick="return confirm('Activate this ticket?')">
+                                            <i class="bi bi-check-circle"></i>
+                                        </a>
                                     <?php endif; ?>
-                                </div>
+                                <?php endif; ?>
                              </d>
                          </tr>
                         <?php endforeach; ?>
@@ -392,7 +409,7 @@ $conn->close();
                             <td colspan="8" style="text-align: center; padding: 60px;">
                                 <i class="bi bi-inbox" style="font-size: 48px; opacity: 0.5;"></i>
                                 <p>No tickets found</p>
-                            </td>
+                             </d>
                         </tr>
                         <?php endif; ?>
                     </tbody>
@@ -403,6 +420,10 @@ $conn->close();
     
     <script>
         let selectedTickets = new Set();
+        
+        function updateSelectedTicketsInput() {
+            document.getElementById('selectedTicketsInput').value = JSON.stringify(Array.from(selectedTickets));
+        }
         
         function toggleSelectAll() {
             const checkboxes = document.querySelectorAll('.ticket-checkbox');
@@ -416,6 +437,7 @@ $conn->close();
                     selectedTickets.delete(cb.value);
                 }
             });
+            updateSelectedTicketsInput();
             updateBulkActions();
         }
         
@@ -426,6 +448,7 @@ $conn->close();
                 selectedTickets.add(cb.value);
             });
             document.getElementById('selectAllCheckbox').checked = true;
+            updateSelectedTicketsInput();
             updateBulkActions();
         }
         
@@ -436,6 +459,7 @@ $conn->close();
             });
             selectedTickets.clear();
             document.getElementById('selectAllCheckbox').checked = false;
+            updateSelectedTicketsInput();
             updateBulkActions();
         }
         
@@ -451,22 +475,7 @@ $conn->close();
                 return;
             }
             if (confirm(`Deactivate ${selectedTickets.size} ticket(s)?`)) {
-                const form = document.createElement('form');
-                form.method = 'POST';
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'ticket_ids';
-                input.value = JSON.stringify(Array.from(selectedTickets));
-                form.appendChild(input);
-                
-                const btn = document.createElement('input');
-                btn.type = 'hidden';
-                btn.name = 'bulk_deactivate';
-                btn.value = '1';
-                form.appendChild(btn);
-                
-                document.body.appendChild(form);
-                form.submit();
+                document.getElementById('bulkForm').submit();
             }
         }
         
@@ -476,22 +485,7 @@ $conn->close();
                 return;
             }
             if (confirm(`Activate ${selectedTickets.size} ticket(s)?`)) {
-                const form = document.createElement('form');
-                form.method = 'POST';
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'ticket_ids';
-                input.value = JSON.stringify(Array.from(selectedTickets));
-                form.appendChild(input);
-                
-                const btn = document.createElement('input');
-                btn.type = 'hidden';
-                btn.name = 'bulk_activate';
-                btn.value = '1';
-                form.appendChild(btn);
-                
-                document.body.appendChild(form);
-                form.submit();
+                document.getElementById('bulkForm').submit();
             }
         }
         
@@ -510,6 +504,7 @@ $conn->close();
                 } else {
                     selectedTickets.delete(this.value);
                 }
+                updateSelectedTicketsInput();
                 updateBulkActions();
             });
         });
@@ -520,6 +515,9 @@ $conn->close();
         document.getElementById('reservationFilter')?.addEventListener('keypress', function(e) {
             if (e.key === 'Enter') applyFilters();
         });
+        
+        // Initialize
+        updateSelectedTicketsInput();
     </script>
 </body>
 </html>

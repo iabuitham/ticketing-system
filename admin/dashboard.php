@@ -145,31 +145,32 @@ $amountDueResult->close();
 // 3. ATTENDEE STATS - CORRECTED
 // New pending = never paid (total_paid = 0 AND additional_amount_due = total_amount)
 // Old pending = had payments but increased guests (total_paid > 0 AND additional_amount_due > 0)
+// 3. ATTENDEE STATS - CORRECTED
 $attendeeResult = $conn->prepare("
     SELECT 
-        -- Total booked (all non-cancelled)
-        SUM(CASE WHEN status != 'cancelled' THEN adults ELSE 0 END) as total_adults,
-        SUM(CASE WHEN status != 'cancelled' THEN teens ELSE 0 END) as total_teens,
-        SUM(CASE WHEN status != 'cancelled' THEN kids ELSE 0 END) as total_kids,
-        SUM(CASE WHEN status != 'cancelled' THEN adults + teens + kids ELSE 0 END) as total_attendees,
-        
         -- FULLY PAID ATTENDEES (status = 'paid' AND additional_amount_due = 0)
         SUM(CASE WHEN status = 'paid' AND additional_amount_due = 0 THEN adults ELSE 0 END) as fully_paid_adults,
         SUM(CASE WHEN status = 'paid' AND additional_amount_due = 0 THEN teens ELSE 0 END) as fully_paid_teens,
         SUM(CASE WHEN status = 'paid' AND additional_amount_due = 0 THEN kids ELSE 0 END) as fully_paid_kids,
         SUM(CASE WHEN status = 'paid' AND additional_amount_due = 0 THEN adults + teens + kids ELSE 0 END) as total_attendees_paid,
         
-        -- NEW PENDING ATTENDEES (never paid - total_paid = 0 AND status IN ('pending', 'registered'))
-        SUM(CASE WHEN (status IN ('pending', 'registered') OR (status != 'cancelled' AND additional_amount_due = total_amount))
+        -- TOTAL BOOKED (all non-cancelled - for reference)
+        SUM(CASE WHEN status != 'cancelled' THEN adults ELSE 0 END) as total_adults,
+        SUM(CASE WHEN status != 'cancelled' THEN teens ELSE 0 END) as total_teens,
+        SUM(CASE WHEN status != 'cancelled' THEN kids ELSE 0 END) as total_kids,
+        SUM(CASE WHEN status != 'cancelled' THEN adults + teens + kids ELSE 0 END) as total_attendees,
+        
+        -- NEW PENDING ATTENDEES (never paid)
+        SUM(CASE WHEN (status IN ('pending', 'registered') AND additional_amount_due = total_amount)
                   AND status != 'cancelled'
              THEN adults + teens + kids ELSE 0 END) as new_pending_attendees,
              
-        -- OLD PENDING ATTENDEES (had payments before, but increased guests - total_paid > 0 AND additional_amount_due > 0)
+        -- OLD PENDING ATTENDEES (had payments before, but increased guests)
         SUM(CASE WHEN (status IN ('pending', 'registered') AND additional_amount_due > 0 AND additional_amount_due < total_amount)
                   AND status != 'cancelled'
              THEN adults + teens + kids ELSE 0 END) as old_pending_attendees,
              
-        -- Total pending (both new and old)
+        -- Total pending
         SUM(CASE WHEN (status IN ('pending', 'registered') OR additional_amount_due > 0) AND status != 'cancelled'
              THEN adults + teens + kids ELSE 0 END) as total_pending_attendees
     FROM reservations
@@ -714,14 +715,14 @@ $conn->close();
 
     <div class="stats-grid">
         <div class="stat-card primary">
-            <div class="stat-number"><?php echo number_format(floatval($attendeeStats['total_attendees'] ?? 0)); ?></div>
-            <div class="stat-label"><i class="bi bi-people-fill"></i> <?php echo t('Total Booked'); ?></div>
-            <div class="stat-details">
-                <div class="detail-item"><span><i class="bi bi-gender-male"></i> <?php echo t('Adults'); ?></span><span><?php echo number_format(floatval($attendeeStats['total_adults'] ?? 0)); ?></span></div>
-                <div class="detail-item"><span><i class="bi bi-gender-female"></i> <?php echo t('Teens'); ?></span><span><?php echo number_format(floatval($attendeeStats['total_teens'] ?? 0)); ?></span></div>
-                <div class="detail-item"><span><i class="bi bi-egg-fried"></i> <?php echo t('Kids'); ?></span><span><?php echo number_format(floatval($attendeeStats['total_kids'] ?? 0)); ?></span></div>
-            </div>
-        </div>
+    <div class="stat-number"><?php echo number_format(floatval($attendeeStats['total_attendees_paid'] ?? 0)); ?></div>
+    <div class="stat-label"><i class="bi bi-people-fill"></i> <?php echo t('Total Booked (Paid)'); ?></div>
+    <div class="stat-details">
+        <div class="detail-item"><span><i class="bi bi-gender-male"></i> <?php echo t('Adults'); ?></span><span><?php echo number_format(floatval($attendeeStats['fully_paid_adults'] ?? 0)); ?></span></div>
+        <div class="detail-item"><span><i class="bi bi-gender-female"></i> <?php echo t('Teens'); ?></span><span><?php echo number_format(floatval($attendeeStats['fully_paid_teens'] ?? 0)); ?></span></div>
+        <div class="detail-item"><span><i class="bi bi-egg-fried"></i> <?php echo t('Kids'); ?></span><span><?php echo number_format(floatval($attendeeStats['fully_paid_kids'] ?? 0)); ?></span></div>
+    </div>
+</div>
 
 <div class="stat-card warning">
     <div class="stat-number"><?php echo number_format(floatval($attendeeStats['total_pending_attendees'] ?? 0)); ?></div>
