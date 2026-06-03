@@ -20,11 +20,12 @@ if (!$currentEvent) {
     $currentEvent = $eventResult->fetch_assoc();
 }
 
-// Get counts for statistics
-$totalCustomers = $conn->query("SELECT COUNT(*) as count FROM reservations")->fetch_assoc()['count'];
-$pendingCustomers = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE status = 'pending' OR status = 'registered'")->fetch_assoc()['count'];
-$paidCustomers = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE status = 'paid'")->fetch_assoc()['count'];
-$cancelledCustomers = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE status = 'cancelled'")->fetch_assoc()['count'];
+// Get counts for statistics (filter by current event)
+$selected_event_id = $_SESSION['selected_event_id'] ?? 0;
+$totalCustomers = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE event_id = $selected_event_id")->fetch_assoc()['count'];
+$pendingCustomers = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE (status = 'pending' OR status = 'registered') AND event_id = $selected_event_id")->fetch_assoc()['count'];
+$paidCustomers = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE status = 'paid' AND event_id = $selected_event_id")->fetch_assoc()['count'];
+$cancelledCustomers = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE status = 'cancelled' AND event_id = $selected_event_id")->fetch_assoc()['count'];
 
 $message = '';
 $messageType = '';
@@ -40,7 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $payment_link = isset($_POST['payment_link']) ? trim($_POST['payment_link']) : '';
     
     // Build query for recipients
-    $query = "SELECT name, phone, reservation_id, status, total_amount FROM reservations WHERE 1=1";
+    $query = "SELECT name, phone, reservation_id, status, total_amount FROM reservations WHERE event_id = $selected_event_id";
     
     switch($recipient_group) {
         case 'pending':
@@ -77,7 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $msg = str_replace('{name}', $recipient['name'], $msg);
         $msg = str_replace('{reservation_id}', $recipient['reservation_id'], $msg);
         $msg = str_replace('{amount}', number_format($recipient['total_amount'], 2), $msg);
-        $msg = str_replace('{ticket_link}', $baseUrl . "admin/print_ticket.php?reservation_id=" . urlencode($recipient['reservation_id']), $msg);
+        $msg = str_replace('{ticket_link}', $baseUrl . "public/reservation_tickets.php?id=" . urlencode($recipient['reservation_id']), $msg);
         $msg = str_replace('{payment_link}', $payment_link ?: $baseUrl . "admin/dashboard.php", $msg);
         
         // Add event details placeholders
@@ -89,13 +90,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = str_replace('{event_description}', $currentEvent['description'] ?? 'Join us for an amazing experience!', $msg);
         }
         
-        // Send message
+        // Send message - FIXED: sendWhatsAppMessage returns boolean, not array
         $result_send = sendWhatsAppMessage($recipient['phone'], $msg);
-        if ($result_send['success']) {
+        
+        if ($result_send === true) {
             $sentCount++;
         } else {
             $failedCount++;
-            $errors[] = $recipient['name'] . ': ' . ($result_send['error'] ?? 'Unknown error');
+            $errors[] = $recipient['name'] . ': Failed to send';
         }
         
         // Small delay to avoid rate limiting
@@ -119,89 +121,103 @@ function getTemplateMessage($template, $customer, $custom_subject, $baseUrl, $in
     
     switch($template) {
         case 'event_reminder':
-            $body = "Dear {name},\n\n";
-            $body .= "This is a friendly reminder about our upcoming event!\n\n";
-            $body .= "🎪 *Event:* {event_name}\n";
-            $body .= "📅 *Date:* {event_date}\n";
-            $body .= "⏰ *Time:* {event_time}\n";
-            $body .= "📍 *Venue:* {venue}\n\n";
-            $body .= "📋 *Reservation ID:* {reservation_id}\n\n";
+            $body = "🎪 *EVENT REMINDER | تذكير بالحدث* 🎪\n\n";
+            $body .= "Dear {name} | عزيزنا {name},\n\n";
+            $body .= "This is a friendly reminder about our upcoming event!\n";
+            $body .= "هذا تذكير لحدثنا القادم!\n\n";
+            $body .= "🎪 *Event | الحدث:* {event_name}\n";
+            $body .= "📅 *Date | التاريخ:* {event_date}\n";
+            $body .= "⏰ *Time | الوقت:* {event_time}\n";
+            $body .= "📍 *Venue | المكان:* {venue}\n\n";
+            $body .= "📋 *Reservation ID | رقم الحجز:* {reservation_id}\n\n";
             $body .= "{event_description}\n\n";
-            $body .= "We look forward to seeing you there!\n\n";
-            $body .= "Best regards,\nEvent Team";
+            $body .= "We look forward to seeing you there! 🎉\n";
+            $body .= "نتطلع لرؤيتكم هناك! 🎉";
             break;
             
         case 'payment_reminder':
-            $body = "Dear {name},\n\n";
-            $body .= "We noticed that your payment for reservation #{reservation_id} is still pending.\n\n";
-            $body .= "💰 Amount Due: {amount} JOD\n\n";
-            $body .= "Please complete your payment to secure your reservation.\n\n";
+            $body = "💰 *PAYMENT REMINDER | تذكير بالدفع* 💰\n\n";
+            $body .= "Dear {name} | عزيزنا {name},\n\n";
+            $body .= "We noticed that your payment for reservation #{reservation_id} is still pending.\n";
+            $body .= "نحن نلاحظ أن دفعتك للحجز رقم {reservation_id} لا تزال معلقة.\n\n";
+            $body .= "💰 *Amount Due | المبلغ المستحق:* {amount} JOD\n\n";
+            $body .= "Please complete your payment to secure your reservation.\n";
+            $body .= "يرجى إكمال الدفع لتأمين حجزك.\n\n";
             if ($payment_link) {
-                $body .= "🔗 Payment Link: {payment_link}\n\n";
+                $body .= "🔗 Payment Link | رابط الدفع: {payment_link}\n\n";
             }
-            $body .= "Event: {event_name} on {event_date}\n\n";
-            $body .= "If you've already made the payment, please disregard this message.\n\n";
-            $body .= "Thank you,\nEvent Team";
+            $body .= "Event | الحدث: {event_name} on {event_date}\n\n";
+            $body .= "If you've already made the payment, please disregard this message.\n";
+            $body .= "إذا كنت قد قمت بالدفع بالفعل، يرجى تجاهل هذه الرسالة.\n\n";
+            $body .= "Thank you | شكراً لك";
             break;
             
         case 'thank_you':
-            $body = "Dear {name},\n\n";
-            $body .= "Thank you for choosing {event_name}!\n\n";
-            $body .= "We truly appreciate your support and look forward to providing you with an unforgettable experience.\n\n";
-            $body .= "Event Date: {event_date}\n";
-            $body .= "Venue: {venue}\n\n";
-            $body .= "If you have any questions, please don't hesitate to contact us.\n\n";
-            $body .= "Best regards,\nEvent Team";
+            $body = "🙏 *THANK YOU | شكراً لك* 🙏\n\n";
+            $body .= "Dear {name} | عزيزنا {name},\n\n";
+            $body .= "Thank you for choosing {event_name}!\n";
+            $body .= "شكراً لاختيارك {event_name}!\n\n";
+            $body .= "We truly appreciate your support.\n";
+            $body .= "نحن نقدر دعمك حقاً.\n\n";
+            $body .= "Event Date | تاريخ الحدث: {event_date}\n";
+            $body .= "Venue | المكان: {venue}\n\n";
+            $body .= "Best regards, | مع أطيب التحيات،\nEvent Team | فريق الحدث";
             break;
             
         case 'ticket_reminder':
-            $body = "Dear {name},\n\n";
-            $body .= "Your tickets for {event_name} are ready!\n\n";
-            $body .= "🎫 *Reservation ID:* {reservation_id}\n";
-            $body .= "📅 *Event Date:* {event_date}\n";
-            $body .= "📍 *Venue:* {venue}\n\n";
+            $body = "🎫 *YOUR TICKETS ARE READY | تذاكرك جاهزة* 🎫\n\n";
+            $body .= "Dear {name} | عزيزنا {name},\n\n";
+            $body .= "Your tickets for {event_name} are ready!\n";
+            $body .= "تذاكرك لحدث {event_name} جاهزة!\n\n";
+            $body .= "🎫 *Reservation ID | رقم الحجز:* {reservation_id}\n";
+            $body .= "📅 *Event Date | تاريخ الحدث:* {event_date}\n";
+            $body .= "📍 *Venue | المكان:* {venue}\n\n";
             if ($include_ticket_link) {
-                $body .= "📎 *Download your tickets here:*\n";
+                $body .= "📎 *Download your tickets here | حمل تذاكرك من هنا:*\n";
                 $body .= "{ticket_link}\n\n";
             }
-            $body .= "Please remember to bring your ticket (digital or printed) to the event.\n\n";
-            $body .= "We can't wait to welcome you!\n\n";
-            $body .= "Best regards,\nEvent Team";
+            $body .= "Please remember to bring your ticket (digital or printed) to the event.\n";
+            $body .= "يرجى تذكر إحضار تذكرتك (رقمية أو مطبوعة) إلى الحدث.\n\n";
+            $body .= "We can't wait to welcome you! 🎉\n";
+            $body .= "لا يمكننا الانتظار لاستقبالك! 🎉";
             break;
             
         case 'special_offer':
-            $body = "Dear {name},\n\n";
-            $body .= "🎉 *EXCLUSIVE OFFER FOR {event_name}!* 🎉\n\n";
-            $body .= "As a valued customer, we're offering you a 15% discount on your next booking!\n\n";
-            $body .= "Use code: WELCOME15 at checkout.\n\n";
-            $body .= "Book now and save!\n\n";
-            $body .= "Best regards,\nEvent Team";
+            $body = "🎁 *SPECIAL OFFER | عرض خاص* 🎁\n\n";
+            $body .= "Dear {name} | عزيزنا {name},\n\n";
+            $body .= "🎉 *EXCLUSIVE OFFER FOR {event_name}!* 🎉\n";
+            $body .= "🎉 *عرض حصري لحدث {event_name}!* 🎉\n\n";
+            $body .= "As a valued customer, we're offering you a 15% discount on your next booking!\n";
+            $body .= "كعميل مميز، نقدم لك خصم 15% على حجزك القادم!\n\n";
+            $body .= "Use code | استخدم الرمز: WELCOME15\n\n";
+            $body .= "Book now and save! | احجز الآن ووفر!";
             break;
             
         case 'event_update':
-            $body = "Dear {name},\n\n";
-            $body .= "*Important Update Regarding {event_name}*\n\n";
-            $body .= "We have some exciting updates about the upcoming event!\n\n";
-            $body .= "📅 *Date:* {event_date}\n";
-            $body .= "📍 *Venue:* {venue}\n\n";
-            $body .= "• New performers added\n";
-            $body .= "• Extended hours\n";
-            $body .= "• Special giveaways\n\n";
-            $body .= "Your reservation #{reservation_id} remains confirmed.\n\n";
-            $body .= "Check our website for more details.\n\n";
-            $body .= "Best regards,\nEvent Team";
+            $body = "📢 *EVENT UPDATE | تحديث الحدث* 📢\n\n";
+            $body .= "Dear {name} | عزيزنا {name},\n\n";
+            $body .= "*Important Update Regarding {event_name}*\n";
+            $body .= "*تحديث مهم بخصوص {event_name}*\n\n";
+            $body .= "We have some exciting updates about the upcoming event!\n";
+            $body .= "لدينا بعض التحديثات المثيرة حول الحدث القادم!\n\n";
+            $body .= "📅 *Date | التاريخ:* {event_date}\n";
+            $body .= "📍 *Venue | المكان:* {venue}\n\n";
+            $body .= "Your reservation #{reservation_id} remains confirmed.\n";
+            $body .= "حجزك رقم {reservation_id} لا يزال مؤكداً.\n\n";
+            $body .= "Best regards, | مع أطيب التحيات،\nEvent Team | فريق الحدث";
             break;
             
         default:
-            $body = "Dear {name},\n\n";
-            $body .= "This is a message from {event_name} regarding your reservation #{reservation_id}.\n\n";
-            $body .= "Event Date: {event_date}\n";
-            $body .= "Venue: {venue}\n\n";
-            $body .= "For more information, please contact us.\n\n";
-            $body .= "Best regards,\nEvent Team";
+            $body = "📋 *MESSAGE FROM EVENT TEAM | رسالة من فريق الحدث* 📋\n\n";
+            $body .= "Dear {name} | عزيزنا {name},\n\n";
+            $body .= "This is a message from {event_name} regarding your reservation #{reservation_id}.\n";
+            $body .= "هذه رسالة من {event_name} بخصوص حجزك رقم {reservation_id}.\n\n";
+            $body .= "Event Date | تاريخ الحدث: {event_date}\n";
+            $body .= "Venue | المكان: {venue}\n\n";
+            $body .= "Best regards, | مع أطيب التحيات،\nEvent Team | فريق الحدث";
     }
     
-    return "*" . strtoupper($subject) . "*\n\n" . $body;
+    return $body;
 }
 
 function getDefaultSubject($template) {
@@ -453,7 +469,7 @@ $conn->close();
                 <div class="form-group">
                     <label>Message Template</label>
                     <select name="message_template" id="messageTemplate" onchange="updatePreview()" required>
-                        <option value="event_reminder">📅 Event Reminder (uses event details from database)</option>
+                        <option value="event_reminder">📅 Event Reminder</option>
                         <option value="payment_reminder">💰 Payment Reminder</option>
                         <option value="thank_you">🙏 Thank You Message</option>
                         <option value="ticket_reminder">🎫 Ticket Reminder</option>
@@ -470,19 +486,7 @@ $conn->close();
                 
                 <div class="form-group" id="customMessageGroup" style="display: none;">
                     <label>Custom Message</label>
-                    <textarea name="custom_message" id="customMessage" placeholder="Type your custom message here...
-                    
-Available placeholders:
-{name} - Customer name
-{reservation_id} - Reservation ID
-{amount} - Total amount
-{event_name} - Event name
-{event_date} - Event date
-{event_time} - Event time
-{venue} - Venue
-{event_description} - Event description
-{ticket_link} - Ticket download link
-{payment_link} - Payment link"></textarea>
+                    <textarea name="custom_message" id="customMessage" placeholder="Type your custom message here..."></textarea>
                 </div>
                 
                 <div class="checkbox-group">
@@ -529,118 +533,8 @@ Available placeholders:
             amount: '230.00'
         };
         
-        const templates = {
-            event_reminder: `*EVENT REMINDER*
-
-Dear {name},
-
-This is a friendly reminder about our upcoming event!
-
-🎪 *Event:* {event_name}
-📅 *Date:* {event_date}
-⏰ *Time:* {event_time}
-📍 *Venue:* {venue}
-
-📋 *Reservation ID:* {reservation_id}
-
-{event_description}
-
-We look forward to seeing you there!
-
-Best regards,
-Event Team`,
-
-            payment_reminder: `*PAYMENT REMINDER*
-
-Dear {name},
-
-We noticed that your payment for reservation #{reservation_id} is still pending.
-
-💰 Amount Due: {amount} JOD
-
-Please complete your payment to secure your reservation.
-
-Event: {event_name} on {event_date}
-
-If you've already made the payment, please disregard this message.
-
-Thank you,
-Event Team`,
-            
-            thank_you: `*THANK YOU*
-
-Dear {name},
-
-Thank you for choosing {event_name}!
-
-We truly appreciate your support and look forward to providing you with an unforgettable experience.
-
-Event Date: {event_date}
-Venue: {venue}
-
-If you have any questions, please don't hesitate to contact us.
-
-Best regards,
-Event Team`,
-            
-            ticket_reminder: `*YOUR TICKETS ARE READY*
-
-Dear {name},
-
-Your tickets for {event_name} are ready!
-
-🎫 *Reservation ID:* {reservation_id}
-📅 *Event Date:* {event_date}
-📍 *Venue:* {venue}
-
-Please remember to bring your ticket (digital or printed) to the event.
-
-We can't wait to welcome you!
-
-Best regards,
-Event Team`,
-            
-            special_offer: `*SPECIAL OFFER JUST FOR YOU*
-
-Dear {name},
-
-🎉 *EXCLUSIVE OFFER FOR {event_name}!* 🎉
-
-As a valued customer, we're offering you a 15% discount on your next booking!
-
-Use code: WELCOME15 at checkout.
-
-Book now and save!
-
-Best regards,
-Event Team`,
-            
-            event_update: `*EVENT UPDATE*
-
-Dear {name},
-
-*Important Update Regarding {event_name}*
-
-We have some exciting updates about the upcoming event!
-
-📅 *Date:* {event_date}
-📍 *Venue:* {venue}
-
-• New performers added
-• Extended hours
-• Special giveaways
-
-Your reservation #{reservation_id} remains confirmed.
-
-Check our website for more details.
-
-Best regards,
-Event Team`
-        };
-        
         function updatePreview() {
             const template = document.getElementById('messageTemplate').value;
-            const customSubject = document.getElementById('customSubject').value;
             const includeTicketLink = document.getElementById('includeTicketLink').checked;
             const paymentLink = document.querySelector('input[name="payment_link"]')?.value || '';
             const customMessage = document.getElementById('customMessage').value;
@@ -650,7 +544,8 @@ Event Team`
             if (template === 'custom') {
                 preview = customMessage || 'Enter your custom message above...';
             } else {
-                preview = templates[template] || templates.event_reminder;
+                // Get template from PHP (simplified for preview)
+                preview = getTemplatePreview(template);
             }
             
             // Replace placeholders
@@ -662,10 +557,79 @@ Event Team`
             preview = preview.replace(/{event_time}/g, eventData.time);
             preview = preview.replace(/{venue}/g, eventData.venue);
             preview = preview.replace(/{event_description}/g, eventData.description);
-            preview = preview.replace(/{ticket_link}/g, includeTicketLink ? 'http://ticketing.local/admin/print_ticket.php?reservation_id=' + sampleCustomer.reservation_id : '[Ticket link not included]');
+            preview = preview.replace(/{ticket_link}/g, includeTicketLink ? 'http://ticketing.local/public/reservation_tickets.php?id=' + sampleCustomer.reservation_id : '[Ticket link not included]');
             preview = preview.replace(/{payment_link}/g, paymentLink || 'http://ticketing.local/admin/dashboard.php');
             
             document.getElementById('messagePreview').innerHTML = preview.replace(/\n/g, '<br>');
+        }
+        
+        function getTemplatePreview(template) {
+            const previews = {
+                event_reminder: `🎪 *EVENT REMINDER | تذكير بالحدث* 🎪
+
+Dear {name} | عزيزنا {name},
+
+This is a friendly reminder about our upcoming event!
+هذا تذكير لحدثنا القادم!
+
+🎪 *Event | الحدث:* {event_name}
+📅 *Date | التاريخ:* {event_date}
+⏰ *Time | الوقت:* {event_time}
+📍 *Venue | المكان:* {venue}
+
+📋 *Reservation ID | رقم الحجز:* {reservation_id}
+
+{event_description}
+
+We look forward to seeing you there! 🎉
+نتطلع لرؤيتكم هناك! 🎉`,
+                payment_reminder: `💰 *PAYMENT REMINDER | تذكير بالدفع* 💰
+
+Dear {name} | عزيزنا {name},
+
+We noticed that your payment for reservation #{reservation_id} is still pending.
+نحن نلاحظ أن دفعتك للحجز رقم {reservation_id} لا تزال معلقة.
+
+💰 *Amount Due | المبلغ المستحق:* {amount} JOD
+
+Please complete your payment to secure your reservation.
+يرجى إكمال الدفع لتأمين حجزك.
+
+Thank you | شكراً لك`,
+                thank_you: `🙏 *THANK YOU | شكراً لك* 🙏
+
+Dear {name} | عزيزنا {name},
+
+Thank you for choosing {event_name}!
+شكراً لاختيارك {event_name}!
+
+Best regards | مع أطيب التحيات`,
+                ticket_reminder: `🎫 *YOUR TICKETS ARE READY | تذاكرك جاهزة* 🎫
+
+Dear {name} | عزيزنا {name},
+
+Your tickets for {event_name} are ready!
+تذاكرك لحدث {event_name} جاهزة!
+
+🎫 *Reservation ID | رقم الحجز:* {reservation_id}`,
+                special_offer: `🎁 *SPECIAL OFFER | عرض خاص* 🎁
+
+Dear {name} | عزيزنا {name},
+
+🎉 *EXCLUSIVE OFFER!* 🎉
+🎉 *عرض حصري!* 🎉
+
+Use code | استخدم الرمز: WELCOME15`,
+                event_update: `📢 *EVENT UPDATE | تحديث الحدث* 📢
+
+Dear {name} | عزيزنا {name},
+
+*Important Update Regarding {event_name}*
+*تحديث مهم بخصوص {event_name}*
+
+Best regards | مع أطيب التحيات`
+            };
+            return previews[template] || previews.event_reminder;
         }
         
         function toggleFields() {
@@ -678,7 +642,6 @@ Event Team`
             paymentLinkGroup.style.display = template === 'payment_reminder' ? 'block' : 'none';
             
             if (template === 'ticket_reminder') {
-                includeTicketLink.checked = true;
                 includeTicketLink.disabled = false;
             } else {
                 includeTicketLink.disabled = true;
