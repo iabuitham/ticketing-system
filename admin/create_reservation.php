@@ -284,7 +284,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $whatsappMessage .= "📋 *Reservation ID | رقم الحجز:* {$reservation_id}\n";
             $whatsappMessage .= "👥 *Guests | عدد الضيوف:* " . ($adults + $teens + $kids) . "\n";
             $whatsappMessage .= "💰 *Total Amount | المبلغ الإجمالي:* {$currencySymbol} " . number_format($total_amount, 2) . "\n";
-            $whatsappMessage .= "🏷️ *Price Tier | فئة السعر:* " . ucfirst($price_tier) . "\n\n";
             
             $whatsappMessage .= "❗ *Table number will be assigned later. We will notify you.*\n";
             $whatsappMessage .= "❗ *سيتم تخصيص رقم الطاولة لاحقًا. سنقوم بإعلامك.*\n\n";
