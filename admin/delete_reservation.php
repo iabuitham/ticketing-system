@@ -56,26 +56,44 @@ $debug['table_id'] = $table_id;
 $conn->begin_transaction();
 
 try {
-    // Delete related records
+    // Delete related records from split_payments
     $stmt = $conn->prepare("DELETE FROM split_payments WHERE reservation_id = ?");
     $stmt->bind_param("s", $reservation_id);
     $stmt->execute();
+    $debug['split_payments_deleted'] = $stmt->affected_rows;
     $stmt->close();
     
+    // Delete related records from ticket_codes
     $stmt = $conn->prepare("DELETE FROM ticket_codes WHERE reservation_id = ?");
     $stmt->bind_param("s", $reservation_id);
     $stmt->execute();
+    $debug['ticket_codes_deleted'] = $stmt->affected_rows;
     $stmt->close();
     
-    // Delete loyalty transactions if they exist
-    $stmt = $conn->prepare("DELETE FROM loyalty_points_transactions WHERE reservation_id = ?");
+    // Delete from credit_notes if they exist
+    $stmt = $conn->prepare("DELETE FROM credit_notes WHERE reservation_id = ?");
     $stmt->bind_param("s", $reservation_id);
     $stmt->execute();
+    $debug['credit_notes_deleted'] = $stmt->affected_rows;
     $stmt->close();
     
+    // Check if loyalty_points_transactions table exists before trying to delete
+    $checkTable = $conn->query("SHOW TABLES LIKE 'loyalty_points_transactions'");
+    if ($checkTable && $checkTable->num_rows > 0) {
+        $stmt = $conn->prepare("DELETE FROM loyalty_points_transactions WHERE reservation_id = ?");
+        $stmt->bind_param("s", $reservation_id);
+        $stmt->execute();
+        $debug['loyalty_deleted'] = $stmt->affected_rows;
+        $stmt->close();
+    } else {
+        $debug['loyalty_deleted'] = 'Table does not exist - skipped';
+    }
+    
+    // Finally delete the reservation
     $stmt = $conn->prepare("DELETE FROM reservations WHERE reservation_id = ?");
     $stmt->bind_param("s", $reservation_id);
     $stmt->execute();
+    $debug['reservation_deleted'] = $stmt->affected_rows;
     $stmt->close();
     
     // Release the table (only if a table was assigned)
