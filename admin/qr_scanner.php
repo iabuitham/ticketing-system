@@ -359,29 +359,7 @@ $conn->close();
 </head>
 <body>
 <div class="container">
-    <!-- Statistics -->
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-icon"><i class="bi bi-ticket-perforated"></i></div>
-            <div class="stat-number" id="remainingCount"><?php echo $totalTickets; ?></div>
-            <div class="stat-label">Remaining Tickets</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon"><i class="bi bi-check-circle"></i></div>
-            <div class="stat-number" id="scannedCount"><?php echo $totalScanned; ?></div>
-            <div class="stat-label">Total Scanned</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon"><i class="bi bi-people"></i></div>
-            <div class="stat-number" id="scannedTodayCount"><?php echo $todayScans; ?></div>
-            <div class="stat-label">Today's Check-ins</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon"><i class="bi bi-percent"></i></div>
-            <div class="stat-number" id="percentageCount">0%</div>
-            <div class="stat-label">Check-in Rate</div>
-        </div>
-    </div>
+    
     
     <div class="scanner-layout">
         <!-- Scanner Section -->
@@ -468,6 +446,29 @@ $conn->close();
                 </div>
             </div>
         </div>
+        <!-- Statistics -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon"><i class="bi bi-ticket-perforated"></i></div>
+            <div class="stat-number" id="remainingCount"><?php echo $totalTickets; ?></div>
+            <div class="stat-label">Remaining Tickets</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon"><i class="bi bi-check-circle"></i></div>
+            <div class="stat-number" id="scannedCount"><?php echo $totalScanned; ?></div>
+            <div class="stat-label">Total Scanned</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon"><i class="bi bi-people"></i></div>
+            <div class="stat-number" id="scannedTodayCount"><?php echo $todayScans; ?></div>
+            <div class="stat-label">Today's Check-ins</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon"><i class="bi bi-percent"></i></div>
+            <div class="stat-number" id="percentageCount">0%</div>
+            <div class="stat-label">Check-in Rate</div>
+        </div>
+    </div>
     </div>
 </div>
 
