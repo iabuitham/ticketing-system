@@ -735,6 +735,7 @@ $conn->close();
    text-decoration: none;
    display: inline-flex;
    align-items: center;
+   margin: 3px;
    gap: 6px;
    font-weight: 500;
    font-size: 14px;
