@@ -6,7 +6,6 @@ session_start();
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
 require_once '../includes/language.php';
-require_once '../includes/early_bird.php';
 
 if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
     header('Location: login.php');
@@ -22,31 +21,24 @@ $selected_event_id = $_SESSION['selected_event_id'] ?? 0;
 $selected_event_name = $_SESSION['selected_event_name'] ?? 'No Event Selected';
 $selected_event_date = $_SESSION['selected_event_date'] ?? '';
 
-// Get current event details
+// Get event ticket prices from database
 $adultPrice = getSetting('ticket_price_adult', 10);
 $teenPrice = getSetting('ticket_price_teen', 10);
 $kidPrice = getSetting('ticket_price_kid', 0);
+
+// Get loyalty prices from system settings
 $loyaltyAdultPrice = getSetting('loyalty_price_adult', 8);
 $loyaltyTeenPrice = getSetting('loyalty_price_teen', 8);
 $loyaltyKidPrice = getSetting('loyalty_price_kid', 0);
-$earlyBirdActive = false;
-$earlyBirdDeadline = null;
 
+// Override with event-specific prices if event is selected
 if ($selected_event_id > 0) {
     $stmt = $conn->prepare("SELECT 
         ticket_price_adult, 
         ticket_price_teen, 
         ticket_price_kid, 
         event_name, 
-        event_date,
-        early_bird_enabled,
-        early_bird_deadline,
-        early_bird_price_adult,
-        early_bird_price_teen,
-        early_bird_price_kid,
-        loyalty_price_adult,
-        loyalty_price_teen,
-        loyalty_price_kid
+        event_date
         FROM event_settings WHERE id = ?");
     $stmt->bind_param("i", $selected_event_id);
     $stmt->execute();
@@ -57,29 +49,9 @@ if ($selected_event_id > 0) {
         $adultPrice = $event_data['ticket_price_adult'];
         $teenPrice = $event_data['ticket_price_teen'];
         $kidPrice = $event_data['ticket_price_kid'];
-        $loyaltyAdultPrice = $event_data['loyalty_price_adult'] ?? $adultPrice * 0.8;
-        $loyaltyTeenPrice = $event_data['loyalty_price_teen'] ?? $teenPrice * 0.8;
-        $loyaltyKidPrice = $event_data['loyalty_price_kid'] ?? $kidPrice;
         
         $_SESSION['selected_event_name'] = $event_data['event_name'];
         $_SESSION['selected_event_date'] = $event_data['event_date'];
-        
-        if ($event_data['early_bird_enabled'] && !empty($event_data['early_bird_deadline'])) {
-            $today = date('Y-m-d');
-            if ($today <= $event_data['early_bird_deadline']) {
-                $earlyBirdActive = true;
-                $earlyBirdDeadline = $event_data['early_bird_deadline'];
-                if (!empty($event_data['early_bird_price_adult']) && $event_data['early_bird_price_adult'] > 0) {
-                    $adultPrice = $event_data['early_bird_price_adult'];
-                }
-                if (!empty($event_data['early_bird_price_teen']) && $event_data['early_bird_price_teen'] > 0) {
-                    $teenPrice = $event_data['early_bird_price_teen'];
-                }
-                if (!empty($event_data['early_bird_price_kid']) && $event_data['early_bird_price_kid'] > 0) {
-                    $kidPrice = $event_data['early_bird_price_kid'];
-                }
-            }
-        }
     }
 }
 
@@ -284,6 +256,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $whatsappMessage .= "📋 *Reservation ID | رقم الحجز:* {$reservation_id}\n";
             $whatsappMessage .= "👥 *Guests | عدد الضيوف:* " . ($adults + $teens + $kids) . "\n";
             $whatsappMessage .= "💰 *Total Amount | المبلغ الإجمالي:* {$currencySymbol} " . number_format($total_amount, 2) . "\n";
+            $whatsappMessage .= "🏷️ *Price Tier | فئة السعر:* " . ucfirst($price_tier) . "\n\n";
             
             $whatsappMessage .= "❗ *Table number will be assigned later. We will notify you.*\n";
             $whatsappMessage .= "❗ *سيتم تخصيص رقم الطاولة لاحقًا. سنقوم بإعلامك.*\n\n";
@@ -494,6 +467,7 @@ function generateReservationIdWithSeq($adults, $teens, $kids, $sequential)
             font-size: 12px;
             color: #4f46e5;
             margin-left: 24px;
+            margin-top: 5px;
         }
         @media (max-width: 768px) {
             .form-row { grid-template-columns: 1fr; }
@@ -560,14 +534,6 @@ function generateReservationIdWithSeq($adults, $teens, $kids, $sequential)
                     Kid: <?php echo $currencySymbol; ?> <?php echo number_format($loyaltyKidPrice, 2); ?>
                 </div>
             </div>
-
-            <?php if ($earlyBirdActive && $earlyBirdDeadline): ?>
-            <div class="alert alert-success" style="background: #d1fae5; color: #065f46; margin-bottom: 15px;">
-                <i class="bi bi-gift-fill"></i> 
-                <strong>Early Bird Discount Active!</strong> 
-                You're getting discounted prices for this event.
-            </div>
-            <?php endif; ?>
 
             <div class="card-header" style="margin-top: 20px;">
                 <h2><i class="bi bi-people"></i> Guest Information</h2>
@@ -688,6 +654,7 @@ function generateReservationIdWithSeq($adults, $teens, $kids, $sequential)
     }
 
     document.addEventListener('DOMContentLoaded', function() {
+        updatePrices();
         calculateTotal();
     });
 </script>

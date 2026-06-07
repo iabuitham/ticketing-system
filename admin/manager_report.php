@@ -15,147 +15,532 @@ $conn = getConnection();
 $date_from = isset($_GET['from']) ? mysqli_real_escape_string($conn, $_GET['from']) : date('Y-m-d', strtotime('-30 days'));
 $date_to = isset($_GET['to']) ? mysqli_real_escape_string($conn, $_GET['to']) : date('Y-m-d');
 
-// ========== FETCH ALL DATA ONCE ==========
+// ============================================
+// AUTO-INCLUDE ARCHIVED DATA BASED ON DATE
+// Archived data is automatically included if it falls within the date range
+// ============================================
 
-// 1. Daily Revenue & Bookings
+// 1. Daily Revenue & Bookings (Active + Archived by date)
 $dailyData = [];
-$dailyResult = $conn->query("SELECT DATE(created_at) as date, SUM(total_amount) as revenue, COUNT(*) as bookings 
-                              FROM reservations WHERE status = 'paid' 
-                              AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
-                              GROUP BY DATE(created_at) ORDER BY date");
-while ($row = $dailyResult->fetch_assoc()) {
-    $dailyData[] = $row;
+
+// Active reservations
+$dailyActive = $conn->query("
+    SELECT DATE(created_at) as date, SUM(total_amount) as revenue, COUNT(*) as bookings 
+    FROM reservations WHERE status = 'paid' 
+    AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
+    GROUP BY DATE(created_at)
+");
+
+while ($row = $dailyActive->fetch_assoc()) {
+    $dailyData[$row['date']] = [
+        'date' => $row['date'],
+        'revenue' => floatval($row['revenue']),
+        'bookings' => intval($row['bookings'])
+    ];
 }
 
-// 2. Weekly Revenue
+// Archived reservations (automatically included if date matches)
+$dailyArchived = $conn->query("
+    SELECT DATE(created_at) as date, SUM(total_amount) as revenue, COUNT(*) as bookings 
+    FROM archived_reservations WHERE status = 'paid' 
+    AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
+    GROUP BY DATE(created_at)
+");
+
+while ($row = $dailyArchived->fetch_assoc()) {
+    if (isset($dailyData[$row['date']])) {
+        $dailyData[$row['date']]['revenue'] += floatval($row['revenue']);
+        $dailyData[$row['date']]['bookings'] += intval($row['bookings']);
+    } else {
+        $dailyData[$row['date']] = [
+            'date' => $row['date'],
+            'revenue' => floatval($row['revenue']),
+            'bookings' => intval($row['bookings'])
+        ];
+    }
+}
+
+ksort($dailyData);
+$dailyData = array_values($dailyData);
+
+// 2. Weekly Revenue (Active + Archived by date)
 $weeklyData = [];
-$weeklyResult = $conn->query("SELECT 
-    YEARWEEK(created_at) as week_num,
-    MIN(DATE(created_at)) as week_start,
-    SUM(total_amount) as revenue,
-    COUNT(*) as bookings
-FROM reservations WHERE status = 'paid' 
-AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
-GROUP BY YEARWEEK(created_at) ORDER BY week_num");
-while ($row = $weeklyResult->fetch_assoc()) {
-    $weeklyData[] = $row;
+
+// Active
+$weeklyActive = $conn->query("
+    SELECT 
+        YEARWEEK(created_at) as week_num,
+        MIN(DATE(created_at)) as week_start,
+        SUM(total_amount) as revenue,
+        COUNT(*) as bookings
+    FROM reservations WHERE status = 'paid' 
+    AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
+    GROUP BY YEARWEEK(created_at)
+");
+
+while ($row = $weeklyActive->fetch_assoc()) {
+    $weeklyData[$row['week_num']] = [
+        'week_num' => $row['week_num'],
+        'week_start' => $row['week_start'],
+        'revenue' => floatval($row['revenue']),
+        'bookings' => intval($row['bookings'])
+    ];
 }
 
-// 3. Monthly Revenue
+// Archived
+$weeklyArchived = $conn->query("
+    SELECT 
+        YEARWEEK(created_at) as week_num,
+        MIN(DATE(created_at)) as week_start,
+        SUM(total_amount) as revenue,
+        COUNT(*) as bookings
+    FROM archived_reservations WHERE status = 'paid' 
+    AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
+    GROUP BY YEARWEEK(created_at)
+");
+
+while ($row = $weeklyArchived->fetch_assoc()) {
+    if (isset($weeklyData[$row['week_num']])) {
+        $weeklyData[$row['week_num']]['revenue'] += floatval($row['revenue']);
+        $weeklyData[$row['week_num']]['bookings'] += intval($row['bookings']);
+    } else {
+        $weeklyData[$row['week_num']] = [
+            'week_num' => $row['week_num'],
+            'week_start' => $row['week_start'],
+            'revenue' => floatval($row['revenue']),
+            'bookings' => intval($row['bookings'])
+        ];
+    }
+}
+
+ksort($weeklyData);
+$weeklyData = array_values($weeklyData);
+
+// 3. Monthly Revenue (Active + Archived by date)
 $monthlyData = [];
-$monthlyResult = $conn->query("SELECT 
-    DATE_FORMAT(created_at, '%Y-%m') as month,
-    SUM(total_amount) as revenue,
-    COUNT(*) as bookings
-FROM reservations WHERE status = 'paid' 
-AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
-GROUP BY DATE_FORMAT(created_at, '%Y-%m') ORDER BY month");
-while ($row = $monthlyResult->fetch_assoc()) {
-    $monthlyData[] = $row;
+
+// Active
+$monthlyActive = $conn->query("
+    SELECT 
+        DATE_FORMAT(created_at, '%Y-%m') as month,
+        SUM(total_amount) as revenue,
+        COUNT(*) as bookings
+    FROM reservations WHERE status = 'paid' 
+    AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
+    GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+");
+
+while ($row = $monthlyActive->fetch_assoc()) {
+    $monthlyData[$row['month']] = [
+        'month' => $row['month'],
+        'revenue' => floatval($row['revenue']),
+        'bookings' => intval($row['bookings'])
+    ];
 }
 
-// 4. Revenue by Payment Method
-$revenueQuery = "SELECT 
-    SUM(CASE WHEN sp.payment_method = 'cash' THEN sp.amount ELSE 0 END) as cash,
-    SUM(CASE WHEN sp.payment_method = 'cliq' THEN sp.amount ELSE 0 END) as cliq,
-    SUM(CASE WHEN sp.payment_method = 'visa' THEN sp.amount ELSE 0 END) as visa,
-    SUM(sp.amount) as total
-FROM split_payments sp
-JOIN reservations r ON sp.reservation_id = r.reservation_id
-WHERE r.status = 'paid' AND DATE(r.created_at) BETWEEN '$date_from' AND '$date_to'";
-$revenue = $conn->query($revenueQuery)->fetch_assoc();
+// Archived
+$monthlyArchived = $conn->query("
+    SELECT 
+        DATE_FORMAT(created_at, '%Y-%m') as month,
+        SUM(total_amount) as revenue,
+        COUNT(*) as bookings
+    FROM archived_reservations WHERE status = 'paid' 
+    AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
+    GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+");
 
-// 5. Top Customers
+while ($row = $monthlyArchived->fetch_assoc()) {
+    if (isset($monthlyData[$row['month']])) {
+        $monthlyData[$row['month']]['revenue'] += floatval($row['revenue']);
+        $monthlyData[$row['month']]['bookings'] += intval($row['bookings']);
+    } else {
+        $monthlyData[$row['month']] = [
+            'month' => $row['month'],
+            'revenue' => floatval($row['revenue']),
+            'bookings' => intval($row['bookings'])
+        ];
+    }
+}
+
+ksort($monthlyData);
+$monthlyData = array_values($monthlyData);
+
+// 4. Revenue by Payment Method (Active + Archived by date)
+$cash = 0;
+$cliq = 0;
+$visa = 0;
+$total_payments = 0;
+
+// Active payments
+$paymentsActive = $conn->query("
+    SELECT 
+        SUM(CASE WHEN sp.payment_method = 'cash' THEN sp.amount ELSE 0 END) as cash,
+        SUM(CASE WHEN sp.payment_method = 'cliq' THEN sp.amount ELSE 0 END) as cliq,
+        SUM(CASE WHEN sp.payment_method = 'visa' THEN sp.amount ELSE 0 END) as visa,
+        SUM(sp.amount) as total
+    FROM split_payments sp
+    JOIN reservations r ON sp.reservation_id = r.reservation_id
+    WHERE r.status = 'paid' AND DATE(r.created_at) BETWEEN '$date_from' AND '$date_to'
+");
+
+$activePay = $paymentsActive->fetch_assoc();
+$cash += floatval($activePay['cash']);
+$cliq += floatval($activePay['cliq']);
+$visa += floatval($activePay['visa']);
+$total_payments += floatval($activePay['total']);
+
+// Archived payments (automatically included if date matches)
+$paymentsArchived = $conn->query("
+    SELECT 
+        SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END) as cash,
+        SUM(CASE WHEN payment_method = 'cliq' THEN amount ELSE 0 END) as cliq,
+        SUM(CASE WHEN payment_method = 'visa' THEN amount ELSE 0 END) as visa,
+        SUM(amount) as total
+    FROM archived_split_payments asp
+    JOIN archived_reservations ar ON asp.archived_reservation_id = ar.reservation_id
+    WHERE ar.status = 'paid' AND DATE(ar.created_at) BETWEEN '$date_from' AND '$date_to'
+");
+
+$archivedPay = $paymentsArchived->fetch_assoc();
+$cash += floatval($archivedPay['cash']);
+$cliq += floatval($archivedPay['cliq']);
+$visa += floatval($archivedPay['visa']);
+$total_payments += floatval($archivedPay['total']);
+
+$revenue = [
+    'cash' => $cash,
+    'cliq' => $cliq,
+    'visa' => $visa,
+    'total' => $total_payments
+];
+
+// 5. Top Customers (Active + Archived by date)
 $topCustomers = [];
-$topResult = $conn->query("SELECT 
-    name, 
-    COUNT(*) as bookings, 
-    SUM(total_amount) as total_spent
-FROM reservations WHERE status = 'paid' 
-AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
-GROUP BY name ORDER BY total_spent DESC LIMIT 10");
-while ($row = $topResult->fetch_assoc()) {
-    $topCustomers[] = $row;
+
+// Active customers
+$topActive = $conn->query("
+    SELECT 
+        name, 
+        COUNT(*) as bookings, 
+        SUM(total_amount) as total_spent
+    FROM reservations WHERE status = 'paid' 
+    AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
+    GROUP BY name ORDER BY total_spent DESC LIMIT 10
+");
+
+while ($row = $topActive->fetch_assoc()) {
+    $topCustomers[$row['name']] = [
+        'name' => $row['name'],
+        'bookings' => intval($row['bookings']),
+        'total_spent' => floatval($row['total_spent'])
+    ];
 }
 
-// 6. Guest Distribution
-$guestDistribution = $conn->query("SELECT 
-    SUM(adults) as total_adults,
-    SUM(teens) as total_teens,
-    SUM(kids) as total_kids
-FROM reservations WHERE status = 'paid' 
-AND DATE(created_at) BETWEEN '$date_from' AND '$date_to'")->fetch_assoc();
+// Archived customers (automatically included if date matches)
+$topArchived = $conn->query("
+    SELECT 
+        name, 
+        COUNT(*) as bookings, 
+        SUM(total_amount) as total_spent
+    FROM archived_reservations WHERE status = 'paid' 
+    AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
+    GROUP BY name ORDER BY total_spent DESC LIMIT 10
+");
 
-// 7. Popular Tables
+while ($row = $topArchived->fetch_assoc()) {
+    if (isset($topCustomers[$row['name']])) {
+        $topCustomers[$row['name']]['bookings'] += intval($row['bookings']);
+        $topCustomers[$row['name']]['total_spent'] += floatval($row['total_spent']);
+    } else {
+        $topCustomers[$row['name']] = [
+            'name' => $row['name'],
+            'bookings' => intval($row['bookings']),
+            'total_spent' => floatval($row['total_spent'])
+        ];
+    }
+}
+
+// Sort by total_spent descending and take top 10
+uasort($topCustomers, function($a, $b) {
+    return $b['total_spent'] <=> $a['total_spent'];
+});
+$topCustomers = array_slice($topCustomers, 0, 10);
+$topCustomers = array_values($topCustomers);
+
+// 6. Guest Distribution (Active + Archived by date)
+$total_adults = 0;
+$total_teens = 0;
+$total_kids = 0;
+
+// Active
+$guestActive = $conn->query("
+    SELECT 
+        SUM(adults) as adults,
+        SUM(teens) as teens,
+        SUM(kids) as kids
+    FROM reservations WHERE status = 'paid' 
+    AND DATE(created_at) BETWEEN '$date_from' AND '$date_to'
+");
+
+$activeGuest = $guestActive->fetch_assoc();
+$total_adults += intval($activeGuest['adults']);
+$total_teens += intval($activeGuest['teens']);
+$total_kids += intval($activeGuest['kids']);
+
+// Archived
+$guestArchived = $conn->query("
+    SELECT 
+        SUM(adults) as adults,
+        SUM(teens) as teens,
+        SUM(kids) as kids
+    FROM archived_reservations WHERE status = 'paid' 
+    AND DATE(created_at) BETWEEN '$date_from' AND '$date_to'
+");
+
+$archivedGuest = $guestArchived->fetch_assoc();
+$total_adults += intval($archivedGuest['adults']);
+$total_teens += intval($archivedGuest['teens']);
+$total_kids += intval($archivedGuest['kids']);
+
+$guestDistribution = [
+    'total_adults' => $total_adults,
+    'total_teens' => $total_teens,
+    'total_kids' => $total_kids
+];
+
+// 7. Popular Tables (Active only - archived tables may not be relevant)
 $popularTables = [];
-$tablesResult = $conn->query("SELECT 
-    table_id, 
-    COUNT(*) as bookings, 
-    SUM(total_amount) as revenue
-FROM reservations WHERE status = 'paid' 
-AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
-GROUP BY table_id ORDER BY bookings DESC LIMIT 10");
+$tablesResult = $conn->query("
+    SELECT 
+        table_id, 
+        COUNT(*) as bookings, 
+        SUM(total_amount) as revenue
+    FROM reservations WHERE status = 'paid' 
+    AND table_id IS NOT NULL AND table_id != ''
+    AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
+    GROUP BY table_id ORDER BY bookings DESC LIMIT 10
+");
 while ($row = $tablesResult->fetch_assoc()) {
     $popularTables[] = $row;
 }
 
-// 8. Hourly Pattern
+// 8. Hourly Pattern (Active + Archived by date)
 $hourlyData = [];
-$hourlyResult = $conn->query("SELECT 
-    HOUR(created_at) as hour, 
-    COUNT(*) as bookings
-FROM reservations 
-WHERE DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
-GROUP BY HOUR(created_at) ORDER BY hour");
-while ($row = $hourlyResult->fetch_assoc()) {
-    $hourlyData[] = $row;
+
+// Active
+$hourlyActive = $conn->query("
+    SELECT HOUR(created_at) as hour, COUNT(*) as bookings
+    FROM reservations 
+    WHERE DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
+    GROUP BY HOUR(created_at)
+");
+
+while ($row = $hourlyActive->fetch_assoc()) {
+    $hourlyData[$row['hour']] = intval($row['bookings']);
 }
 
-// 9. Day of Week Pattern
+// Archived
+$hourlyArchived = $conn->query("
+    SELECT HOUR(created_at) as hour, COUNT(*) as bookings
+    FROM archived_reservations 
+    WHERE DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
+    GROUP BY HOUR(created_at)
+");
+
+while ($row = $hourlyArchived->fetch_assoc()) {
+    $hourlyData[$row['hour']] = ($hourlyData[$row['hour']] ?? 0) + intval($row['bookings']);
+}
+
+ksort($hourlyData);
+$hourlyFormatted = [];
+foreach ($hourlyData as $hour => $bookings) {
+    $hourlyFormatted[] = ['hour' => $hour, 'bookings' => $bookings];
+}
+$hourlyData = $hourlyFormatted;
+
+// 9. Day of Week Pattern (Active + Archived by date)
 $dayOfWeekData = [];
-$dowResult = $conn->query("SELECT 
-    DAYOFWEEK(created_at) as day_num,
-    DAYNAME(created_at) as day_name,
-    COUNT(*) as bookings,
-    SUM(total_amount) as revenue
-FROM reservations WHERE status = 'paid' 
-AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
-GROUP BY DAYOFWEEK(created_at) ORDER BY day_num");
-while ($row = $dowResult->fetch_assoc()) {
-    $dayOfWeekData[] = $row;
+
+// Active
+$dowActive = $conn->query("
+    SELECT 
+        DAYOFWEEK(created_at) as day_num,
+        DAYNAME(created_at) as day_name,
+        COUNT(*) as bookings,
+        SUM(total_amount) as revenue
+    FROM reservations WHERE status = 'paid' 
+    AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
+    GROUP BY DAYOFWEEK(created_at)
+");
+
+while ($row = $dowActive->fetch_assoc()) {
+    $dayOfWeekData[$row['day_num']] = [
+        'day_num' => $row['day_num'],
+        'day_name' => $row['day_name'],
+        'bookings' => intval($row['bookings']),
+        'revenue' => floatval($row['revenue'])
+    ];
 }
 
-// 10. Cancellation Rate
-$cancellationStats = $conn->query("SELECT 
-    COUNT(CASE WHEN status = 'cancelled' THEN 1 END) as cancelled,
-    COUNT(*) as total
-FROM reservations WHERE DATE(created_at) BETWEEN '$date_from' AND '$date_to'")->fetch_assoc();
-$cancellationRate = $cancellationStats['total'] > 0 ? round(($cancellationStats['cancelled'] / $cancellationStats['total']) * 100, 2) : 0;
+// Archived
+$dowArchived = $conn->query("
+    SELECT 
+        DAYOFWEEK(created_at) as day_num,
+        DAYNAME(created_at) as day_name,
+        COUNT(*) as bookings,
+        SUM(total_amount) as revenue
+    FROM archived_reservations WHERE status = 'paid' 
+    AND DATE(created_at) BETWEEN '$date_from' AND '$date_to' 
+    GROUP BY DAYOFWEEK(created_at)
+");
 
-// 11. Conversion Rate
-$conversionStats = $conn->query("SELECT 
-    COUNT(CASE WHEN status = 'paid' THEN 1 END) as paid,
-    COUNT(*) as total
-FROM reservations WHERE DATE(created_at) BETWEEN '$date_from' AND '$date_to'")->fetch_assoc();
-$conversionRate = $conversionStats['total'] > 0 ? round(($conversionStats['paid'] / $conversionStats['total']) * 100, 2) : 0;
+while ($row = $dowArchived->fetch_assoc()) {
+    if (isset($dayOfWeekData[$row['day_num']])) {
+        $dayOfWeekData[$row['day_num']]['bookings'] += intval($row['bookings']);
+        $dayOfWeekData[$row['day_num']]['revenue'] += floatval($row['revenue']);
+    } else {
+        $dayOfWeekData[$row['day_num']] = [
+            'day_num' => $row['day_num'],
+            'day_name' => $row['day_name'],
+            'bookings' => intval($row['bookings']),
+            'revenue' => floatval($row['revenue'])
+        ];
+    }
+}
 
-// 12. Average Group Size
-$avgGroupSizeResult = $conn->query("SELECT AVG(adults + teens + kids) as avg_size 
-                              FROM reservations WHERE status = 'paid' 
-                              AND DATE(created_at) BETWEEN '$date_from' AND '$date_to'");
-$avgGroupSize = $avgGroupSizeResult->fetch_assoc()['avg_size'] ?? 0;
+ksort($dayOfWeekData);
+$dayOfWeekData = array_values($dayOfWeekData);
 
-// 13. Total Stats
-$totalStats = $conn->query("SELECT 
-    COUNT(*) as total_reservations,
-    SUM(CASE WHEN status = 'paid' THEN total_amount ELSE 0 END) as total_revenue,
-    COUNT(CASE WHEN status = 'paid' THEN 1 END) as paid_count,
-    AVG(CASE WHEN status = 'paid' THEN total_amount ELSE NULL END) as avg_booking_value
-FROM reservations WHERE DATE(created_at) BETWEEN '$date_from' AND '$date_to'")->fetch_assoc();
+// 10. Cancellation Rate (Active + Archived by date)
+$cancelled_total = 0;
+$total_reservations = 0;
+
+// Active
+$cancelActive = $conn->query("
+    SELECT 
+        COUNT(CASE WHEN status = 'cancelled' THEN 1 END) as cancelled,
+        COUNT(*) as total
+    FROM reservations WHERE DATE(created_at) BETWEEN '$date_from' AND '$date_to'
+");
+$activeCancel = $cancelActive->fetch_assoc();
+$cancelled_total += intval($activeCancel['cancelled']);
+$total_reservations += intval($activeCancel['total']);
+
+// Archived
+$cancelArchived = $conn->query("
+    SELECT 
+        COUNT(CASE WHEN status = 'cancelled' THEN 1 END) as cancelled,
+        COUNT(*) as total
+    FROM archived_reservations WHERE DATE(created_at) BETWEEN '$date_from' AND '$date_to'
+");
+$archivedCancel = $cancelArchived->fetch_assoc();
+$cancelled_total += intval($archivedCancel['cancelled']);
+$total_reservations += intval($archivedCancel['total']);
+
+$cancellationRate = $total_reservations > 0 ? round(($cancelled_total / $total_reservations) * 100, 2) : 0;
+$cancellationStats = ['cancelled' => $cancelled_total, 'total' => $total_reservations];
+
+// 11. Conversion Rate (Active + Archived by date)
+$paid_total = 0;
+$total_reservations_conv = 0;
+
+// Active
+$convActive = $conn->query("
+    SELECT 
+        COUNT(CASE WHEN status = 'paid' THEN 1 END) as paid,
+        COUNT(*) as total
+    FROM reservations WHERE DATE(created_at) BETWEEN '$date_from' AND '$date_to'
+");
+$activeConv = $convActive->fetch_assoc();
+$paid_total += intval($activeConv['paid']);
+$total_reservations_conv += intval($activeConv['total']);
+
+// Archived
+$convArchived = $conn->query("
+    SELECT 
+        COUNT(CASE WHEN status = 'paid' THEN 1 END) as paid,
+        COUNT(*) as total
+    FROM archived_reservations WHERE DATE(created_at) BETWEEN '$date_from' AND '$date_to'
+");
+$archivedConv = $convArchived->fetch_assoc();
+$paid_total += intval($archivedConv['paid']);
+$total_reservations_conv += intval($archivedConv['total']);
+
+$conversionRate = $total_reservations_conv > 0 ? round(($paid_total / $total_reservations_conv) * 100, 2) : 0;
+$conversionStats = ['paid' => $paid_total, 'total' => $total_reservations_conv];
+
+// 12. Average Group Size (Active + Archived by date)
+$total_guests = 0;
+$paid_reservations_count = 0;
+
+// Active
+$avgActive = $conn->query("
+    SELECT SUM(adults + teens + kids) as total_guests, COUNT(*) as count
+    FROM reservations WHERE status = 'paid' 
+    AND DATE(created_at) BETWEEN '$date_from' AND '$date_to'
+");
+$activeAvg = $avgActive->fetch_assoc();
+$total_guests += intval($activeAvg['total_guests']);
+$paid_reservations_count += intval($activeAvg['count']);
+
+// Archived
+$avgArchived = $conn->query("
+    SELECT SUM(adults + teens + kids) as total_guests, COUNT(*) as count
+    FROM archived_reservations WHERE status = 'paid' 
+    AND DATE(created_at) BETWEEN '$date_from' AND '$date_to'
+");
+$archivedAvg = $avgArchived->fetch_assoc();
+$total_guests += intval($archivedAvg['total_guests']);
+$paid_reservations_count += intval($archivedAvg['count']);
+
+$avgGroupSize = $paid_reservations_count > 0 ? round($total_guests / $paid_reservations_count, 1) : 0;
+
+// 13. Total Stats (Active + Archived by date)
+$total_rev = 0;
+$paid_count = 0;
+$total_res = 0;
+$total_amount_sum = 0;
+
+// Active
+$totalActive = $conn->query("
+    SELECT 
+        COUNT(*) as total_reservations,
+        SUM(CASE WHEN status = 'paid' THEN total_amount ELSE 0 END) as total_revenue,
+        COUNT(CASE WHEN status = 'paid' THEN 1 END) as paid_count,
+        AVG(CASE WHEN status = 'paid' THEN total_amount ELSE NULL END) as avg_booking_value
+    FROM reservations WHERE DATE(created_at) BETWEEN '$date_from' AND '$date_to'
+");
+$activeTotal = $totalActive->fetch_assoc();
+$total_res += intval($activeTotal['total_reservations']);
+$total_rev += floatval($activeTotal['total_revenue']);
+$paid_count += intval($activeTotal['paid_count']);
+
+// Archived
+$totalArchived = $conn->query("
+    SELECT 
+        COUNT(*) as total_reservations,
+        SUM(CASE WHEN status = 'paid' THEN total_amount ELSE 0 END) as total_revenue,
+        COUNT(CASE WHEN status = 'paid' THEN 1 END) as paid_count,
+        AVG(CASE WHEN status = 'paid' THEN total_amount ELSE NULL END) as avg_booking_value
+    FROM archived_reservations WHERE DATE(created_at) BETWEEN '$date_from' AND '$date_to'
+");
+$archivedTotal = $totalArchived->fetch_assoc();
+$total_res += intval($archivedTotal['total_reservations']);
+$total_rev += floatval($archivedTotal['total_revenue']);
+$paid_count += intval($archivedTotal['paid_count']);
+
+$avg_booking = $paid_count > 0 ? ($total_rev / $paid_count) : 0;
+
+$totalStats = [
+    'total_reservations' => $total_res,
+    'total_revenue' => $total_rev,
+    'paid_count' => $paid_count,
+    'avg_booking_value' => $avg_booking
+];
 
 $conn->close();
 
-// Prepare data for JSON encoding (for JavaScript)
+// Prepare data for JSON encoding
 $dailyDates = json_encode(array_column($dailyData, 'date'));
 $dailyRevenue = json_encode(array_column($dailyData, 'revenue'));
 $dailyBookings = json_encode(array_column($dailyData, 'bookings'));
@@ -370,6 +755,9 @@ $tableBookings = json_encode(array_column($popularTables, 'bookings'));
             <div>
                 <h1>📊 <span>Management Report</span></h1>
                 <p class="report-date">Generated on: <?php echo date('F j, Y g:i A'); ?></p>
+                <p style="font-size: 12px; color: #667eea; margin-top: 5px;">
+                    📦 Automatically includes archived events within the selected date range
+                </p>
             </div>
             <div class="action-buttons no-print">
                 <button onclick="window.print()" class="btn btn-secondary">🖨️ Print Report</button>
@@ -488,12 +876,12 @@ $tableBookings = json_encode(array_column($popularTables, 'bookings'));
                     <tr>
                         <td>#<?php echo $rank++; ?></td>
                         <td><?php echo htmlspecialchars($customer['name']); ?></td>
-                        <td><?php echo $customer['bookings']; ?> bookings</td>
+                        <td><?php echo $customer['bookings']; ?> bookings</d>
                         <td><strong><?php echo number_format($customer['total_spent'], 2); ?> JOD</strong></td>
                     </tr>
                     <?php endforeach; ?>
                     <?php if (empty($topCustomers)): ?>
-                    <tr><td colspan="4" style="text-align: center; padding: 40px;">No data available</td></tr>
+                    <tr><td colspan="4" style="text-align: center; padding: 40px;">No data available</d></tr>
                     <?php endif; ?>
                 </tbody>
             </table>
@@ -515,9 +903,9 @@ $tableBookings = json_encode(array_column($popularTables, 'bookings'));
                     <?php foreach ($weeklyData as $week): ?>
                     <tr>
                         <td><?php echo date('M d, Y', strtotime($week['week_start'])); ?></td>
-                        <td><?php echo $week['bookings']; ?></td>
-                        <td><strong><?php echo number_format($week['revenue'], 2); ?> JOD</strong></td>
-                        <td><?php echo number_format($week['bookings'] > 0 ? $week['revenue'] / $week['bookings'] : 0, 2); ?> JOD</td>
+                        <td><?php echo $week['bookings']; ?></d>
+                        <td><strong><?php echo number_format($week['revenue'], 2); ?> JOD</strong></d>
+                        <td><?php echo number_format($week['bookings'] > 0 ? $week['revenue'] / $week['bookings'] : 0, 2); ?> JOD</d>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
