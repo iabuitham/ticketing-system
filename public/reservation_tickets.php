@@ -507,10 +507,6 @@ if (empty($tickets)) {
                     <span class="info-label">Total Guests</span>
                     <span class="info-value"><?php echo $totalGuests; ?> (<?php echo $reservation['adults']; ?> Adults, <?php echo $reservation['teens']; ?> Teens, <?php echo $reservation['kids']; ?> Kids)</span>
                 </div>
-                <div class="info-item">
-                    <span class="info-label">Total Amount</span>
-                    <span class="info-value"><?php echo $currencySymbol; ?> <?php echo number_format($reservation['total_amount'], 2); ?></span>
-                </div>
             </div>
         </div>
         
