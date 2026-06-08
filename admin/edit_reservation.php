@@ -53,29 +53,42 @@ if ($correct_amount_due != floatval($reservation['additional_amount_due'])) {
 
 // Get selected event info for ticket prices
 $selected_event_id = $_SESSION['selected_event_id'] ?? 0;
-$event_ticket_prices = $_SESSION['event_ticket_prices'] ?? null;
 
-if (!$event_ticket_prices && $selected_event_id > 0) {
-    $stmt = $conn->prepare("SELECT ticket_price_adult, ticket_price_teen, ticket_price_kid FROM event_settings WHERE id = ?");
-    $stmt->bind_param("i", $selected_event_id);
-    $stmt->execute();
-    $event_data = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
+// Get the price tier from the reservation - THIS IS THE KEY FIX
+$price_tier = $reservation['price_tier'];
+
+// Get the correct prices based on the reservation's price tier
+if ($price_tier == 'loyalty') {
+    // Use loyalty prices from system settings
+    $adultPrice = getSetting('loyalty_price_adult', 8);
+    $teenPrice = getSetting('loyalty_price_teen', 8);
+    $kidPrice = getSetting('loyalty_price_kid', 0);
+} else {
+    // Use regular prices from event settings
+    $event_ticket_prices = $_SESSION['event_ticket_prices'] ?? null;
     
-    if ($event_data) {
-        $event_ticket_prices = [
-            'adult' => $event_data['ticket_price_adult'],
-            'teen' => $event_data['ticket_price_teen'],
-            'kid' => $event_data['ticket_price_kid']
-        ];
-        $_SESSION['event_ticket_prices'] = $event_ticket_prices;
+    if (!$event_ticket_prices && $selected_event_id > 0) {
+        $stmt = $conn->prepare("SELECT ticket_price_adult, ticket_price_teen, ticket_price_kid FROM event_settings WHERE id = ?");
+        $stmt->bind_param("i", $selected_event_id);
+        $stmt->execute();
+        $event_data = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        
+        if ($event_data) {
+            $event_ticket_prices = [
+                'adult' => $event_data['ticket_price_adult'],
+                'teen' => $event_data['ticket_price_teen'],
+                'kid' => $event_data['ticket_price_kid']
+            ];
+            $_SESSION['event_ticket_prices'] = $event_ticket_prices;
+        }
     }
+    
+    $adultPrice = $event_ticket_prices['adult'] ?? getSetting('ticket_price_adult', 8);
+    $teenPrice = $event_ticket_prices['teen'] ?? getSetting('ticket_price_teen', 8);
+    $kidPrice = $event_ticket_prices['kid'] ?? getSetting('ticket_price_kid', 0);
 }
 
-// Use event-specific prices or fall back to system settings
-$adultPrice = $event_ticket_prices['adult'] ?? getSetting('ticket_price_adult', 8);
-$teenPrice = $event_ticket_prices['teen'] ?? getSetting('ticket_price_teen', 8);
-$kidPrice = $event_ticket_prices['kid'] ?? getSetting('ticket_price_kid', 0);
 $currency = getSetting('currency', 'JOD');
 $currencySymbol = getCurrencySymbol();
 
@@ -88,7 +101,7 @@ $currentTotal = floatval($reservation['total_amount'] ?? 0);
 $additionalDue = floatval($reservation['additional_amount_due'] ?? 0);
 $cancelledClass = $isCancelled ? 'cancelled-text' : '';
 
-// Get available tables for dropdown (don't close connection yet!)
+// Get available tables for dropdown
 $tables = [];
 $table_result = $conn->query("SELECT table_number, section FROM tables WHERE is_active = 1 ORDER BY table_number");
 if ($table_result) {
@@ -97,7 +110,6 @@ if ($table_result) {
     }
 }
 
-// Now close the connection
 $conn->close();
 ?>
 <!DOCTYPE html>
@@ -222,6 +234,22 @@ $conn->close();
             font-weight: bold;
             color: #f59e0b;
         }
+        .price-tier-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        .price-tier-regular {
+            background: #4f46e5;
+            color: white;
+        }
+        .price-tier-loyalty {
+            background: #f59e0b;
+            color: white;
+        }
         .actions {
             display: flex;
             gap: 10px;
@@ -277,15 +305,20 @@ $conn->close();
             </div>
             <div class="content">
                 <div class="info-box <?php echo $cancelledClass; ?>">
-                    <p><strong>📋 Reservation ID:</strong> <span class="reservation-id <?php echo $cancelledClass; ?>"><?php echo htmlspecialchars($reservation['reservation_id']); ?></span>
-                    <?php if ($isCancelled): ?>
-                        <span class="cancelled-badge">CANCELLED</span>
-                    <?php endif; ?>
+                    <p>
+                        <strong>📋 Reservation ID:</strong> <span class="reservation-id <?php echo $cancelledClass; ?>"><?php echo htmlspecialchars($reservation['reservation_id']); ?></span>
+                        <?php if ($isCancelled): ?>
+                            <span class="cancelled-badge">CANCELLED</span>
+                        <?php endif; ?>
+                        <span class="price-tier-badge price-tier-<?php echo $price_tier; ?>">
+                            <?php echo ucfirst($price_tier); ?> Price
+                        </span>
                     </p>
                     <p class="<?php echo $cancelledClass; ?>"><strong>📅 Created:</strong> <?php echo date('F j, Y g:i A', strtotime($reservation['created_at'])); ?></p>
                     <p class="<?php echo $cancelledClass; ?>"><strong>👥 Current Guests:</strong> <?php echo $totalGuests; ?> total (<?php echo $reservation['adults']; ?> Adults, <?php echo $reservation['teens']; ?> Teens, <?php echo $reservation['kids']; ?> Kids)</p>
                     <p class="<?php echo $cancelledClass; ?>"><strong>💰 Total Amount:</strong> <span class="total-amount <?php echo $cancelledClass; ?>"><?php echo number_format($currentTotal, 2); ?> <?php echo $currencySymbol; ?></span></p>
                     <p><strong>💵 Total Paid:</strong> <?php echo number_format($total_paid, 2); ?> <?php echo $currencySymbol; ?></p>
+                    <p><strong>🏷️ Price Tier:</strong> <?php echo ucfirst($price_tier); ?> (Adult: <?php echo $currencySymbol; ?> <?php echo number_format($adultPrice, 2); ?>, Teen: <?php echo $currencySymbol; ?> <?php echo number_format($teenPrice, 2); ?>, Kid: <?php echo $currencySymbol; ?> <?php echo number_format($kidPrice, 2); ?>)</p>
                     <?php if ($correct_amount_due > 0): ?>
                     <p style="color: #d97706;" class="<?php echo $cancelledClass; ?>">
                         <strong>⚠️ Additional Amount Due:</strong> <span class="amount-due"><?php echo number_format($correct_amount_due, 2); ?> <?php echo $currencySymbol; ?></span>
@@ -301,7 +334,7 @@ $conn->close();
                 <div class="warning-box">
                     <p><strong>⚠️ Warning: Additional Payment Required</strong></p>
                     <p>This reservation has an outstanding balance of <?php echo number_format($correct_amount_due, 2); ?> <?php echo $currencySymbol; ?>.</p>
-                    <p>If you increase guest count, the amount due will increase accordingly.</p>
+                    <p>If you increase guest count, the amount due will increase accordingly at the same price tier.</p>
                 </div>
                 <?php endif; ?>
 
@@ -314,6 +347,10 @@ $conn->close();
 
                 <form action="update_reservation.php" method="POST" id="editForm">
                     <input type="hidden" name="reservation_id" value="<?php echo htmlspecialchars($reservation['reservation_id']); ?>">
+                    <input type="hidden" name="price_tier" value="<?php echo $price_tier; ?>">
+                    <input type="hidden" name="adult_price" value="<?php echo $adultPrice; ?>">
+                    <input type="hidden" name="teen_price" value="<?php echo $teenPrice; ?>">
+                    <input type="hidden" name="kid_price" value="<?php echo $kidPrice; ?>">
 
                     <div class="form-group">
                         <label>Customer Name *</label>
@@ -425,7 +462,7 @@ $conn->close();
             }
 
             document.getElementById('priceBreakdown').innerHTML = `
-                <strong>💰 Price Breakdown:</strong><br>
+                <strong>💰 Price Breakdown (${adultPrice > 8 ? 'Regular' : 'Loyalty'} Rate):</strong><br>
                 Adults: ${adults} × ${adultPrice.toFixed(2)} = ${(adults * adultPrice).toFixed(2)} ${currencySymbol}<br>
                 Teens: ${teens} × ${teenPrice.toFixed(2)} = ${(teens * teenPrice).toFixed(2)} ${currencySymbol}<br>
                 Kids: ${kids} × ${kidPrice.toFixed(2)} = ${(kids * kidPrice).toFixed(2)} ${currencySymbol}<br>
