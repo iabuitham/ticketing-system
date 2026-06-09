@@ -51,42 +51,41 @@ if ($correct_amount_due != floatval($reservation['additional_amount_due'])) {
     $reservation['additional_amount_due'] = $correct_amount_due;
 }
 
-// Get selected event info for ticket prices
-$selected_event_id = $_SESSION['selected_event_id'] ?? 0;
+// Get selected event info
+$selected_event_id = $reservation['event_id']; // Use the event_id from the reservation, not session!
 
-// Get the price tier from the reservation - THIS IS THE KEY FIX
+// Get the price tier from the reservation
 $price_tier = $reservation['price_tier'];
 
-// Get the correct prices based on the reservation's price tier
+// ========== FIX: Always fetch fresh prices from database ==========
 if ($price_tier == 'loyalty') {
-    // Use loyalty prices from system settings
-    $adultPrice = getSetting('loyalty_price_adult', 8);
-    $teenPrice = getSetting('loyalty_price_teen', 8);
-    $kidPrice = getSetting('loyalty_price_kid', 0);
-} else {
-    // Use regular prices from event settings
-    $event_ticket_prices = $_SESSION['event_ticket_prices'] ?? null;
-    
-    if (!$event_ticket_prices && $selected_event_id > 0) {
-        $stmt = $conn->prepare("SELECT ticket_price_adult, ticket_price_teen, ticket_price_kid FROM event_settings WHERE id = ?");
-        $stmt->bind_param("i", $selected_event_id);
-        $stmt->execute();
-        $event_data = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        
-        if ($event_data) {
-            $event_ticket_prices = [
-                'adult' => $event_data['ticket_price_adult'],
-                'teen' => $event_data['ticket_price_teen'],
-                'kid' => $event_data['ticket_price_kid']
-            ];
-            $_SESSION['event_ticket_prices'] = $event_ticket_prices;
-        }
+    // Fetch loyalty prices directly from system_settings
+    $loyaltyQuery = $conn->query("SELECT setting_key, setting_value FROM system_settings WHERE setting_key IN ('loyalty_price_adult', 'loyalty_price_teen', 'loyalty_price_kid')");
+    $loyaltyPrices = [];
+    while ($row = $loyaltyQuery->fetch_assoc()) {
+        $loyaltyPrices[$row['setting_key']] = $row['setting_value'];
     }
+    $adultPrice = $loyaltyPrices['loyalty_price_adult'] ?? 8;
+    $teenPrice = $loyaltyPrices['loyalty_price_teen'] ?? 8;
+    $kidPrice = $loyaltyPrices['loyalty_price_kid'] ?? 0;
+} else {
+    // Fetch regular prices directly from event_settings using the reservation's event_id
+    $stmt = $conn->prepare("SELECT ticket_price_adult, ticket_price_teen, ticket_price_kid, event_name, event_date FROM event_settings WHERE id = ?");
+    $stmt->bind_param("i", $selected_event_id);
+    $stmt->execute();
+    $event_data = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
     
-    $adultPrice = $event_ticket_prices['adult'] ?? getSetting('ticket_price_adult', 8);
-    $teenPrice = $event_ticket_prices['teen'] ?? getSetting('ticket_price_teen', 8);
-    $kidPrice = $event_ticket_prices['kid'] ?? getSetting('ticket_price_kid', 0);
+    if ($event_data) {
+        $adultPrice = floatval($event_data['ticket_price_adult']);
+        $teenPrice = floatval($event_data['ticket_price_teen']);
+        $kidPrice = floatval($event_data['ticket_price_kid']);
+    } else {
+        // Fallback to system settings
+        $adultPrice = floatval(getSetting('ticket_price_adult', 8));
+        $teenPrice = floatval(getSetting('ticket_price_teen', 8));
+        $kidPrice = floatval(getSetting('ticket_price_kid', 0));
+    }
 }
 
 $currency = getSetting('currency', 'JOD');
@@ -98,7 +97,6 @@ $isCancelled = ($reservation['status'] == 'cancelled');
 // Calculate variables
 $totalGuests = ($reservation['adults'] ?? 0) + ($reservation['teens'] ?? 0) + ($reservation['kids'] ?? 0);
 $currentTotal = floatval($reservation['total_amount'] ?? 0);
-$additionalDue = floatval($reservation['additional_amount_due'] ?? 0);
 $cancelledClass = $isCancelled ? 'cancelled-text' : '';
 
 // Get available tables for dropdown
@@ -436,9 +434,6 @@ $conn->close();
         const kidPrice = <?php echo $kidPrice; ?>;
         const currencySymbol = '<?php echo $currencySymbol; ?>';
         const totalPaid = <?php echo $total_paid; ?>;
-        let currentAdults = <?php echo $reservation['adults']; ?>;
-        let currentTeens = <?php echo $reservation['teens']; ?>;
-        let currentKids = <?php echo $reservation['kids']; ?>;
 
         function updatePrice() {
             let adults = parseInt(document.getElementById('adults').value) || 0;
@@ -462,7 +457,7 @@ $conn->close();
             }
 
             document.getElementById('priceBreakdown').innerHTML = `
-                <strong>💰 Price Breakdown (${adultPrice > 8 ? 'Regular' : 'Loyalty'} Rate):</strong><br>
+                <strong>💰 Price Breakdown:</strong><br>
                 Adults: ${adults} × ${adultPrice.toFixed(2)} = ${(adults * adultPrice).toFixed(2)} ${currencySymbol}<br>
                 Teens: ${teens} × ${teenPrice.toFixed(2)} = ${(teens * teenPrice).toFixed(2)} ${currencySymbol}<br>
                 Kids: ${kids} × ${kidPrice.toFixed(2)} = ${(kids * kidPrice).toFixed(2)} ${currencySymbol}<br>

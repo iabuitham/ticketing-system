@@ -1629,6 +1629,7 @@ $conn->close();
      <a href="floor_plan.php" class="btn btn-secondary"><i class="bi bi-map"></i> Floor Plan</a>
      <a href="customers.php" class="btn btn-warning"><i class="bi bi-person"></i> Customers </a>
      <a href="ticket_transfer.php" class="btn btn-secondary"><i class="bi bi-send"></i>Transfer Ticket</a>
+     <a href="hall_report.php" class="btn btn-success"><i class="bi bi-person"></i>Hall Report</a>
    </div>
   </div>
 
