@@ -26,207 +26,206 @@ $isEventClosed = ($eventData && ($eventData['status'] == 'completed' || $eventDa
 
 // Handle Close Event
 if (isset($_POST['close_event']) && $selected_event_id > 0) {
-    $password = $_POST['password'] ?? '';
-    if ($password === 'AdminDelete2026') {
-        // Start transaction
-        $conn->begin_transaction();
-        
-        try {
-            // Get event details with stats
-            $eventStmt = $conn->prepare("
-                SELECT e.*,
-                    (SELECT SUM(total_amount) FROM reservations WHERE event_id = e.id AND status = 'paid') as total_revenue,
-                    (SELECT COUNT(*) FROM reservations WHERE event_id = e.id AND status != 'cancelled') as total_attendees
-                FROM event_settings e
-                WHERE e.id = ?
-            ");
-            $eventStmt->bind_param("i", $selected_event_id);
-            $eventStmt->execute();
-            $event = $eventStmt->get_result()->fetch_assoc();
-            $eventStmt->close();
-            
-            if ($event) {
-                // 1. Insert into archived_events
-                $archiveEventStmt = $conn->prepare("
-                    INSERT INTO archived_events (
-                        id, event_name, event_date, event_time, venue, description, capacity,
-                        ticket_price_adult, ticket_price_teen, ticket_price_kid, tickets_sold,
-                        status, closed_at, total_revenue, total_attendees
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', NOW(), ?, ?)
-                ");
-                $archiveEventStmt->bind_param(
-                    "isssssidddidd",
-                    $event['id'],
-                    $event['event_name'],
-                    $event['event_date'],
-                    $event['event_time'],
-                    $event['venue'],
-                    $event['description'],
-                    $event['capacity'],
-                    $event['ticket_price_adult'],
-                    $event['ticket_price_teen'],
-                    $event['ticket_price_kid'],
-                    $event['tickets_sold'],
-                    $event['total_revenue'],
-                    $event['total_attendees']
-                );
-                $archiveEventStmt->execute();
-                $archiveEventStmt->close();
-                
-                // 2. Archive all reservations for this event
-                $reservations = $conn->query("SELECT * FROM reservations WHERE event_id = $selected_event_id");
-                
-                while ($res = $reservations->fetch_assoc()) {
-                    // Insert archived reservation
-                    $archiveResStmt = $conn->prepare("
-                        INSERT INTO archived_reservations (
-                            id, archived_event_id, reservation_id, sequential_number, name, phone,
-                            adults, teens, kids, table_id, total_amount, additional_amount_due,
-                            price_tier, status, notes, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ");
-                    $archiveResStmt->bind_param(
-                        "iisssiiiiiddsssss",
-                        $res['id'],
-                        $selected_event_id,
-                        $res['reservation_id'],
-                        $res['sequential_number'],
-                        $res['name'],
-                        $res['phone'],
-                        $res['adults'],
-                        $res['teens'],
-                        $res['kids'],
-                        $res['table_id'],
-                        $res['total_amount'],
-                        $res['additional_amount_due'],
-                        $res['price_tier'],
-                        $res['status'],
-                        $res['notes'],
-                        $res['created_at'],
-                        $res['updated_at']
-                    );
-                    $archiveResStmt->execute();
-                    $archiveResStmt->close();
-                    
-                    // 3. Archive payments for this reservation
-                    $payments = $conn->query("SELECT * FROM split_payments WHERE reservation_id = '{$res['reservation_id']}'");
-                    while ($pay = $payments->fetch_assoc()) {
-                        $archivePayStmt = $conn->prepare("
-                            INSERT INTO archived_split_payments (
-                                id, archived_reservation_id, payment_method, amount, receipt_id,
-                                proof_file, proof_path, payment_type, received_by, payment_date,
-                                notes, is_fnb, fnb_amount, created_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ");
-                        $archivePayStmt->bind_param(
-                            "issdsssssssid",
-                            $pay['id'],
-                            $res['reservation_id'],
-                            $pay['payment_method'],
-                            $pay['amount'],
-                            $pay['receipt_id'],
-                            $pay['proof_file'],
-                            $pay['proof_path'],
-                            $pay['payment_type'],
-                            $pay['received_by'],
-                            $pay['payment_date'],
-                            $pay['notes'],
-                            $pay['is_fnb'],
-                            $pay['fnb_amount'],
-                            $pay['created_at']
-                        );
-                        $archivePayStmt->execute();
-                        $archivePayStmt->close();
-                    }
-                    
-                    // 4. Archive tickets for this reservation
-                    $tickets = $conn->query("SELECT * FROM ticket_codes WHERE reservation_id = '{$res['reservation_id']}'");
-                    while ($tic = $tickets->fetch_assoc()) {
-                        $archiveTicketStmt = $conn->prepare("
-                            INSERT INTO archived_ticket_codes (
-                                id, archived_reservation_id, ticket_code, guest_type, guest_number,
-                                is_scanned, scanned_at, created_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        ");
-                        $archiveTicketStmt->bind_param(
-                            "issiiiss",
-                            $tic['id'],
-                            $res['reservation_id'],
-                            $tic['ticket_code'],
-                            $tic['guest_type'],
-                            $tic['guest_number'],
-                            $tic['is_scanned'],
-                            $tic['scanned_at'],
-                            $tic['created_at']
-                        );
-                        $archiveTicketStmt->execute();
-                        $archiveTicketStmt->close();
-                    }
-                }
-                
-                // 5. Archive credit notes for this event
-                $creditNotes = $conn->query("
-                    SELECT cn.* FROM credit_notes cn
-                    JOIN reservations r ON cn.reservation_id = r.reservation_id
-                    WHERE r.event_id = $selected_event_id
-                ");
-                while ($cn = $creditNotes->fetch_assoc()) {
-                    $archiveCnStmt = $conn->prepare("
-                        INSERT INTO archived_credit_notes (
-                            id, archived_reservation_id, amount, reason, status,
-                            created_by, processed_at, notes, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ");
-                    $archiveCnStmt->bind_param(
-                        "isdssssss",
-                        $cn['id'],
-                        $cn['reservation_id'],
-                        $cn['amount'],
-                        $cn['reason'],
-                        $cn['status'],
-                        $cn['created_by'],
-                        $cn['processed_at'],
-                        $cn['notes'],
-                        $cn['created_at']
-                    );
-                    $archiveCnStmt->execute();
-                    $archiveCnStmt->close();
-                }
-                
-                // 6. Delete original data (optional - uncomment if you want to remove from main tables)
-                // $conn->query("DELETE FROM split_payments WHERE reservation_id IN (SELECT reservation_id FROM reservations WHERE event_id = $selected_event_id)");
-                // $conn->query("DELETE FROM ticket_codes WHERE reservation_id IN (SELECT reservation_id FROM reservations WHERE event_id = $selected_event_id)");
-                // $conn->query("DELETE FROM credit_notes WHERE reservation_id IN (SELECT reservation_id FROM reservations WHERE event_id = $selected_event_id)");
-                // $conn->query("DELETE FROM reservations WHERE event_id = $selected_event_id");
-                
-                // 7. Update event status to completed
-                $updateStmt = $conn->prepare("UPDATE event_settings SET status = 'completed', is_closed = 1, closed_at = NOW() WHERE id = ?");
-                $updateStmt->bind_param("i", $selected_event_id);
-                $updateStmt->execute();
-                $updateStmt->close();
-                
-                $conn->commit();
-                
-                $_SESSION['switch_error'] = "Event has been closed and archived successfully! Data preserved for reporting.";
-                $_SESSION['switch_error_type'] = "success";
-            } else {
-                throw new Exception("Event not found");
-            }
-            
-        } catch (Exception $e) {
-            $conn->rollback();
-            $_SESSION['switch_error'] = "Error closing event: " . $e->getMessage();
-            $_SESSION['switch_error_type'] = "error";
+ $password = $_POST['password'] ?? '';
+ if ($password === 'AdminDelete2026') {
+  // Start transaction
+  $conn->begin_transaction();
+
+  try {
+   // Get event details with stats
+   $eventStmt = $conn->prepare("
+                                  SELECT e.*,
+                                                                                         (SELECT SUM(total_amount) FROM reservations WHERE event_id = e.id AND status = 'paid') as total_revenue,
+                                                                                         (SELECT COUNT(*) FROM reservations WHERE event_id = e.id AND status != 'cancelled') as total_attendees
+                                  FROM event_settings e
+                                  WHERE e.id = ?
+             ");
+   $eventStmt->bind_param("i", $selected_event_id);
+   $eventStmt->execute();
+   $event = $eventStmt->get_result()->fetch_assoc();
+   $eventStmt->close();
+
+   if ($event) {
+     // 1. Insert into archived_events
+     $archiveEventStmt = $conn->prepare("
+                                                                                         INSERT INTO archived_events (
+                                                                                                                                                                                                                                         id, event_name, event_date, event_time, venue, description, capacity,
+                                                                                                                                                                                                                                         ticket_price_adult, ticket_price_teen, ticket_price_kid, tickets_sold,
+                                                                                                                                                                                                                                         status, closed_at, total_revenue, total_attendees
+                                                                                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', NOW(), ?, ?)
+                                  ");
+     $archiveEventStmt->bind_param(
+        "isssssidddidd",
+        $event['id'],
+        $event['event_name'],
+        $event['event_date'],
+        $event['event_time'],
+        $event['venue'],
+        $event['description'],
+        $event['capacity'],
+        $event['ticket_price_adult'],
+        $event['ticket_price_teen'],
+        $event['ticket_price_kid'],
+        $event['tickets_sold'],
+        $event['total_revenue'],
+        $event['total_attendees']
+     );
+     $archiveEventStmt->execute();
+     $archiveEventStmt->close();
+
+     // 2. Archive all reservations for this event
+     $reservations = $conn->query("SELECT * FROM reservations WHERE event_id = $selected_event_id");
+
+     while ($res = $reservations->fetch_assoc()) {
+        // Insert archived reservation
+        $archiveResStmt = $conn->prepare("
+                                                                                                                                                                                                                                         INSERT INTO archived_reservations (
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  id, archived_event_id, reservation_id, sequential_number, name, phone,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  adults, teens, kids, table_id, total_amount, additional_amount_due,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  price_tier, status, notes, created_at, updated_at
+                                                                                                                                                                                                                                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                                                         ");
+        $archiveResStmt->bind_param(
+             "iisssiiiiiddsssss",
+             $res['id'],
+             $selected_event_id,
+             $res['reservation_id'],
+             $res['sequential_number'],
+             $res['name'],
+             $res['phone'],
+             $res['adults'],
+             $res['teens'],
+             $res['kids'],
+             $res['table_id'],
+             $res['total_amount'],
+             $res['additional_amount_due'],
+             $res['price_tier'],
+             $res['status'],
+             $res['notes'],
+             $res['created_at'],
+             $res['updated_at']
+        );
+        $archiveResStmt->execute();
+        $archiveResStmt->close();
+
+        // 3. Archive payments for this reservation
+        $payments = $conn->query("SELECT * FROM split_payments WHERE reservation_id = '{$res['reservation_id']}'");
+        while ($pay = $payments->fetch_assoc()) {
+             $archivePayStmt = $conn->prepare("
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  INSERT INTO archived_split_payments (
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             id, archived_reservation_id, payment_method, amount, receipt_id,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             proof_file, proof_path, payment_type, received_by, payment_date,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             notes, is_fnb, fnb_amount, created_at
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                                                                                                                                                                                                         ");
+             $archivePayStmt->bind_param(
+                     "issdsssssssid",
+                     $pay['id'],
+                     $res['reservation_id'],
+                     $pay['payment_method'],
+                     $pay['amount'],
+                     $pay['receipt_id'],
+                     $pay['proof_file'],
+                     $pay['proof_path'],
+                     $pay['payment_type'],
+                     $pay['received_by'],
+                     $pay['payment_date'],
+                     $pay['notes'],
+                     $pay['is_fnb'],
+                     $pay['fnb_amount'],
+                     $pay['created_at']
+             );
+             $archivePayStmt->execute();
+             $archivePayStmt->close();
         }
-        
-        header('Location: dashboard.php');
-        exit();
-    } else {
-        $_SESSION['switch_error'] = "Invalid password! Event not closed.";
-        $_SESSION['switch_error_type'] = "error";
-        header('Location: dashboard.php');
-        exit();
-    }
+
+        // 4. Archive tickets for this reservation
+        $tickets = $conn->query("SELECT * FROM ticket_codes WHERE reservation_id = '{$res['reservation_id']}'");
+        while ($tic = $tickets->fetch_assoc()) {
+             $archiveTicketStmt = $conn->prepare("
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  INSERT INTO archived_ticket_codes (
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             id, archived_reservation_id, ticket_code, guest_type, guest_number,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             is_scanned, scanned_at, created_at
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                                                                                                                                                                                                                         ");
+             $archiveTicketStmt->bind_param(
+                     "issiiiss",
+                     $tic['id'],
+                     $res['reservation_id'],
+                     $tic['ticket_code'],
+                     $tic['guest_type'],
+                     $tic['guest_number'],
+                     $tic['is_scanned'],
+                     $tic['scanned_at'],
+                     $tic['created_at']
+             );
+             $archiveTicketStmt->execute();
+             $archiveTicketStmt->close();
+        }
+     }
+
+     // 5. Archive credit notes for this event
+     $creditNotes = $conn->query("
+                                                                                         SELECT cn.* FROM credit_notes cn
+                                                                                         JOIN reservations r ON cn.reservation_id = r.reservation_id
+                                                                                         WHERE r.event_id = $selected_event_id
+                                  ");
+     while ($cn = $creditNotes->fetch_assoc()) {
+        $archiveCnStmt = $conn->prepare("
+                                                                                                                                                                                                                                         INSERT INTO archived_credit_notes (
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  id, archived_reservation_id, amount, reason, status,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  created_by, processed_at, notes, created_at
+                                                                                                                                                                                                                                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                                                         ");
+        $archiveCnStmt->bind_param(
+             "isdssssss",
+             $cn['id'],
+             $cn['reservation_id'],
+             $cn['amount'],
+             $cn['reason'],
+             $cn['status'],
+             $cn['created_by'],
+             $cn['processed_at'],
+             $cn['notes'],
+             $cn['created_at']
+        );
+        $archiveCnStmt->execute();
+        $archiveCnStmt->close();
+     }
+
+     // 6. Delete original data (optional - uncomment if you want to remove from main tables)
+     // $conn->query("DELETE FROM split_payments WHERE reservation_id IN (SELECT reservation_id FROM reservations WHERE event_id = $selected_event_id)");
+     // $conn->query("DELETE FROM ticket_codes WHERE reservation_id IN (SELECT reservation_id FROM reservations WHERE event_id = $selected_event_id)");
+     // $conn->query("DELETE FROM credit_notes WHERE reservation_id IN (SELECT reservation_id FROM reservations WHERE event_id = $selected_event_id)");
+     // $conn->query("DELETE FROM reservations WHERE event_id = $selected_event_id");
+
+     // 7. Update event status to completed
+     $updateStmt = $conn->prepare("UPDATE event_settings SET status = 'completed', is_closed = 1, closed_at = NOW() WHERE id = ?");
+     $updateStmt->bind_param("i", $selected_event_id);
+     $updateStmt->execute();
+     $updateStmt->close();
+
+     $conn->commit();
+
+     $_SESSION['switch_error'] = "Event has been closed and archived successfully! Data preserved for reporting.";
+     $_SESSION['switch_error_type'] = "success";
+   } else {
+     throw new Exception("Event not found");
+   }
+  } catch (Exception $e) {
+   $conn->rollback();
+   $_SESSION['switch_error'] = "Error closing event: " . $e->getMessage();
+   $_SESSION['switch_error_type'] = "error";
+  }
+
+  header('Location: dashboard.php');
+  exit();
+ } else {
+  $_SESSION['switch_error'] = "Invalid password! Event not closed.";
+  $_SESSION['switch_error_type'] = "error";
+  header('Location: dashboard.php');
+  exit();
+ }
 }
 
 // Get event-specific ticket prices
@@ -262,15 +261,15 @@ $status_filter = isset($_GET['status']) ? $_GET['status'] : '';
 $search = isset($_GET['search']) ? sanitizeInput($_GET['search']) : '';
 
 $query = "SELECT r.*, 
-  COALESCE(SUM(sp.amount), 0) as total_paid,
-  CASE 
-   WHEN r.status = 'cancelled' THEN 0
-   ELSE (r.total_amount - COALESCE(SUM(sp.amount), 0))
-  END as actual_amount_due
-  FROM reservations r
-  LEFT JOIN split_payments sp ON r.reservation_id = sp.reservation_id
-  WHERE r.event_id = ?
-  GROUP BY r.reservation_id";
+ COALESCE(SUM(sp.amount), 0) as total_paid,
+ CASE 
+ WHEN r.status = 'cancelled' THEN 0
+ ELSE (r.total_amount - COALESCE(SUM(sp.amount), 0))
+ END as actual_amount_due
+ FROM reservations r
+ LEFT JOIN split_payments sp ON r.reservation_id = sp.reservation_id
+ WHERE r.event_id = ?
+ GROUP BY r.reservation_id";
 $params = [$selected_event_id];
 $types = "i";
 
@@ -304,11 +303,11 @@ $stmt->close();
 // 1. RESERVATION COUNTS (by event)
 $statsResult = $conn->prepare("
  SELECT 
-  COUNT(*) as total,
-  SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-  SUM(CASE WHEN status = 'registered' THEN 1 ELSE 0 END) as registered,
-  SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid,
-  SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
+ COUNT(*) as total,
+ SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+ SUM(CASE WHEN status = 'registered' THEN 1 ELSE 0 END) as registered,
+ SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid,
+ SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
  FROM reservations
  WHERE event_id = ?
 ");
@@ -335,31 +334,31 @@ $amountDueResult->close();
 // 3. ATTENDEE STATS - CORRECTED
 $attendeeResult = $conn->prepare("
  SELECT 
-  -- FULLY PAID ATTENDEES (status = 'paid' AND additional_amount_due = 0)
-  SUM(CASE WHEN status = 'paid' AND additional_amount_due = 0 THEN adults ELSE 0 END) as fully_paid_adults,
-  SUM(CASE WHEN status = 'paid' AND additional_amount_due = 0 THEN teens ELSE 0 END) as fully_paid_teens,
-  SUM(CASE WHEN status = 'paid' AND additional_amount_due = 0 THEN kids ELSE 0 END) as fully_paid_kids,
-  SUM(CASE WHEN status = 'paid' AND additional_amount_due = 0 THEN adults + teens + kids ELSE 0 END) as total_attendees_paid,
-  
-  -- TOTAL BOOKED (all non-cancelled - for reference)
-  SUM(CASE WHEN status != 'cancelled' THEN adults ELSE 0 END) as total_adults,
-  SUM(CASE WHEN status != 'cancelled' THEN teens ELSE 0 END) as total_teens,
-  SUM(CASE WHEN status != 'cancelled' THEN kids ELSE 0 END) as total_kids,
-  SUM(CASE WHEN status != 'cancelled' THEN adults + teens + kids ELSE 0 END) as total_attendees,
-  
-  -- NEW PENDING ATTENDEES (never paid)
-  SUM(CASE WHEN (status IN ('pending', 'registered') AND additional_amount_due = total_amount)
-     AND status != 'cancelled'
-   THEN adults + teens + kids ELSE 0 END) as new_pending_attendees,
-   
-  -- OLD PENDING ATTENDEES (had payments before, but increased guests)
-  SUM(CASE WHEN (status IN ('pending', 'registered') AND additional_amount_due > 0 AND additional_amount_due < total_amount)
-     AND status != 'cancelled'
-   THEN adults + teens + kids ELSE 0 END) as old_pending_attendees,
-   
-  -- Total pending
-  SUM(CASE WHEN (status IN ('pending', 'registered') OR additional_amount_due > 0) AND status != 'cancelled'
-   THEN adults + teens + kids ELSE 0 END) as total_pending_attendees
+ -- FULLY PAID ATTENDEES (status = 'paid' AND additional_amount_due = 0)
+ SUM(CASE WHEN status = 'paid' AND additional_amount_due = 0 THEN adults ELSE 0 END) as fully_paid_adults,
+ SUM(CASE WHEN status = 'paid' AND additional_amount_due = 0 THEN teens ELSE 0 END) as fully_paid_teens,
+ SUM(CASE WHEN status = 'paid' AND additional_amount_due = 0 THEN kids ELSE 0 END) as fully_paid_kids,
+ SUM(CASE WHEN status = 'paid' AND additional_amount_due = 0 THEN adults + teens + kids ELSE 0 END) as total_attendees_paid,
+ 
+ -- TOTAL BOOKED (all non-cancelled - for reference)
+ SUM(CASE WHEN status != 'cancelled' THEN adults ELSE 0 END) as total_adults,
+ SUM(CASE WHEN status != 'cancelled' THEN teens ELSE 0 END) as total_teens,
+ SUM(CASE WHEN status != 'cancelled' THEN kids ELSE 0 END) as total_kids,
+ SUM(CASE WHEN status != 'cancelled' THEN adults + teens + kids ELSE 0 END) as total_attendees,
+ 
+ -- NEW PENDING ATTENDEES (never paid)
+ SUM(CASE WHEN (status IN ('pending', 'registered') AND additional_amount_due = total_amount)
+  AND status != 'cancelled'
+ THEN adults + teens + kids ELSE 0 END) as new_pending_attendees,
+ 
+ -- OLD PENDING ATTENDEES (had payments before, but increased guests)
+ SUM(CASE WHEN (status IN ('pending', 'registered') AND additional_amount_due > 0 AND additional_amount_due < total_amount)
+  AND status != 'cancelled'
+ THEN adults + teens + kids ELSE 0 END) as old_pending_attendees,
+ 
+ -- Total pending
+ SUM(CASE WHEN (status IN ('pending', 'registered') OR additional_amount_due > 0) AND status != 'cancelled'
+ THEN adults + teens + kids ELSE 0 END) as total_pending_attendees
  FROM reservations
  WHERE event_id = ?
 ");
@@ -371,12 +370,12 @@ $attendeeResult->close();
 // 4. REVENUE FROM ALL PAYMENTS (by event)
 $allPaymentsResult = $conn->prepare("
  SELECT 
-  SUM(CASE WHEN sp.payment_method = 'cash' THEN sp.amount ELSE 0 END) as cash,
-  SUM(CASE WHEN sp.payment_method = 'cliq' THEN sp.amount ELSE 0 END) as cliq,
-  SUM(CASE WHEN sp.payment_method = 'visa' THEN sp.amount ELSE 0 END) as visa,
-  SUM(sp.amount) as total,
-  SUM(CASE WHEN r.price_tier = 'regular' THEN sp.amount ELSE 0 END) as regular_revenue,
-  SUM(CASE WHEN r.price_tier = 'loyalty' THEN sp.amount ELSE 0 END) as loyalty_revenue
+ SUM(CASE WHEN sp.payment_method = 'cash' THEN sp.amount ELSE 0 END) as cash,
+ SUM(CASE WHEN sp.payment_method = 'cliq' THEN sp.amount ELSE 0 END) as cliq,
+ SUM(CASE WHEN sp.payment_method = 'visa' THEN sp.amount ELSE 0 END) as visa,
+ SUM(sp.amount) as total,
+ SUM(CASE WHEN r.price_tier = 'regular' THEN sp.amount ELSE 0 END) as regular_revenue,
+ SUM(CASE WHEN r.price_tier = 'loyalty' THEN sp.amount ELSE 0 END) as loyalty_revenue
  FROM split_payments sp
  INNER JOIN reservations r ON sp.reservation_id = r.reservation_id
  WHERE r.event_id = ? AND r.status != 'cancelled'
@@ -406,8 +405,8 @@ $loyaltyNetRevenue = max(0, floatval($allPayments['loyalty_revenue']) - $totalRe
 // 7. CANCELLED STATS
 $cancelledResult = $conn->prepare("
  SELECT 
-  COUNT(*) as count,
-  COALESCE(SUM(sp.amount), 0) as total_paid
+ COUNT(*) as count,
+ COALESCE(SUM(sp.amount), 0) as total_paid
  FROM reservations r
  LEFT JOIN split_payments sp ON r.reservation_id = sp.reservation_id
  WHERE r.event_id = ? AND r.status = 'cancelled'
@@ -1677,9 +1676,10 @@ $conn->close();
                                                        <a href="view_reservation.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-secondary" title="View"><i class="bi bi-eye"></i></a>
                                                        <a href="edit_reservation.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-warning" title="Edit"><i class="bi bi-pencil"></i></a>
                                                        <a href="/public/reservation_tickets.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-info" title="View Tickets"><i class="bi bi-ticket-perforated"></i></a>
-                                                       <?php if (empty($res['table_id'])): ?>
-                                                                                         <button onclick="sendFloorPlan('<?php echo $res['reservation_id']; ?>', '<?php echo htmlspecialchars($res['phone']); ?>', '<?php echo htmlspecialchars($res['name']); ?>')" class="btn btn-sm btn-success" title="Send Floor Plan"><i class="bi bi-map"></i> Send Plan</button>
-                                                       <?php endif; ?>
+
+                                                       <!-- Send Floor Plan - Always visible now -->
+                                                       <button onclick="sendFloorPlan('<?php echo $res['reservation_id']; ?>', '<?php echo htmlspecialchars($res['phone']); ?>', '<?php echo htmlspecialchars($res['name']); ?>')" class="btn btn-sm btn-success" title="Send Floor Plan"><i class="bi bi-map"></i></button>
+
                                                        <?php if ($res['status'] != 'cancelled' && $amountDue > 0): ?>
                                                                                          <button onclick="openPaymentModal('<?php echo $res['reservation_id']; ?>', <?php echo floatval($res['total_amount'] ?? 0); ?>, <?php echo $amountDue; ?>)" class="btn btn-sm btn-success" title="Pay"><i class="bi bi-credit-card"></i> Pay <?php echo number_format($amountDue, 2); ?></button>
                                                        <?php endif; ?>
@@ -1831,8 +1831,8 @@ $conn->close();
   function openTableModal(reservationId, customerName, customerPhone) {
    document.getElementById('assignReservationId').value = reservationId;
    document.getElementById('assignCustomerInfo').innerHTML = `
-  <strong>Customer:</strong> ${customerName}<br>
-  <strong>Phone:</strong> ${customerPhone}
+ <strong>Customer:</strong> ${customerName}<br>
+ <strong>Phone:</strong> ${customerPhone}
  `;
 
    fetch('get_available_tables.php')
@@ -1973,12 +1973,12 @@ $conn->close();
    splitDiv.className = 'payment-split-item';
    splitDiv.setAttribute('data-split-index', splitIndex);
    splitDiv.innerHTML = `
-  <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-bottom: 10px; align-items: end;">
-   <div class="form-group"><label>Payment Method</label><select class="payment-method" onchange="togglePaymentFields(this, ${splitIndex})"><option value="">Select</option><option value="cash">Cash</option><option value="cliq">CliQ</option><option value="visa">Visa</option></select></div>
-   <div class="form-group"><label>Amount (<?php echo $currencySymbol; ?>)</label><input type="number" class="payment-amount" step="0.01" placeholder="0.00" onkeyup="updateRemainingAmount()" onchange="validateSplitAmount(this)"></div>
-   <div class="form-group"><label>&nbsp;</label><button type="button" class="btn btn-danger btn-sm" onclick="removePaymentSplit(this)">Remove</button></div>
-  </div>
-  <div class="payment-fields" style="display: none;"></div>
+ <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-bottom: 10px; align-items: end;">
+ <div class="form-group"><label>Payment Method</label><select class="payment-method" onchange="togglePaymentFields(this, ${splitIndex})"><option value="">Select</option><option value="cash">Cash</option><option value="cliq">CliQ</option><option value="visa">Visa</option></select></div>
+ <div class="form-group"><label>Amount (<?php echo $currencySymbol; ?>)</label><input type="number" class="payment-amount" step="0.01" placeholder="0.00" onkeyup="updateRemainingAmount()" onchange="validateSplitAmount(this)"></div>
+ <div class="form-group"><label>&nbsp;</label><button type="button" class="btn btn-danger btn-sm" onclick="removePaymentSplit(this)">Remove</button></div>
+ </div>
+ <div class="payment-fields" style="display: none;"></div>
  `;
    container.appendChild(splitDiv);
    paymentSplitCount++;

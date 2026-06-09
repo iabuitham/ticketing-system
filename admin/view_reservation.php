@@ -41,16 +41,12 @@ $amount_due = $total_amount - $total_paid;
 $currency = getSetting('currency', 'JOD');
 $currencySymbol = getCurrencySymbol();
 
-// Get payment splits
+// Get payment splits - FIXED: removed proof_path reference
 $stmt = $conn->prepare("
     SELECT sp.*, 
            CASE 
                WHEN sp.payment_method = 'cliq' AND sp.proof_file IS NOT NULL AND sp.proof_file != ''
                THEN CONCAT('../uploads/', sp.proof_file)
-               WHEN sp.payment_method = 'cliq' AND sp.proof_path IS NOT NULL AND sp.proof_path != ''
-                    AND sp.proof_path NOT LIKE 'CLIQ-%'
-                    AND sp.proof_path NOT LIKE 'REF-%'
-               THEN CONCAT('../uploads/', sp.proof_path)
                ELSE NULL 
            END as proof_url
     FROM split_payments sp 
@@ -365,8 +361,8 @@ $conn->close();
                     <tbody>
                         <?php foreach ($payments as $payment): 
                             $has_image = !empty($payment['proof_url']);
-                            $has_text_proof = !empty($payment['proof_path']) && (strpos($payment['proof_path'], 'CLIQ-') === 0 || strpos($payment['proof_path'], 'REF-') === 0 || strlen($payment['proof_path']) > 10);
                             $has_receipt = !empty($payment['receipt_id']);
+                            $has_note = !empty($payment['notes']);
                         ?>
                         <tr>
                             <td><?php echo date('M d, Y H:i:s', strtotime($payment['created_at'])); ?></td>
@@ -375,21 +371,33 @@ $conn->close();
                             <td>
                                 <?php if ($payment['payment_method'] == 'cash'): ?>
                                     <div><i class="bi bi-person-badge"></i> Received by: <?php echo htmlspecialchars($payment['received_by'] ?? 'System'); ?></div>
+                                    <?php if ($has_note): ?>
+                                        <div style="font-size: 11px; color: #64748b; margin-top: 5px;"><i class="bi bi-chat"></i> <?php echo htmlspecialchars($payment['notes']); ?></div>
+                                    <?php endif; ?>
                                 <?php elseif ($payment['payment_method'] == 'cliq'): ?>
                                     <?php if ($has_image && $payment['proof_url']): ?>
                                         <img src="<?php echo $payment['proof_url']; ?>" class="proof-thumbnail" onclick="showFullImage('<?php echo $payment['proof_url']; ?>')">
-                                    <?php elseif ($has_text_proof): ?>
-                                        <div class="proof-text-reference"><i class="bi bi-file-text"></i> Reference: <code><?php echo htmlspecialchars($payment['proof_path']); ?></code></div>
+                                        <?php if ($has_note): ?>
+                                            <div style="font-size: 11px; color: #64748b; margin-top: 5px;"><i class="bi bi-chat"></i> <?php echo htmlspecialchars($payment['notes']); ?></div>
+                                        <?php endif; ?>
                                     <?php elseif ($has_receipt): ?>
-                                        <div><i class="bi bi-receipt"></i> Receipt ID: <?php echo htmlspecialchars($payment['receipt_id']); ?></div>
+                                        <div class="proof-text-reference"><i class="bi bi-receipt"></i> Receipt ID: <code><?php echo htmlspecialchars($payment['receipt_id']); ?></code></div>
+                                        <?php if ($has_note): ?>
+                                            <div style="font-size: 11px; color: #64748b; margin-top: 5px;"><?php echo htmlspecialchars($payment['notes']); ?></div>
+                                        <?php endif; ?>
                                     <?php else: ?>
                                         <span class="text-muted">No proof provided</span>
+                                        <?php if ($has_note): ?>
+                                            <div style="font-size: 11px; color: #64748b; margin-top: 5px;"><i class="bi bi-chat"></i> <?php echo htmlspecialchars($payment['notes']); ?></div>
+                                        <?php endif; ?>
                                     <?php endif; ?>
                                 <?php elseif ($payment['payment_method'] == 'visa'): ?>
                                     <div><i class="bi bi-receipt"></i> Receipt ID: <?php echo htmlspecialchars($payment['receipt_id']); ?></div>
+                                    <?php if ($has_note): ?>
+                                        <div style="font-size: 11px; color: #64748b; margin-top: 5px;"><i class="bi bi-chat"></i> <?php echo htmlspecialchars($payment['notes']); ?></div>
+                                    <?php endif; ?>
                                 <?php endif; ?>
-                                <?php if (!empty($payment['notes'])): ?><div style="font-size: 11px; color: #64748b; margin-top: 5px;"><i class="bi bi-chat"></i> <?php echo htmlspecialchars($payment['notes']); ?></div><?php endif; ?>
-                            </td>
+                             </d>
                         </tr>
                         <?php endforeach; ?>
                     </tbody>
