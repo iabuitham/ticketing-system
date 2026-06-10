@@ -14,10 +14,8 @@ $messageType = '';
 
 // Handle bulk action - Deactivate tickets
 if (isset($_POST['bulk_deactivate']) && isset($_POST['ticket_ids'])) {
-    // Decode JSON string to array
     $ticket_ids = json_decode($_POST['ticket_ids'], true);
     
-    // If it's still a string (not JSON), convert to array
     if (!is_array($ticket_ids)) {
         $ticket_ids = explode(',', $_POST['ticket_ids']);
     }
@@ -40,10 +38,8 @@ if (isset($_POST['bulk_deactivate']) && isset($_POST['ticket_ids'])) {
 
 // Handle bulk action - Activate tickets
 if (isset($_POST['bulk_activate']) && isset($_POST['ticket_ids'])) {
-    // Decode JSON string to array
     $ticket_ids = json_decode($_POST['ticket_ids'], true);
     
-    // If it's still a string (not JSON), convert to array
     if (!is_array($ticket_ids)) {
         $ticket_ids = explode(',', $_POST['ticket_ids']);
     }
@@ -161,6 +157,10 @@ $conn->close();
             background: #f0f2f5;
             padding: 20px;
         }
+        body.dark-mode {
+            background: #0f172a;
+            color: #e2e8f0;
+        }
         .container { max-width: 1400px; margin: 0 auto; }
         
         .navbar {
@@ -174,6 +174,9 @@ $conn->close();
             flex-wrap: wrap;
             gap: 15px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        body.dark-mode .navbar {
+            background: #1e293b;
         }
         
         .stats-grid {
@@ -190,9 +193,13 @@ $conn->close();
             text-align: center;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
+        body.dark-mode .stat-card {
+            background: #1e293b;
+        }
         
         .stat-number { font-size: 32px; font-weight: bold; }
         .stat-label { font-size: 14px; color: #64748b; margin-top: 5px; }
+        body.dark-mode .stat-label { color: #94a3b8; }
         
         .filters-bar {
             background: white;
@@ -205,6 +212,9 @@ $conn->close();
             flex-wrap: wrap;
             gap: 15px;
         }
+        body.dark-mode .filters-bar {
+            background: #1e293b;
+        }
         
         .search-box { display: flex; gap: 10px; flex-wrap: wrap; }
         .search-box input, .search-box select {
@@ -212,6 +222,11 @@ $conn->close();
             border: 1px solid #e2e8f0;
             border-radius: 40px;
             font-size: 14px;
+        }
+        body.dark-mode .search-box input, body.dark-mode .search-box select {
+            background: #0f172a;
+            border-color: #334155;
+            color: #e2e8f0;
         }
         
         .btn {
@@ -229,19 +244,23 @@ $conn->close();
         }
         
         .btn-primary { background: #4f46e5; color: white; }
-        .btn-primary:hover { background: #4338ca; }
+        .btn-primary:hover { background: #4338ca; transform: translateY(-1px); }
         .btn-success { background: #10b981; color: white; }
         .btn-success:hover { background: #059669; }
         .btn-danger { background: #ef4444; color: white; }
         .btn-danger:hover { background: #dc2626; }
         .btn-warning { background: #f59e0b; color: white; }
         .btn-secondary { background: #64748b; color: white; }
+        .btn-info { background: #0ea5e9; color: white; }
+        .btn-info:hover { background: #0284c7; }
         .btn-sm { padding: 6px 12px; font-size: 12px; }
         
         .table-container { overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+        body.dark-mode th, body.dark-mode td { border-bottom-color: #334155; }
         th { background: #f8fafc; font-weight: 600; }
+        body.dark-mode th { background: #0f172a; color: #94a3b8; }
         
         .badge {
             display: inline-block;
@@ -253,6 +272,9 @@ $conn->close();
         .badge-active { background: #d1fae5; color: #065f46; }
         .badge-inactive { background: #fee2e2; color: #991b1b; }
         .badge-used { background: #fef3c7; color: #92400e; }
+        body.dark-mode .badge-active { background: #064e3b; color: #6ee7b7; }
+        body.dark-mode .badge-inactive { background: #7f1d1d; color: #fca5a5; }
+        body.dark-mode .badge-used { background: #451a03; color: #fde68a; }
         
         .alert {
             padding: 12px 20px;
@@ -262,8 +284,10 @@ $conn->close();
             align-items: center;
             gap: 10px;
         }
-        .alert-success { background: #d1fae5; color: #065f46; }
-        .alert-error { background: #fee2e2; color: #991b1b; }
+        .alert-success { background: #d1fae5; color: #065f46; border-left: 4px solid #10b981; }
+        .alert-error { background: #fee2e2; color: #991b1b; border-left: 4px solid #ef4444; }
+        body.dark-mode .alert-success { background: #064e3b; color: #6ee7b7; }
+        body.dark-mode .alert-error { background: #7f1d1d; color: #fca5a5; }
         
         .bulk-actions {
             background: #f8fafc;
@@ -276,6 +300,81 @@ $conn->close();
             display: none;
         }
         .bulk-actions.active { display: flex; }
+        body.dark-mode .bulk-actions { background: #0f172a; }
+        
+        /* QR Code Modal - Fixed */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 100000;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(3px);
+        }
+        .modal-overlay.active {
+            display: flex;
+        }
+        .modal-container {
+            background: white;
+            border-radius: 24px;
+            max-width: 450px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            animation: modalFadeIn 0.3s ease;
+        }
+        @keyframes modalFadeIn {
+            from {
+                opacity: 0;
+                transform: scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+        body.dark-mode .modal-container { background: #1e293b; }
+        .modal-header {
+            padding: 20px 24px;
+            background: #4f46e5;
+            color: white;
+            border-radius: 24px 24px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 28px;
+            cursor: pointer;
+            color: white;
+            transition: transform 0.2s;
+        }
+        .modal-close:hover {
+            transform: scale(1.1);
+        }
+        .modal-body { 
+            padding: 30px; 
+            text-align: center;
+        }
+        .modal-buttons {
+            padding: 0 24px 24px 24px;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+        .qr-code-img {
+            max-width: 220px;
+            border-radius: 16px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            margin: 10px 0;
+        }
         
         @media (max-width: 768px) {
             .stats-grid { grid-template-columns: repeat(2, 1fr); }
@@ -290,6 +389,7 @@ $conn->close();
         <div class="navbar">
             <h1><i class="bi bi-ticket-perforated"></i> Ticket Management</h1>
             <div>
+                <button id="darkModeToggle" class="btn btn-secondary"><i class="bi bi-moon-fill"></i> Dark Mode</button>
                 <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Back to Dashboard</a>
                 <a href="logout.php" class="btn btn-danger"><i class="bi bi-box-arrow-right"></i> Logout</a>
             </div>
@@ -297,7 +397,7 @@ $conn->close();
         
         <?php if ($message): ?>
             <div class="alert alert-<?php echo $messageType; ?>">
-                <i class="bi bi-<?php echo $messageType == 'success' ? 'check-circle' : 'exclamation-circle'; ?>"></i>
+                <i class="bi bi-<?php echo $messageType == 'success' ? 'check-circle-fill' : 'exclamation-triangle-fill'; ?>"></i>
                 <?php echo $message; ?>
             </div>
         <?php endif; ?>
@@ -358,7 +458,7 @@ $conn->close();
                 <table>
                     <thead>
                         <tr>
-                            <th style="width: 40px;"><input type="checkbox" id="selectAllCheckbox" onclick="toggleSelectAll()"></th>
+                            <th style="width: 40px;"><input type="checkbox" id="selectAllCheckbox"></th>
                             <th>Ticket Code</th>
                             <th>Customer</th>
                             <th>Type</th>
@@ -390,13 +490,23 @@ $conn->close();
                              </d>
                             <td><?php echo date('M d, H:i', strtotime($ticket['created_at'])); ?> </d>
                             <td>
+                                <!-- View Ticket Button -->
+                                <a href="/public/reservation_tickets.php?id=<?php echo urlencode($ticket['reservation_id']); ?>" target="_blank" class="btn btn-sm btn-info" title="View Ticket">
+                                    <i class="bi bi-ticket-perforated"></i>
+                                </a>
+                                
+                                <!-- Show QR Code Button -->
+                                <button type="button" onclick="showQRCode('<?php echo htmlspecialchars($ticket['ticket_code']); ?>', '<?php echo htmlspecialchars($ticket['name']); ?>')" class="btn btn-sm btn-primary" title="Show QR Code">
+                                    <i class="bi bi-upc-scan"></i>
+                                </button>
+                                
                                 <?php if (!$ticket['is_scanned']): ?>
                                     <?php if ($ticket['is_active']): ?>
-                                        <a href="?toggle=1&id=<?php echo $ticket['id']; ?>" class="btn btn-sm btn-warning" onclick="return confirm('Deactivate this ticket?')">
+                                        <a href="?toggle=1&id=<?php echo $ticket['id']; ?>" class="btn btn-sm btn-warning" onclick="return confirm('Deactivate this ticket?')" title="Deactivate">
                                             <i class="bi bi-ban"></i>
                                         </a>
                                     <?php else: ?>
-                                        <a href="?toggle=1&id=<?php echo $ticket['id']; ?>" class="btn btn-sm btn-success" onclick="return confirm('Activate this ticket?')">
+                                        <a href="?toggle=1&id=<?php echo $ticket['id']; ?>" class="btn btn-sm btn-success" onclick="return confirm('Activate this ticket?')" title="Activate">
                                             <i class="bi bi-check-circle"></i>
                                         </a>
                                     <?php endif; ?>
@@ -418,8 +528,39 @@ $conn->close();
         </div>
     </div>
     
+    <!-- QR Code Modal - Fixed -->
+    <div id="qrModal" class="modal-overlay">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h3><i class="bi bi-upc-scan"></i> Ticket QR Code</h3>
+                <button type="button" class="modal-close" onclick="closeQRModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="qrSpinner" style="display: none;">
+                    <i class="bi bi-hourglass-split" style="font-size: 32px; animation: spin 1s linear infinite;"></i>
+                    <p>Loading QR Code...</p>
+                </div>
+                <div id="qrContent">
+                    <img id="qrImg" class="qr-code-img" src="" alt="QR Code" style="max-width: 220px;">
+                    <div style="margin-top: 15px;">
+                        <p><strong>Ticket Code:</strong> <span id="qrTicketCode"></span></p>
+                        <p><strong>Customer:</strong> <span id="qrCustomerName"></span></p>
+                    </div>
+                    <button onclick="downloadQRCode()" class="btn btn-success" style="margin-top: 15px; width: 100%;">
+                        <i class="bi bi-download"></i> Download QR Code
+                    </button>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button type="button" onclick="closeQRModal()" class="btn btn-secondary">Close</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let selectedTickets = new Set();
+        let currentQRCodeUrl = '';
+        let currentTicketCode = '';
         
         function updateSelectedTicketsInput() {
             document.getElementById('selectedTicketsInput').value = JSON.stringify(Array.from(selectedTickets));
@@ -440,6 +581,8 @@ $conn->close();
             updateSelectedTicketsInput();
             updateBulkActions();
         }
+        
+        document.getElementById('selectAllCheckbox')?.addEventListener('change', toggleSelectAll);
         
         function selectAll() {
             const checkboxes = document.querySelectorAll('.ticket-checkbox');
@@ -497,6 +640,63 @@ $conn->close();
             window.location.href = url;
         }
         
+        // QR Code Functions - Fixed
+        function showQRCode(ticketCode, customerName) {
+            currentTicketCode = ticketCode;
+            const qrUrl = `https://quickchart.io/qr?text=${encodeURIComponent(ticketCode)}&size=250&margin=2`;
+            currentQRCodeUrl = qrUrl;
+            
+            // Show spinner
+            document.getElementById('qrSpinner').style.display = 'block';
+            document.getElementById('qrContent').style.display = 'none';
+            
+            // Set text values
+            document.getElementById('qrTicketCode').innerText = ticketCode;
+            document.getElementById('qrCustomerName').innerText = customerName;
+            
+            // Preload image
+            const img = new Image();
+            img.onload = function() {
+                document.getElementById('qrImg').src = qrUrl;
+                document.getElementById('qrSpinner').style.display = 'none';
+                document.getElementById('qrContent').style.display = 'block';
+            };
+            img.onerror = function() {
+                document.getElementById('qrSpinner').innerHTML = '<i class="bi bi-exclamation-triangle-fill" style="font-size: 32px; color: #ef4444;"></i><p>Failed to load QR code</p>';
+            };
+            img.src = qrUrl;
+            
+            // Show modal
+            document.getElementById('qrModal').classList.add('active');
+        }
+        
+        function closeQRModal() {
+            document.getElementById('qrModal').classList.remove('active');
+            // Reset spinner
+            document.getElementById('qrSpinner').style.display = 'none';
+            document.getElementById('qrSpinner').innerHTML = '<i class="bi bi-hourglass-split" style="font-size: 32px; animation: spin 1s linear infinite;"></i><p>Loading QR Code...</p>';
+        }
+        
+        function downloadQRCode() {
+            if (!currentQRCodeUrl) return;
+            
+            fetch(currentQRCodeUrl)
+                .then(response => response.blob())
+                .then(blob => {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `ticket_${currentTicketCode}.png`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                })
+                .catch(error => {
+                    window.open(currentQRCodeUrl, '_blank');
+                });
+        }
+        
         document.querySelectorAll('.ticket-checkbox').forEach(cb => {
             cb.addEventListener('change', function() {
                 if (this.checked) {
@@ -516,8 +716,35 @@ $conn->close();
             if (e.key === 'Enter') applyFilters();
         });
         
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('qrModal');
+            if (event.target === modal) {
+                closeQRModal();
+            }
+        }
+        
+        // Dark mode toggle
+        const darkModeToggle = document.getElementById('darkModeToggle');
+        const isDarkMode = localStorage.getItem('darkMode') === 'true';
+        if (isDarkMode) {
+            document.body.classList.add('dark-mode');
+            darkModeToggle.innerHTML = '<i class="bi bi-sun-fill"></i> Light Mode';
+        }
+        darkModeToggle.addEventListener('click', () => {
+            document.body.classList.toggle('dark-mode');
+            const isDark = document.body.classList.contains('dark-mode');
+            localStorage.setItem('darkMode', isDark);
+            darkModeToggle.innerHTML = isDark ? '<i class="bi bi-sun-fill"></i> Light Mode' : '<i class="bi bi-moon-fill"></i> Dark Mode';
+        });
+        
         // Initialize
         updateSelectedTicketsInput();
+        
+        // Add spin animation for spinner
+        const style = document.createElement('style');
+        style.textContent = `@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`;
+        document.head.appendChild(style);
     </script>
 </body>
 </html>
