@@ -60,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stmt->close();
     $total_paid = floatval($paidResult['total_paid']);
 
-    // Calculate new values using the stored prices (NOT current event prices)
+    // Calculate new values using the stored prices
     $new_total_amount = ($new_adults * $adultPrice) + ($new_teens * $teenPrice) + ($new_kids * $kidPrice);
 
     // Calculate the difference
@@ -98,7 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Disable foreign key checks temporarily
             $conn->query("SET FOREIGN_KEY_CHECKS = 0");
 
-            // Update the reservation with new ID - PRESERVE price_tier and original prices
+            // Update the reservation with new ID
             $stmt = $conn->prepare("UPDATE reservations SET 
                 reservation_id = ?,
                 name = ?, 
@@ -155,7 +155,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $conn->query("SET FOREIGN_KEY_CHECKS = 1");
         } else {
-            // Just update the reservation without changing ID - PRESERVE price_tier
+            // Just update the reservation without changing ID
             $stmt = $conn->prepare("UPDATE reservations SET 
                 name = ?, 
                 phone = ?, 
@@ -260,9 +260,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $_SESSION['update_message_type'] = "success";
 
-        // Send WhatsApp notification
+        // ========== SEND WHATSAPP NOTIFICATION ==========
         $currencySymbol = getCurrencySymbol();
 
+        // Send message for guest increase
         if ($guests_increased) {
             $added_guests = $guest_change;
             $message = "📢 *RESERVATION UPDATED - GUESTS INCREASED* 📢\n";
@@ -283,23 +284,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             sendWhatsAppMessage($phone, $message);
         }
 
-        if ($guests_decreased && $credit_amount > 0) {
+        // Send message for guest decrease - MODIFIED: Now sends for ALL guest decreases
+        if ($guests_decreased) {
             $removed_guests = abs($guest_change);
-            $message = "📢 *RESERVATION UPDATED - GUESTS DECREASED* 📢\n";
-            $message .= "📢 *تم تحديث الحجز - انخفاض عدد الضيوف* 📢\n\n";
-            $message .= "Dear {$name},\n";
-            $message .= "عزيزنا {$name}،\n\n";
-            $message .= "Your reservation has been updated.\n";
-            $message .= "تم تحديث حجزك بنجاح.\n\n";
-            $message .= "📋 *Reservation ID | رقم الحجز:* {$new_reservation_id}\n";
-            $message .= "👥 *Guests removed | عدد الضيوف المخفضين:* {$removed_guests}\n";
-            $message .= "👤 *New total guests | إجمالي الضيوف الجديد:* {$new_total}\n";
-            $message .= "🍽️ *Table | الطاولة:* {$table_id}\n";
-            $message .= "💰 *Credit amount | قيمة الرصيد الدائن:* {$currencySymbol} " . number_format($credit_amount, 2) . "\n\n";
-            $message .= "A credit note has been created. Our team will contact you regarding the refund.\n";
-            $message .= "تم إنشاء إشعار دائن. سيتواصل معك فريقنا بخصوص استرداد المبلغ.\n\n";
-            $message .= "Thank you for your understanding! 🙏\n";
-            $message .= "شكراً لتفهمك! 🙏\n";
+            
+            if ($credit_amount > 0) {
+                // Message with credit info
+                $message = "📢 *RESERVATION UPDATED - GUESTS DECREASED* 📢\n";
+                $message .= "📢 *تم تحديث الحجز - انخفاض عدد الضيوف* 📢\n\n";
+                $message .= "Dear {$name},\n";
+                $message .= "عزيزنا {$name}،\n\n";
+                $message .= "Your reservation has been updated.\n";
+                $message .= "تم تحديث حجزك بنجاح.\n\n";
+                $message .= "📋 *Reservation ID | رقم الحجز:* {$new_reservation_id}\n";
+                $message .= "👥 *Guests removed | عدد الضيوف المخفضين:* {$removed_guests}\n";
+                $message .= "👤 *New total guests | إجمالي الضيوف الجديد:* {$new_total}\n";
+                $message .= "🍽️ *Table | الطاولة:* {$table_id}\n";
+                $message .= "💰 *Credit amount | قيمة الرصيد الدائن:* {$currencySymbol} " . number_format($credit_amount, 2) . "\n\n";
+                $message .= "A credit note has been created. Our team will contact you regarding the refund.\n";
+                $message .= "تم إنشاء إشعار دائن. سيتواصل معك فريقنا بخصوص استرداد المبلغ.\n\n";
+                $message .= "Thank you for your understanding! 🙏\n";
+                $message .= "شكراً لتفهمك! 🙏\n";
+            } else {
+                // Message without credit (no payment made yet)
+                $message = "📢 *RESERVATION UPDATED - GUESTS DECREASED* 📢\n";
+                $message .= "📢 *تم تحديث الحجز - انخفاض عدد الضيوف* 📢\n\n";
+                $message .= "Dear {$name},\n";
+                $message .= "عزيزنا {$name}،\n\n";
+                $message .= "Your reservation has been updated.\n";
+                $message .= "تم تحديث حجزك بنجاح.\n\n";
+                $message .= "📋 *Reservation ID | رقم الحجز:* {$new_reservation_id}\n";
+                $message .= "👥 *Guests removed | عدد الضيوف المخفضين:* {$removed_guests}\n";
+                $message .= "👤 *New total guests | إجمالي الضيوف الجديد:* {$new_total}\n";
+                $message .= "🍽️ *Table | الطاولة:* {$table_id}\n";
+                $message .= "💰 *New total amount | المبلغ الإجمالي الجديد:* {$currencySymbol} " . number_format($new_total_amount, 2) . "\n\n";
+                
+                if ($new_additional_due > 0) {
+                    $message .= "⚠️ *Remaining balance | الرصيد المتبقي:* {$currencySymbol} " . number_format($new_additional_due, 2) . "\n\n";
+                } else {
+                    $message .= "✅ *Your reservation is now fully paid! | حجزك الآن مدفوع بالكامل!* ✅\n\n";
+                }
+                
+                $message .= "Thank you! 🙏\n";
+                $message .= "شكراً لك! 🙏\n";
+            }
             sendWhatsAppMessage($phone, $message);
         }
 
