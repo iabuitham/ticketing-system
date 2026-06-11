@@ -32,6 +32,10 @@ $messageType = '';
 $sentCount = 0;
 $failedCount = 0;
 
+// Handle file upload
+$uploadedMedia = null;
+$mediaType = null;
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $recipient_group = $_POST['recipient_group'];
     $message_template = $_POST['message_template'];
@@ -39,6 +43,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $custom_message = isset($_POST['custom_message']) ? trim($_POST['custom_message']) : '';
     $include_ticket_link = isset($_POST['include_ticket_link']) ? true : false;
     $payment_link = isset($_POST['payment_link']) ? trim($_POST['payment_link']) : '';
+    $include_media = isset($_POST['include_media']) ? true : false;
+    
+    // Handle media file upload
+    if ($include_media && isset($_FILES['media_file']) && $_FILES['media_file']['error'] === UPLOAD_ERR_OK) {
+        $file = $_FILES['media_file'];
+        $allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'pdf', 'mp4', 'mov', 'mp3', 'wav'];
+        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        
+        if (in_array($ext, $allowed)) {
+            $uploadDir = '../uploads/bulk_media/';
+            if (!file_exists($uploadDir)) {
+                mkdir($uploadDir, 0777, true);
+            }
+            $fileName = 'bulk_' . time() . '_' . uniqid() . '.' . $ext;
+            $uploadPath = $uploadDir . $fileName;
+            $publicPath = '../uploads/bulk_media/' . $fileName;
+            
+            if (move_uploaded_file($file['tmp_name'], $uploadPath)) {
+                $uploadedMedia = $publicPath;
+                // Determine media type
+                if (in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp'])) {
+                    $mediaType = 'image';
+                } elseif ($ext === 'pdf') {
+                    $mediaType = 'document';
+                } elseif (in_array($ext, ['mp4', 'mov'])) {
+                    $mediaType = 'video';
+                } elseif (in_array($ext, ['mp3', 'wav'])) {
+                    $mediaType = 'audio';
+                }
+            }
+        }
+    }
     
     // Build query for recipients
     $query = "SELECT name, phone, reservation_id, status, total_amount FROM reservations WHERE event_id = $selected_event_id";
@@ -90,14 +126,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = str_replace('{event_description}', $currentEvent['description'] ?? 'Join us for an amazing experience!', $msg);
         }
         
-        // Send message - FIXED: sendWhatsAppMessage returns boolean, not array
-        $result_send = sendWhatsAppMessage($recipient['phone'], $msg);
-        
-        if ($result_send === true) {
-            $sentCount++;
+        // Send message - with optional media
+        if ($include_media && $uploadedMedia && $mediaType) {
+            // Send text message first
+            $result_send = sendWhatsAppMessage($recipient['phone'], $msg);
+            
+            if ($result_send === true) {
+                // Then send media based on type
+                if ($mediaType === 'image') {
+                    $mediaSent = sendWhatsAppImage($recipient['phone'], $baseUrl . $uploadedMedia, '');
+                } elseif ($mediaType === 'document') {
+                    $mediaSent = sendWhatsAppDocument($recipient['phone'], $baseUrl . $uploadedMedia, '');
+                } else {
+                    $mediaSent = true; // Skip unsupported
+                }
+                
+                if ($mediaSent !== false) {
+                    $sentCount++;
+                } else {
+                    $failedCount++;
+                    $errors[] = $recipient['name'] . ': Media failed to send';
+                }
+            } else {
+                $failedCount++;
+                $errors[] = $recipient['name'] . ': Failed to send';
+            }
         } else {
-            $failedCount++;
-            $errors[] = $recipient['name'] . ': Failed to send';
+            // Send only text message
+            $result_send = sendWhatsAppMessage($recipient['phone'], $msg);
+            
+            if ($result_send === true) {
+                $sentCount++;
+            } else {
+                $failedCount++;
+                $errors[] = $recipient['name'] . ': Failed to send';
+            }
         }
         
         // Small delay to avoid rate limiting
@@ -232,6 +295,46 @@ function getDefaultSubject($template) {
     }
 }
 
+// Add document sending function if not exists
+function sendWhatsAppDocument($to, $documentUrl, $caption = '') {
+    $enabled = getSetting('enable_whatsapp', '0') == '1';
+    if (!$enabled) return false;
+    
+    $instanceId = getSetting('ultramsg_instance_id', '');
+    $token = getSetting('ultramsg_token', '');
+    
+    if (empty($instanceId) || empty($token)) return false;
+    
+    $to = preg_replace('/[^0-9]/', '', $to);
+    if (substr($to, 0, 1) == '0') $to = substr($to, 1);
+    if (substr($to, 0, 3) != '962') $to = '962' . $to;
+    
+    $data = [
+        'token' => $token,
+        'to' => $to,
+        'document' => $documentUrl,
+        'filename' => basename($documentUrl),
+        'caption' => $caption
+    ];
+    
+    $url = "https://api.ultramsg.com/{$instanceId}/messages/document";
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    $responseData = json_decode($response, true);
+    return ($httpCode == 200 && isset($responseData['sent']) && ($responseData['sent'] === true || $responseData['sent'] === 1));
+}
+
 $conn->close();
 ?>
 <!DOCTYPE html>
@@ -250,6 +353,9 @@ $conn->close();
             min-height: 100vh;
             padding: 20px;
         }
+        body.dark-mode {
+            background: #0f172a;
+        }
         .container { max-width: 900px; margin: 0 auto; }
         .card {
             background: white;
@@ -257,8 +363,14 @@ $conn->close();
             padding: 30px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
         }
+        body.dark-mode .card {
+            background: #1e293b;
+            color: #e2e8f0;
+        }
         h1 { margin-bottom: 10px; color: #333; }
+        body.dark-mode h1 { color: #e2e8f0; }
         .subtitle { color: #666; margin-bottom: 30px; }
+        body.dark-mode .subtitle { color: #94a3b8; }
         
         .event-info {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -282,8 +394,12 @@ $conn->close();
             padding: 15px;
             text-align: center;
         }
+        body.dark-mode .stat-card {
+            background: #0f172a;
+        }
         .stat-number { font-size: 28px; font-weight: bold; color: #667eea; }
         .stat-label { font-size: 12px; color: #666; margin-top: 5px; }
+        body.dark-mode .stat-label { color: #94a3b8; }
         
         .form-group { margin-bottom: 20px; }
         label {
@@ -292,6 +408,7 @@ $conn->close();
             font-weight: 600;
             color: #555;
         }
+        body.dark-mode label { color: #cbd5e1; }
         select, textarea, input {
             width: 100%;
             padding: 12px;
@@ -299,6 +416,11 @@ $conn->close();
             border-radius: 12px;
             font-size: 14px;
             font-family: inherit;
+        }
+        body.dark-mode select, body.dark-mode textarea, body.dark-mode input {
+            background: #0f172a;
+            border-color: #334155;
+            color: #e2e8f0;
         }
         textarea { resize: vertical; min-height: 200px; font-family: monospace; }
         
@@ -313,6 +435,55 @@ $conn->close();
             margin: 0;
         }
         
+        /* Media upload styles */
+        .media-upload-area {
+            border: 2px dashed #cbd5e1;
+            border-radius: 16px;
+            padding: 20px;
+            text-align: center;
+            margin: 15px 0;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        body.dark-mode .media-upload-area {
+            border-color: #334155;
+        }
+        .media-upload-area:hover {
+            border-color: #667eea;
+            background: #f8fafc;
+        }
+        body.dark-mode .media-upload-area:hover {
+            background: #1e293b;
+        }
+        .media-preview {
+            margin-top: 15px;
+            display: none;
+        }
+        .media-preview.active {
+            display: block;
+        }
+        .media-preview img, .media-preview video {
+            max-width: 200px;
+            max-height: 200px;
+            border-radius: 12px;
+            margin-top: 10px;
+        }
+        .media-preview .file-name {
+            font-size: 12px;
+            color: #64748b;
+            margin-top: 5px;
+        }
+        .remove-media {
+            background: #ef4444;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+        
         .message-preview {
             background: #f0fdf4;
             border: 1px solid #d1fae5;
@@ -320,9 +491,16 @@ $conn->close();
             padding: 20px;
             margin: 20px 0;
         }
+        body.dark-mode .message-preview {
+            background: #064e3b;
+            border-color: #065f46;
+        }
         .message-preview h4 {
             color: #065f46;
             margin-bottom: 10px;
+        }
+        body.dark-mode .message-preview h4 {
+            color: #6ee7b7;
         }
         .message-preview .preview-content {
             background: white;
@@ -333,6 +511,10 @@ $conn->close();
             font-size: 13px;
             max-height: 300px;
             overflow-y: auto;
+        }
+        body.dark-mode .message-preview .preview-content {
+            background: #0f172a;
+            color: #e2e8f0;
         }
         
         .btn {
@@ -375,12 +557,24 @@ $conn->close();
             color: #721c24;
             border: 1px solid #f5c6cb;
         }
+        body.dark-mode .alert-success {
+            background: #064e3b;
+            color: #6ee7b7;
+        }
+        body.dark-mode .alert-error {
+            background: #7f1d1d;
+            color: #fca5a5;
+        }
         .info-box {
             background: #e7f3ff;
             padding: 15px;
             border-radius: 12px;
             margin-bottom: 20px;
             border-left: 4px solid #667eea;
+        }
+        body.dark-mode .info-box {
+            background: #1e293b;
+            border-left-color: #667eea;
         }
         .actions {
             display: flex;
@@ -455,7 +649,7 @@ $conn->close();
                 <code>{payment_link}</code> - Payment link
             </div>
             
-            <form method="POST" id="bulkForm">
+            <form method="POST" id="bulkForm" enctype="multipart/form-data">
                 <div class="form-group">
                     <label>Select Recipients</label>
                     <select name="recipient_group" id="recipientGroup" required>
@@ -499,6 +693,25 @@ $conn->close();
                     <input type="text" name="payment_link" placeholder="https://yourdomain.com/payment">
                 </div>
                 
+                <!-- Media Upload Section -->
+                <div class="checkbox-group">
+                    <input type="checkbox" name="include_media" id="includeMedia" onchange="toggleMediaUpload()">
+                    <label for="includeMedia" style="margin: 0;">📎 Attach media/file to message</label>
+                </div>
+                
+                <div id="mediaUploadGroup" style="display: none;">
+                    <div class="media-upload-area" onclick="document.getElementById('mediaFile').click()">
+                        <i class="bi bi-cloud-upload" style="font-size: 32px; color: #667eea;"></i>
+                        <p style="margin-top: 10px;">Click to upload image, PDF, video, or audio</p>
+                        <small style="color: #64748b;">Supported: JPG, PNG, GIF, PDF, MP4, MP3 (Max 10MB)</small>
+                    </div>
+                    <input type="file" name="media_file" id="mediaFile" style="display: none;" accept="image/*,application/pdf,video/*,audio/*" onchange="previewMedia(this)">
+                    <div id="mediaPreview" class="media-preview">
+                        <div id="previewContent"></div>
+                        <button type="button" class="remove-media" onclick="removeMedia()">Remove File</button>
+                    </div>
+                </div>
+                
                 <!-- Message Preview -->
                 <div class="message-preview">
                     <h4>📄 Message Preview</h4>
@@ -533,6 +746,75 @@ $conn->close();
             amount: '230.00'
         };
         
+        function toggleMediaUpload() {
+            const includeMedia = document.getElementById('includeMedia');
+            const mediaGroup = document.getElementById('mediaUploadGroup');
+            mediaGroup.style.display = includeMedia.checked ? 'block' : 'none';
+            if (!includeMedia.checked) {
+                removeMedia();
+            }
+        }
+        
+        function previewMedia(input) {
+            const previewDiv = document.getElementById('mediaPreview');
+            const previewContent = document.getElementById('previewContent');
+            
+            if (input.files && input.files[0]) {
+                const file = input.files[0];
+                const fileType = file.type;
+                const fileName = file.name;
+                
+                let previewHtml = '';
+                
+                if (fileType.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        previewContent.innerHTML = `
+                            <img src="${e.target.result}" alt="Preview">
+                            <div class="file-name">${fileName}</div>
+                        `;
+                        previewDiv.classList.add('active');
+                    };
+                    reader.readAsDataURL(file);
+                } else if (fileType === 'application/pdf') {
+                    previewContent.innerHTML = `
+                        <i class="bi bi-file-pdf" style="font-size: 48px; color: #ef4444;"></i>
+                        <div class="file-name">${fileName}</div>
+                    `;
+                    previewDiv.classList.add('active');
+                } else if (fileType.startsWith('video/')) {
+                    previewContent.innerHTML = `
+                        <video controls style="max-width: 200px; max-height: 200px;">
+                            <source src="${URL.createObjectURL(file)}" type="${fileType}">
+                        </video>
+                        <div class="file-name">${fileName}</div>
+                    `;
+                    previewDiv.classList.add('active');
+                } else if (fileType.startsWith('audio/')) {
+                    previewContent.innerHTML = `
+                        <i class="bi bi-music-note" style="font-size: 48px; color: #10b981;"></i>
+                        <div class="file-name">${fileName}</div>
+                        <audio controls style="margin-top: 10px;">
+                            <source src="${URL.createObjectURL(file)}" type="${fileType}">
+                        </audio>
+                    `;
+                    previewDiv.classList.add('active');
+                } else {
+                    previewContent.innerHTML = `
+                        <i class="bi bi-file-earmark" style="font-size: 48px; color: #667eea;"></i>
+                        <div class="file-name">${fileName}</div>
+                    `;
+                    previewDiv.classList.add('active');
+                }
+            }
+        }
+        
+        function removeMedia() {
+            document.getElementById('mediaFile').value = '';
+            document.getElementById('mediaPreview').classList.remove('active');
+            document.getElementById('previewContent').innerHTML = '';
+        }
+        
         function updatePreview() {
             const template = document.getElementById('messageTemplate').value;
             const includeTicketLink = document.getElementById('includeTicketLink').checked;
@@ -544,7 +826,6 @@ $conn->close();
             if (template === 'custom') {
                 preview = customMessage || 'Enter your custom message above...';
             } else {
-                // Get template from PHP (simplified for preview)
                 preview = getTemplatePreview(template);
             }
             
@@ -557,8 +838,8 @@ $conn->close();
             preview = preview.replace(/{event_time}/g, eventData.time);
             preview = preview.replace(/{venue}/g, eventData.venue);
             preview = preview.replace(/{event_description}/g, eventData.description);
-            preview = preview.replace(/{ticket_link}/g, includeTicketLink ? 'http://ticketing.local/public/reservation_tickets.php?id=' + sampleCustomer.reservation_id : '[Ticket link not included]');
-            preview = preview.replace(/{payment_link}/g, paymentLink || 'http://ticketing.local/admin/dashboard.php');
+            preview = preview.replace(/{ticket_link}/g, includeTicketLink ? 'https://yourdomain.com/public/reservation_tickets.php?id=' + sampleCustomer.reservation_id : '[Ticket link not included]');
+            preview = preview.replace(/{payment_link}/g, paymentLink || 'https://yourdomain.com/admin/dashboard.php');
             
             document.getElementById('messagePreview').innerHTML = preview.replace(/\n/g, '<br>');
         }
@@ -658,6 +939,14 @@ Best regards | مع أطيب التحيات`
         document.getElementById('includeTicketLink').addEventListener('change', updatePreview);
         document.querySelector('input[name="payment_link"]')?.addEventListener('input', updatePreview);
         document.getElementById('customMessage').addEventListener('input', updatePreview);
+        
+        // Dark mode toggle
+        const darkModeToggle = document.createElement('button');
+        darkModeToggle.innerHTML = '🌙';
+        darkModeToggle.style.cssText = 'position:fixed; bottom:20px; right:20px; background:#667eea; color:white; border:none; border-radius:50%; width:50px; height:50px; cursor:pointer; z-index:1000;';
+        darkModeToggle.onclick = () => document.body.classList.toggle('dark-mode');
+        if (localStorage.getItem('darkMode') === 'true') document.body.classList.add('dark-mode');
+        document.body.appendChild(darkModeToggle);
         
         // Initial setup
         toggleFields();

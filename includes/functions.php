@@ -336,6 +336,49 @@ function sendWhatsAppMessage($to, $message) {
     error_log("Failed to send WhatsApp to: $to - Response: $response");
     return false;
 }
+
+/**
+ * Send WhatsApp document using Ultramsg
+ */
+function sendWhatsAppDocument($to, $documentUrl, $caption = '') {
+    $enabled = getSetting('enable_whatsapp', '0') == '1';
+    if (!$enabled) return false;
+    
+    $instanceId = getSetting('ultramsg_instance_id', '');
+    $token = getSetting('ultramsg_token', '');
+    
+    if (empty($instanceId) || empty($token)) return false;
+    
+    $to = preg_replace('/[^0-9]/', '', $to);
+    if (substr($to, 0, 1) == '0') $to = substr($to, 1);
+    if (substr($to, 0, 3) != '962') $to = '962' . $to;
+    
+    $data = [
+        'token' => $token,
+        'to' => $to,
+        'document' => $documentUrl,
+        'filename' => basename($documentUrl),
+        'caption' => $caption
+    ];
+    
+    $url = "https://api.ultramsg.com/{$instanceId}/messages/document";
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    $responseData = json_decode($response, true);
+    return ($httpCode == 200 && isset($responseData['sent']) && ($responseData['sent'] === true || $responseData['sent'] === 1));
+}
+
 /**
  * Send WhatsApp image using Ultramsg
  */
