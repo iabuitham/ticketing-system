@@ -99,7 +99,7 @@ $totalGuests = ($reservation['adults'] ?? 0) + ($reservation['teens'] ?? 0) + ($
 $currentTotal = floatval($reservation['total_amount'] ?? 0);
 $cancelledClass = $isCancelled ? 'cancelled-text' : '';
 
-// Get available tables for dropdown
+// Get available tables for dropdown (including empty option)
 $tables = [];
 $table_result = $conn->query("SELECT table_number, section FROM tables WHERE is_active = 1 ORDER BY table_number");
 if ($table_result) {
@@ -280,6 +280,11 @@ $conn->close();
         .btn-danger:hover { background: #b91c1c; transform: translateY(-2px); }
         .btn-info { background: #0ea5e9; color: white; }
         .btn-info:hover { background: #0284c7; }
+        .text-muted-small {
+            font-size: 12px;
+            color: #64748b;
+            margin-top: 5px;
+        }
         small {
             display: block;
             margin-top: 5px;
@@ -377,10 +382,11 @@ $conn->close();
 
                     <div class="price-breakdown" id="priceBreakdown"></div>
 
+                    <!-- Table ID field - now optional -->
                     <div class="form-group">
-                        <label>Table ID *</label>
-                        <select name="table_id" required <?php echo $isCancelled ? 'disabled' : ''; ?>>
-                            <option value="">Select a table</option>
+                        <label>Table ID (Optional)</label>
+                        <select name="table_id">
+                            <option value="">-- No table assigned --</option>
                             <?php foreach ($tables as $table): ?>
                                 <option value="<?php echo htmlspecialchars($table['table_number']); ?>" 
                                         <?php echo $reservation['table_id'] == $table['table_number'] ? 'selected' : ''; ?>>
@@ -389,6 +395,9 @@ $conn->close();
                                 </option>
                             <?php endforeach; ?>
                         </select>
+                        <div class="text-muted-small">
+                            <i class="bi bi-info-circle"></i> You can leave this empty if no table is assigned yet.
+                        </div>
                     </div>
 
                     <div class="form-group">
@@ -408,7 +417,7 @@ $conn->close();
 
                     <div class="actions">
                         <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Back to Dashboard</a>
-                        <a href="view_tickets.php?id=<?php echo htmlspecialchars($reservation['reservation_id']); ?>" class="btn btn-info">
+                        <a href="/public/reservation_tickets.php?id=<?php echo urlencode($reservation['reservation_id']); ?>" class="btn btn-info" target="_blank">
                             <i class="bi bi-ticket-perforated"></i> View Tickets
                         </a>
                         <?php if ($correct_amount_due > 0 && !$isCancelled): ?>
@@ -457,7 +466,7 @@ $conn->close();
             }
 
             document.getElementById('priceBreakdown').innerHTML = `
-                <strong>💰 Price Breakdown:</strong><br>
+                <strong>💰 Price Breakdown (${adultPrice > 8 ? 'Regular' : 'Loyalty'} Rate):</strong><br>
                 Adults: ${adults} × ${adultPrice.toFixed(2)} = ${(adults * adultPrice).toFixed(2)} ${currencySymbol}<br>
                 Teens: ${teens} × ${teenPrice.toFixed(2)} = ${(teens * teenPrice).toFixed(2)} ${currencySymbol}<br>
                 Kids: ${kids} × ${kidPrice.toFixed(2)} = ${(kids * kidPrice).toFixed(2)} ${currencySymbol}<br>

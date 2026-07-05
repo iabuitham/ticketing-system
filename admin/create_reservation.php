@@ -57,7 +57,7 @@ if ($selected_event_id > 0) {
 
 $currencySymbol = getCurrencySymbol();
 
-// Function to save or update customer
+// Function to save or update customer (NO WELCOME MESSAGE)
 function saveCustomer($conn, $name, $phone, $total_amount) {
     // Check if customer exists
     $checkStmt = $conn->prepare("SELECT id, total_visits, total_spent FROM customers WHERE phone = ?");
@@ -84,7 +84,7 @@ function saveCustomer($conn, $name, $phone, $total_amount) {
         $updateStmt->close();
         return $existing['id'];
     } else {
-        // Insert new customer
+        // Insert new customer - NO WELCOME MESSAGE
         $insertStmt = $conn->prepare("
             INSERT INTO customers (name, phone, total_visits, total_spent, first_visit_date, last_visit_date) 
             VALUES (?, ?, 1, ?, NOW(), NOW())
@@ -94,17 +94,7 @@ function saveCustomer($conn, $name, $phone, $total_amount) {
         $new_id = $insertStmt->insert_id;
         $insertStmt->close();
         
-        // Send welcome message for new customers
-        $welcomeMsg = "⭐ *WELCOME TO OUR CUSTOMER PROGRAM!* ⭐\n\n";
-        $welcomeMsg .= "Dear {$name},\n\n";
-        $welcomeMsg .= "Thank you for choosing us! You've been automatically enrolled in our customer program.\n\n";
-        $welcomeMsg .= "🎁 Benefits:\n";
-        $welcomeMsg .= "• Track your visits and spending\n";
-        $welcomeMsg .= "• Special offers on future events\n";
-        $welcomeMsg .= "• Priority support\n\n";
-        $welcomeMsg .= "We look forward to serving you! 🎉";
-        
-        sendWhatsAppMessage($phone, $welcomeMsg);
+        // Welcome message removed - no WhatsApp sent for new customers
         
         return $new_id;
     }

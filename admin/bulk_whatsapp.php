@@ -23,7 +23,7 @@ if (!$currentEvent) {
     $currentEvent = $eventResult->fetch_assoc();
 }
 
-// Get counts for statistics (filter by current event)
+// Get counts for statistics
 $selected_event_id = $_SESSION['selected_event_id'] ?? 0;
 $totalCustomers = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE event_id = $selected_event_id")->fetch_assoc()['count'];
 $pendingCustomers = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE (status = 'pending' OR status = 'registered') AND event_id = $selected_event_id")->fetch_assoc()['count'];
@@ -47,6 +47,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $include_ticket_link = isset($_POST['include_ticket_link']) ? true : false;
     $payment_link = isset($_POST['payment_link']) ? trim($_POST['payment_link']) : '';
     $include_media = isset($_POST['include_media']) ? true : false;
+    $include_custom_link = isset($_POST['include_custom_link']) ? true : false;
+    $custom_link = isset($_POST['custom_link']) ? trim($_POST['custom_link']) : '';
+    $custom_link_text = isset($_POST['custom_link_text']) ? trim($_POST['custom_link_text']) : 'Click here';
     
     // Handle media file upload
     if ($include_media && isset($_FILES['media_file']) && $_FILES['media_file']['error'] === UPLOAD_ERR_OK) {
@@ -64,7 +67,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             if (move_uploaded_file($file['tmp_name'], $uploadPath)) {
                 $uploadedMedia = $uploadPath;
-                // Determine media type
                 if (in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp'])) {
                     $mediaType = 'image';
                 } elseif ($ext === 'pdf') {
@@ -91,9 +93,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         case 'cancelled':
             $query .= " AND status = 'cancelled'";
             break;
-        case 'all':
-        default:
-            break;
     }
     
     $result = $conn->query($query);
@@ -119,7 +118,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $msg = str_replace('{ticket_link}', $baseUrl . "public/reservation_tickets.php?id=" . urlencode($recipient['reservation_id']), $msg);
         $msg = str_replace('{payment_link}', $payment_link ?: $baseUrl . "admin/dashboard.php", $msg);
         
-        // Add event details placeholders
+        // Add custom link if checked
+        if ($include_custom_link && !empty($custom_link)) {
+            $msg .= "\n\n🔗 *{$custom_link_text}*:\n{$custom_link}";
+        }
+        
+        // Add event details
         if ($currentEvent) {
             $msg = str_replace('{event_name}', $currentEvent['event_name'], $msg);
             $msg = str_replace('{event_date}', date('F j, Y', strtotime($currentEvent['event_date'])), $msg);
@@ -128,49 +132,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = str_replace('{event_description}', $currentEvent['description'] ?? 'Join us for an amazing experience!', $msg);
         }
         
-        // Send message - with optional media
-        if ($include_media && $uploadedMedia && $mediaType) {
-            // Send text message first
-            $result_send = sendWhatsAppMessage($recipient['phone'], $msg);
-            
-            if ($result_send === true) {
-                // Then send media based on type
-                if ($mediaType === 'image') {
-                    $mediaSent = sendWhatsAppImage($recipient['phone'], $baseUrl . $uploadedMedia, '');
-                } elseif ($mediaType === 'document') {
-                    // Check if function exists
-                    if (function_exists('sendWhatsAppDocument')) {
-                        $mediaSent = sendWhatsAppDocument($recipient['phone'], $baseUrl . $uploadedMedia, '');
-                    } else {
-                        $mediaSent = true; // Skip if function doesn't exist
-                    }
-                } else {
-                    $mediaSent = true;
-                }
-                
-                if ($mediaSent !== false) {
-                    $sentCount++;
-                } else {
-                    $failedCount++;
-                    $errors[] = $recipient['name'] . ': Media failed to send';
-                }
-            } else {
-                $failedCount++;
-                $errors[] = $recipient['name'] . ': Failed to send';
-            }
+        // Send message
+        $result_send = sendWhatsAppMessage($recipient['phone'], $msg);
+        
+        if ($result_send === true) {
+            $sentCount++;
         } else {
-            // Send only text message
-            $result_send = sendWhatsAppMessage($recipient['phone'], $msg);
-            
-            if ($result_send === true) {
-                $sentCount++;
-            } else {
-                $failedCount++;
-                $errors[] = $recipient['name'] . ': Failed to send';
-            }
+            $failedCount++;
+            $errors[] = $recipient['name'] . ': Failed to send';
         }
         
-        // Small delay to avoid rate limiting
         usleep(500000);
     }
     
@@ -296,7 +267,8 @@ $conn->close();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
-    <title>Bulk WhatsApp - Ticketing System</title>
+    <title>Bulk Whatsapp</title>
+    <link rel="shortcut icon" href="favicon.jpg" type="image/x-icon">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -319,7 +291,6 @@ $conn->close();
         body.dark-mode h1 { color: #e2e8f0; }
         .subtitle { color: #666; margin-bottom: 30px; }
         body.dark-mode .subtitle { color: #94a3b8; }
-        
         .event-info {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -343,7 +314,6 @@ $conn->close();
         .stat-number { font-size: 28px; font-weight: bold; color: #667eea; }
         .stat-label { font-size: 12px; color: #666; margin-top: 5px; }
         body.dark-mode .stat-label { color: #94a3b8; }
-        
         .form-group { margin-bottom: 20px; }
         label {
             display: block;
@@ -366,7 +336,6 @@ $conn->close();
             color: #e2e8f0;
         }
         textarea { resize: vertical; min-height: 200px; font-family: monospace; }
-        
         .checkbox-group {
             display: flex;
             align-items: center;
@@ -374,7 +343,25 @@ $conn->close();
             margin: 15px 0;
         }
         .checkbox-group input { width: auto; margin: 0; }
-        
+        .link-options {
+            background: #f8fafc;
+            border-radius: 16px;
+            padding: 15px;
+            margin: 15px 0;
+            border: 1px solid #e2e8f0;
+        }
+        body.dark-mode .link-options {
+            background: #0f172a;
+            border-color: #334155;
+        }
+        .link-preview {
+            background: #e0e7ff;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            margin-top: 10px;
+            word-break: break-all;
+        }
         .media-upload-area {
             border: 2px dashed #cbd5e1;
             border-radius: 16px;
@@ -393,7 +380,7 @@ $conn->close();
             display: none;
         }
         .media-preview.active { display: block; }
-        .media-preview img, .media-preview video {
+        .media-preview img {
             max-width: 200px;
             max-height: 200px;
             border-radius: 12px;
@@ -409,7 +396,6 @@ $conn->close();
             font-size: 12px;
             margin-top: 10px;
         }
-        
         .message-preview {
             background: #f0fdf4;
             border: 1px solid #d1fae5;
@@ -431,7 +417,6 @@ $conn->close();
             overflow-y: auto;
         }
         body.dark-mode .message-preview .preview-content { background: #0f172a; color: #e2e8f0; }
-        
         .btn {
             padding: 12px 24px;
             border: none;
@@ -478,7 +463,6 @@ $conn->close();
         }
         body.dark-mode .info-box { background: #1e293b; border-left-color: #667eea; }
         .actions { display: flex; gap: 10px; margin-top: 20px; }
-        
         @media (max-width: 768px) {
             .stats-grid { grid-template-columns: repeat(2, 1fr); }
             .card { padding: 20px; }
@@ -558,7 +542,27 @@ $conn->close();
                 </div>
                 
                 <div class="checkbox-group">
-                    <input type="checkbox" name="include_ticket_link" id="includeTicketLink">
+                    <input type="checkbox" name="include_custom_link" id="includeCustomLink" onchange="toggleCustomLink()">
+                    <label for="includeCustomLink">🔗 Add custom link to message</label>
+                </div>
+                
+                <div id="customLinkGroup" style="display: none;">
+                    <div class="link-options">
+                        <h4><i class="bi bi-link-45deg"></i> Link Settings</h4>
+                        <div class="form-group">
+                            <label>Link URL</label>
+                            <input type="url" name="custom_link" id="customLink" placeholder="https://example.com" oninput="updatePreview()">
+                        </div>
+                        <div class="form-group">
+                            <label>Link Text</label>
+                            <input type="text" name="custom_link_text" id="customLinkText" value="Click here" placeholder="Click here" oninput="updatePreview()">
+                        </div>
+                        <div class="link-preview" id="linkPreview">Preview: 🔗 Click here: https://example.com</div>
+                    </div>
+                </div>
+                
+                <div class="checkbox-group">
+                    <input type="checkbox" name="include_ticket_link" id="includeTicketLink" onchange="updatePreview()">
                     <label>Include ticket download link</label>
                 </div>
                 
@@ -610,18 +614,31 @@ $conn->close();
             amount: '230.00'
         };
         
+        function toggleCustomLink() {
+            const includeCustomLink = document.getElementById('includeCustomLink');
+            const customLinkGroup = document.getElementById('customLinkGroup');
+            if (customLinkGroup) {
+                customLinkGroup.style.display = (includeCustomLink && includeCustomLink.checked) ? 'block' : 'none';
+            }
+            updatePreview();
+        }
+        
         function toggleMediaUpload() {
             const includeMedia = document.getElementById('includeMedia');
-            const mediaGroup = document.getElementById('mediaUploadGroup');
-            mediaGroup.style.display = includeMedia.checked ? 'block' : 'none';
-            if (!includeMedia.checked) removeMedia();
+            const mediaUploadGroup = document.getElementById('mediaUploadGroup');
+            if (mediaUploadGroup) {
+                mediaUploadGroup.style.display = (includeMedia && includeMedia.checked) ? 'block' : 'none';
+            }
+            if (includeMedia && !includeMedia.checked) {
+                removeMedia();
+            }
         }
         
         function previewMedia(input) {
             const previewDiv = document.getElementById('mediaPreview');
             const previewContent = document.getElementById('previewContent');
             
-            if (input.files && input.files[0]) {
+            if (input.files && input.files[0] && previewContent && previewDiv) {
                 const file = input.files[0];
                 const fileType = file.type;
                 const fileName = file.name;
@@ -629,35 +646,52 @@ $conn->close();
                 if (fileType.startsWith('image/')) {
                     const reader = new FileReader();
                     reader.onload = function(e) {
-                        previewContent.innerHTML = `<img src="${e.target.result}" alt="Preview"><div class="file-name">${fileName}</div>`;
+                        previewContent.innerHTML = `<img src="${e.target.result}" alt="Preview" style="max-width: 200px; max-height: 200px; border-radius: 12px;"><div class="file-name" style="margin-top: 5px; font-size: 12px;">${fileName}</div>`;
                         previewDiv.classList.add('active');
                     };
                     reader.readAsDataURL(file);
                 } else if (fileType === 'application/pdf') {
-                    previewContent.innerHTML = `<i class="bi bi-file-pdf" style="font-size: 48px; color: #ef4444;"></i><div class="file-name">${fileName}</div>`;
+                    previewContent.innerHTML = `<i class="bi bi-file-pdf" style="font-size: 48px; color: #ef4444;"></i><div class="file-name" style="margin-top: 5px; font-size: 12px;">${fileName}</div>`;
                     previewDiv.classList.add('active');
                 } else {
-                    previewContent.innerHTML = `<i class="bi bi-file-earmark" style="font-size: 48px; color: #667eea;"></i><div class="file-name">${fileName}</div>`;
+                    previewContent.innerHTML = `<i class="bi bi-file-earmark" style="font-size: 48px; color: #667eea;"></i><div class="file-name" style="margin-top: 5px; font-size: 12px;">${fileName}</div>`;
                     previewDiv.classList.add('active');
                 }
             }
         }
         
         function removeMedia() {
-            document.getElementById('mediaFile').value = '';
-            document.getElementById('mediaPreview').classList.remove('active');
-            document.getElementById('previewContent').innerHTML = '';
+            const mediaFile = document.getElementById('mediaFile');
+            const mediaPreview = document.getElementById('mediaPreview');
+            const previewContent = document.getElementById('previewContent');
+            if (mediaFile) mediaFile.value = '';
+            if (mediaPreview) mediaPreview.classList.remove('active');
+            if (previewContent) previewContent.innerHTML = '';
         }
         
         function updatePreview() {
-            const template = document.getElementById('messageTemplate').value;
-            const includeTicketLink = document.getElementById('includeTicketLink').checked;
-            const customMessage = document.getElementById('customMessage').value;
+            const messageTemplate = document.getElementById('messageTemplate');
+            const includeTicketLink = document.getElementById('includeTicketLink');
+            const includeCustomLink = document.getElementById('includeCustomLink');
+            const customLink = document.getElementById('customLink');
+            const customLinkText = document.getElementById('customLinkText');
+            const customMessage = document.getElementById('customMessage');
+            const messagePreview = document.getElementById('messagePreview');
+            const linkPreview = document.getElementById('linkPreview');
+            
+            if (!messagePreview) return;
+            
+            let template = messageTemplate ? messageTemplate.value : 'event_reminder';
+            let includeTicketLinkChecked = includeTicketLink ? includeTicketLink.checked : false;
+            let includeCustomLinkChecked = includeCustomLink ? includeCustomLink.checked : false;
+            let customLinkValue = customLink ? customLink.value : '';
+            let customLinkTextValue = customLinkText ? customLinkText.value : 'Click here';
+            let customMessageValue = customMessage ? customMessage.value : '';
             
             let preview = '';
             
             if (template === 'custom') {
-                preview = customMessage || 'Enter your custom message above...';
+                preview = customMessageValue || 'Enter your custom message above...';
             } else {
                 preview = getTemplatePreview(template);
             }
@@ -669,9 +703,17 @@ $conn->close();
             preview = preview.replace(/{event_date}/g, eventData.date);
             preview = preview.replace(/{event_time}/g, eventData.time);
             preview = preview.replace(/{venue}/g, eventData.venue);
-            preview = preview.replace(/{ticket_link}/g, includeTicketLink ? 'https://yourdomain.com/public/reservation_tickets.php?id=' + sampleCustomer.reservation_id : '[Not included]');
+            preview = preview.replace(/{ticket_link}/g, includeTicketLinkChecked ? 'https://yourdomain.com/public/reservation_tickets.php?id=' + sampleCustomer.reservation_id : '[Not included]');
             
-            document.getElementById('messagePreview').innerHTML = preview.replace(/\n/g, '<br>');
+            if (includeCustomLinkChecked && customLinkValue) {
+                const linkHtml = `\n\n🔗 *${customLinkTextValue}*:\n${customLinkValue}`;
+                preview += linkHtml;
+                if (linkPreview) {
+                    linkPreview.innerHTML = `Preview: 🔗 ${customLinkTextValue}: ${customLinkValue}`;
+                }
+            }
+            
+            messagePreview.innerHTML = preview.replace(/\n/g, '<br>');
         }
         
         function getTemplatePreview(template) {
@@ -687,18 +729,60 @@ $conn->close();
         }
         
         function toggleFields() {
-            const template = document.getElementById('messageTemplate').value;
+            const messageTemplate = document.getElementById('messageTemplate');
             const customMessageGroup = document.getElementById('customMessageGroup');
             const includeTicketLink = document.getElementById('includeTicketLink');
             
-            customMessageGroup.style.display = template === 'custom' ? 'block' : 'none';
-            includeTicketLink.disabled = template !== 'ticket_reminder';
-            if (template !== 'ticket_reminder') includeTicketLink.checked = false;
+            if (customMessageGroup) {
+                customMessageGroup.style.display = (messageTemplate && messageTemplate.value === 'custom') ? 'block' : 'none';
+            }
+            if (includeTicketLink) {
+                includeTicketLink.disabled = messageTemplate && messageTemplate.value !== 'ticket_reminder';
+                if (messageTemplate && messageTemplate.value !== 'ticket_reminder') {
+                    includeTicketLink.checked = false;
+                }
+            }
         }
         
-        document.getElementById('messageTemplate').addEventListener('change', function() { toggleFields(); updatePreview(); });
-        document.getElementById('includeTicketLink').addEventListener('change', updatePreview);
-        document.getElementById('customMessage').addEventListener('input', updatePreview);
+        // Initialize all event listeners
+        document.addEventListener('DOMContentLoaded', function() {
+            // Set up all event listeners
+            const messageTemplate = document.getElementById('messageTemplate');
+            const includeTicketLink = document.getElementById('includeTicketLink');
+            const customMessage = document.getElementById('customMessage');
+            const customLink = document.getElementById('customLink');
+            const customLinkText = document.getElementById('customLinkText');
+            const includeCustomLink = document.getElementById('includeCustomLink');
+            const includeMedia = document.getElementById('includeMedia');
+            
+            if (messageTemplate) {
+                messageTemplate.addEventListener('change', function() { toggleFields(); updatePreview(); });
+            }
+            if (includeTicketLink) {
+                includeTicketLink.addEventListener('change', updatePreview);
+            }
+            if (customMessage) {
+                customMessage.addEventListener('input', updatePreview);
+            }
+            if (customLink) {
+                customLink.addEventListener('input', updatePreview);
+            }
+            if (customLinkText) {
+                customLinkText.addEventListener('input', updatePreview);
+            }
+            if (includeCustomLink) {
+                includeCustomLink.addEventListener('change', function() { toggleCustomLink(); updatePreview(); });
+            }
+            if (includeMedia) {
+                includeMedia.addEventListener('change', function() { toggleMediaUpload(); });
+            }
+            
+            // Initial setup
+            toggleFields();
+            toggleCustomLink();
+            toggleMediaUpload();
+            updatePreview();
+        });
         
         // Dark mode
         const darkModeToggle = document.createElement('button');
@@ -707,9 +791,6 @@ $conn->close();
         darkModeToggle.onclick = () => document.body.classList.toggle('dark-mode');
         if (localStorage.getItem('darkMode') === 'true') document.body.classList.add('dark-mode');
         document.body.appendChild(darkModeToggle);
-        
-        toggleFields();
-        updatePreview();
     </script>
 </body>
 </html>
