@@ -3,202 +3,260 @@ error_reporting(0);
 ini_set('display_errors', 0);
 
 session_start();
+header('Content-Type: application/json');
+
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
 
-header('Content-Type: application/json');
+function sendResponse($success, $error = null, $data = null)
+{
+    $response = ['success' => $success];
+    if ($error) $response['error'] = $error;
+    if ($data) $response['data'] = $data;
+    echo json_encode($response);
+    exit();
+}
 
 if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
-    echo json_encode(['success' => false, 'error' => 'Unauthorized']);
-    exit();
-}
-
-$reservation_id = isset($_POST['reservation_id']) ? $_POST['reservation_id'] : '';
-$splits_json = isset($_POST['splits']) ? $_POST['splits'] : '[]';
-$splits = json_decode($splits_json, true);
-
-if (empty($reservation_id)) {
-    echo json_encode(['success' => false, 'error' => 'No reservation ID provided']);
-    exit();
-}
-
-if (empty($splits)) {
-    echo json_encode(['success' => false, 'error' => 'No payment splits provided']);
-    exit();
+    sendResponse(false, 'Unauthorized');
 }
 
 $conn = getConnection();
+
+$reservation_id = isset($_POST['reservation_id']) ? trim($_POST['reservation_id']) : '';
+$splits_json = isset($_POST['splits']) ? $_POST['splits'] : '';
+$splits = json_decode($splits_json, true);
+
+if (empty($reservation_id) || empty($splits)) {
+    sendResponse(false, 'Invalid request data');
+}
+
+// Get reservation
+$stmt = $conn->prepare("SELECT * FROM reservations WHERE reservation_id = ?");
+$stmt->bind_param("s", $reservation_id);
+$stmt->execute();
+$result = $stmt->get_result();
+
+if (!$result || $result->num_rows === 0) {
+    sendResponse(false, 'Reservation not found');
+}
+$reservation = $result->fetch_assoc();
+$stmt->close();
+
+// Calculate total payment amount
+$total_amount = 0;
+foreach ($splits as $split) {
+    $total_amount += floatval($split['amount']);
+}
+
+// Get current total paid
+$stmt = $conn->prepare("SELECT COALESCE(SUM(amount), 0) as total_paid FROM split_payments WHERE reservation_id = ?");
+$stmt->bind_param("s", $reservation_id);
+$stmt->execute();
+$paidResult = $stmt->get_result()->fetch_assoc();
+$current_paid = floatval($paidResult['total_paid']);
+$stmt->close();
+
+$new_total_paid = $current_paid + $total_amount;
+$total_amount_due = floatval($reservation['total_amount']);
+
+// Create uploads directory if needed
+$uploadDir = '../uploads/';
+if (!file_exists($uploadDir)) {
+    mkdir($uploadDir, 0777, true);
+}
+
+// Fix timezone issue - set to Asia/Amman
+date_default_timezone_set('Asia/Amman');
+
 $conn->begin_transaction();
 
 try {
-    // Get reservation with customer details
-    $stmt = $conn->prepare("SELECT total_amount, additional_amount_due, name, phone FROM reservations WHERE reservation_id = ?");
-    $stmt->bind_param("s", $reservation_id);
-    $stmt->execute();
-    $reservation = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    
-    if (!$reservation) {
-        throw new Exception('Reservation not found');
-    }
-    
-    // Get total paid
-    $stmt = $conn->prepare("SELECT COALESCE(SUM(amount), 0) as total_paid FROM split_payments WHERE reservation_id = ?");
-    $stmt->bind_param("s", $reservation_id);
-    $stmt->execute();
-    $paidResult = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    
-    $totalAmount = floatval($reservation['total_amount']);
-    $totalPaid = floatval($paidResult['total_paid']);
-    $amountDue = $totalAmount - $totalPaid;
-    
-    // Calculate payment total
-    $paymentTotal = 0;
-    foreach ($splits as $split) {
-        $paymentTotal += floatval($split['amount']);
-    }
-    
-    // Allow small rounding differences
-    if (abs($paymentTotal - $amountDue) > 0.1) {
-        if ($paymentTotal > $amountDue) {
-            throw new Exception("Payment total exceeds amount due");
-        }
-        if ($paymentTotal < $amountDue) {
-            throw new Exception("Payment total is less than amount due");
-        }
-    }
-    
-    // Process splits
+    $proofCounter = 0;
     foreach ($splits as $split) {
         $method = $split['method'];
         $amount = floatval($split['amount']);
         $receipt_id = isset($split['receipt_id']) ? $split['receipt_id'] : null;
-        $received_by = isset($split['received_by']) ? $split['received_by'] : null;
-        
-        $stmt = $conn->prepare("INSERT INTO split_payments (reservation_id, payment_method, amount, receipt_id, received_by, payment_date) VALUES (?, ?, ?, ?, ?, NOW())");
-        $stmt->bind_param("ssdss", $reservation_id, $method, $amount, $receipt_id, $received_by);
-        $stmt->execute();
+        $received_by = isset($split['received_by']) ? $split['received_by'] : ($_SESSION['admin_username'] ?? 'Admin');
+        $proof_file = null;
+        $proof_text = null;
+        $notes = null;
+
+        // Handle CliQ payment - supports BOTH screenshot AND text proof
+        if ($method == 'cliq') {
+            $fileKey = "proof_$proofCounter";
+
+            // Check for file upload (screenshot)
+            if (isset($_FILES[$fileKey]) && $_FILES[$fileKey]['error'] === UPLOAD_ERR_OK) {
+                $ext = strtolower(pathinfo($_FILES[$fileKey]['name'], PATHINFO_EXTENSION));
+                $allowed = ['jpg', 'jpeg', 'png', 'gif', 'pdf'];
+                if (in_array($ext, $allowed)) {
+                    $fileName = 'cliq_' . $reservation_id . '_' . time() . '_' . $proofCounter . '.' . $ext;
+                    if (move_uploaded_file($_FILES[$fileKey]['tmp_name'], $uploadDir . $fileName)) {
+                        $proof_file = $fileName;
+                        $notes = "CliQ payment with screenshot proof";
+                    }
+                }
+            }
+
+            // Check for text proof (transaction ID or reference number)
+            if (isset($split['proof_text']) && !empty($split['proof_text'])) {
+                $proof_text = $split['proof_text'];
+                $notes = "CliQ payment with reference: " . $proof_text;
+            }
+
+            // If no proof provided but receipt_id exists
+            if (empty($proof_file) && empty($proof_text) && !empty($receipt_id)) {
+                $proof_text = $receipt_id;
+                $notes = "CliQ payment with reference: " . $receipt_id;
+            }
+
+            // Generate receipt_id if not provided
+            if (empty($receipt_id)) {
+                $receipt_id = 'CLIQ-' . strtoupper(uniqid());
+            }
+
+            $proofCounter++;
+        }
+
+        // Handle Visa payment
+        if ($method == 'visa') {
+            if (empty($receipt_id)) {
+                $receipt_id = 'VISA-' . strtoupper(uniqid());
+            }
+            $notes = "Visa payment with receipt ID: $receipt_id";
+        }
+
+        // Handle Cash payment
+        if ($method == 'cash') {
+            $notes = "Cash payment received by: $received_by";
+        }
+
+        // Insert into split_payments - REMOVED proof_path column
+        $stmt = $conn->prepare("
+            INSERT INTO split_payments 
+            (reservation_id, payment_method, amount, receipt_id, proof_file, payment_type, received_by, notes, created_at) 
+            VALUES (?, ?, ?, ?, ?, 'additional', ?, ?, NOW())
+        ");
+
+        $receipt_id = $receipt_id ?? '';
+        $proof_file = $proof_file ?? '';
+        $received_by = $received_by ?? 'System';
+        $notes = $notes ?? '';
+
+        $stmt->bind_param(
+            "ssdssss",
+            $reservation_id,
+            $method,
+            $amount,
+            $receipt_id,
+            $proof_file,
+            $received_by,
+            $notes
+        );
+
+        if (!$stmt->execute()) {
+            throw new Exception("Failed to insert split payment: " . $stmt->error);
+        }
         $stmt->close();
     }
-    
-    // Update reservation
-    $newTotalPaid = $totalPaid + $paymentTotal;
-    $newAdditionalDue = max(0, $totalAmount - $newTotalPaid);
-    $newStatus = ($newAdditionalDue <= 0) ? 'paid' : 'registered';
-    
-    $update = $conn->prepare("UPDATE reservations SET status = ?, additional_amount_due = ?, updated_at = NOW() WHERE reservation_id = ?");
-    $update->bind_param("sds", $newStatus, $newAdditionalDue, $reservation_id);
-    $update->execute();
-    $update->close();
-    
+
+    // ✅ Calculate remaining amount due
+    $remaining_due = max(0, $total_amount_due - ($current_paid + $total_amount));
+
+    // ✅ Update additional_amount_due in reservations table
+    $updateDueStmt = $conn->prepare("UPDATE reservations SET additional_amount_due = ? WHERE reservation_id = ?");
+    $updateDueStmt->bind_param("ds", $remaining_due, $reservation_id);
+    $updateDueStmt->execute();
+    $updateDueStmt->close();
+
+    // Update reservation status if fully paid
+    $new_status = $reservation['status'];
+    if (($current_paid + $total_amount) >= $total_amount_due) {
+        $new_status = 'paid';
+        $updateStmt = $conn->prepare("UPDATE reservations SET status = ? WHERE reservation_id = ?");
+        $updateStmt->bind_param("ss", $new_status, $reservation_id);
+        $updateStmt->execute();
+        $updateStmt->close();
+    }
+
     $conn->commit();
-    
-    // ========== SEND WHATSAPP MESSAGES ==========
-    $customerPhone = $reservation['phone'];
-    $customerName = $reservation['name'];
-    $currencySymbol = getCurrencySymbol();
-    
-    // 1. Send payment confirmation
-    $paymentMessage = "💰 *PAYMENT CONFIRMATION* 💰\n\n";
-    $paymentMessage .= "Dear {$customerName},\n\n";
-    $paymentMessage .= "We have received your payment.\n\n";
-    $paymentMessage .= "💵 *Amount:* {$currencySymbol} " . number_format($paymentTotal, 2) . "\n";
-    $paymentMessage .= "📋 *Reservation ID:* {$reservation_id}\n";
-    
-    if ($newAdditionalDue > 0) {
-        $paymentMessage .= "⚠️ *Remaining Balance:* {$currencySymbol} " . number_format($newAdditionalDue, 2) . "\n\n";
-        $paymentMessage .= "Please complete the remaining payment.\n";
-    } else {
-        $paymentMessage .= "✅ *Status:* FULLY PAID\n\n";
-    }
-    
-    $paymentMessage .= "Thank you for your payment! 🙏";
-    
-    sendWhatsAppMessage($customerPhone, $paymentMessage);
-    
-    // 2. If fully paid, send tickets
-    if ($newAdditionalDue <= 0) {
-        // Get all tickets
-        $ticketsStmt = $conn->prepare("SELECT * FROM ticket_codes WHERE reservation_id = ? AND is_active = 1 ORDER BY guest_type, guest_number");
-        $ticketsStmt->bind_param("s", $reservation_id);
-        $ticketsStmt->execute();
-        $tickets = $ticketsStmt->get_result()->fetch_all(MYSQLI_ASSOC);
-        $ticketsStmt->close();
-        
-        $eventName = isset($_SESSION['selected_event_name']) ? $_SESSION['selected_event_name'] : 'Event';
-        $baseUrl = getSetting('base_url', 'http://localhost/ticketing-system/');
-        
-        // Send header message
-        $headerMessage = "🎟️ *YOUR TICKETS ARE READY!* 🎟️\n\n";
-        $headerMessage .= "Dear {$customerName},\n\n";
-        $headerMessage .= "Thank you for your payment! Here are your tickets.\n\n";
-        $headerMessage .= "📋 *Reservation ID:* {$reservation_id}\n";
-        $headerMessage .= "🎪 *Event:* {$eventName}\n";
-        $headerMessage .= "📱 *Total Tickets:* " . count($tickets) . "\n\n";
-        $headerMessage .= "⬇️ *Your tickets are attached below as images.* ⬇️\n";
-        $headerMessage .= "Press and hold on each image to save to your phone.\n";
-        $headerMessage .= "Show the saved images at the entrance.\n\n";
-        $headerMessage .= "We look forward to seeing you! 🎉";
-        
-        sendWhatsAppMessage($customerPhone, $headerMessage);
-        
-        // Create temp directory
-        $tempDir = '../uploads/temp_tickets/';
-        if (!is_dir($tempDir)) {
-            mkdir($tempDir, 0777, true);
-        }
-        
-        // Send each ticket as QR code image
-        $ticketCount = 0;
-        foreach ($tickets as $ticket) {
-            $ticketCount++;
-            $typeLabel = ucfirst($ticket['guest_type']);
-            $ticketNumber = str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT);
-            
-            // Generate QR code image
-            $qrUrl = "https://quickchart.io/qr?text=" . urlencode($ticket['ticket_code']) . "&size=250&margin=2";
-            $qrImageData = @file_get_contents($qrUrl);
-            
-            if ($qrImageData) {
-                $tempFile = $tempDir . "ticket_{$ticket['ticket_code']}.png";
-                file_put_contents($tempFile, $qrImageData);
-                
-                $caption = "🎫 *{$typeLabel} Ticket #{$ticketNumber}*\n";
-                $caption .= "ID: {$ticket['ticket_code']}\n";
-                $caption .= "Valid for one-time entry\n";
-                $caption .= "Show this QR code at the entrance";
-                
-                sendWhatsAppImage($customerPhone, $tempFile, $caption);
-                unlink($tempFile); // Delete temp file
-            }
-            
-            usleep(500000); // 0.5 sec delay
-        }
-        
-        // Send closing message
-        if ($ticketCount > 0) {
-            $closingMessage = "✅ *All {$ticketCount} ticket(s) sent!*\n\n";
-            $closingMessage .= "📸 Each ticket has been sent as an image.\n";
-            $closingMessage .= "💾 Press and hold on each image to save to your phone gallery.\n";
-            $closingMessage .= "📱 Show the saved images at the entrance for scanning.\n\n";
-            $closingMessage .= "Thank you for choosing us! 🎉";
-            
-            sendWhatsAppMessage($customerPhone, $closingMessage);
-        }
-    }
-    // ========== END WHATSAPP MESSAGES ==========
-    
-    echo json_encode([
-        'success' => true,
-        'remaining_due' => $newAdditionalDue,
-        'status' => $newStatus
-    ]);
-    
+
+    // Send WhatsApp confirmation
+    sendPaymentConfirmation($reservation_id, $total_amount, $splits, $new_total_paid, $total_amount_due);
+
+    sendResponse(true, null, ['total_paid' => $new_total_paid, 'status' => $new_status]);
 } catch (Exception $e) {
     $conn->rollback();
-    echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    sendResponse(false, $e->getMessage());
 }
 
 $conn->close();
+
+function sendPaymentConfirmation($reservation_id, $total_amount, $splits, $new_total_paid, $total_amount_due)
+{
+    $conn = getConnection();
+
+    $stmt = $conn->prepare("SELECT * FROM reservations WHERE reservation_id = ?");
+    $stmt->bind_param("s", $reservation_id);
+    $stmt->execute();
+    $reservation = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    $conn->close();
+
+    if (!$reservation) return;
+
+    $baseUrl = getSetting('base_url', 'https://restorandticketingsystem.unaux.com');
+    $ticketLink = $baseUrl . "public/reservation_tickets.php?id=" . urlencode($reservation_id);
+    $currencySymbol = getCurrencySymbol();
+
+    $paymentBreakdown = "";
+    foreach ($splits as $split) {
+        $methodName = ucfirst($split['method']);
+        $paymentBreakdown .= "• $methodName: " . $currencySymbol . " " . number_format($split['amount'], 2) . "\n";
+    }
+
+    if ($new_total_paid >= $total_amount_due) {
+        $message = "✅ *PAYMENT CONFIRMED - FULLY PAID* ✅\n";
+        $message .= "✅ *تم تأكيد الدفع - دفع كامل* ✅\n\n";
+
+        $message .= "Dear {$reservation['name']} | عزيزنا {$reservation['name']},\n\n";
+
+        $message .= "Your reservation is now *FULLY PAID*.\n";
+        $message .= "حجزك الآن *مدفوع بالكامل*.\n\n";
+
+        $message .= "💰 *Payment Details | تفاصيل الدفع:*\n";
+        $message .= $paymentBreakdown;
+        $message .= "\n";
+
+        $message .= "📋 *Reservation ID | رقم الحجز:* {$reservation_id}\n";
+        $message .= "🍽️ *Table | الطاولة:* " . ($reservation['table_id'] ?: 'Not assigned') . "\n\n";
+
+        $message .= "🎫 *YOUR TICKETS | تذاكرك:*\n";
+        $message .= $ticketLink . "\n\n";
+
+        $message .= "🎉 Thank you! | شكراً لك! 🎉\n";
+    } else {
+        $remaining = $total_amount_due - $new_total_paid;
+
+        $message = "💰 *PARTIAL PAYMENT RECEIVED* 💰\n";
+        $message .= "💰 *تم استلام دفعة جزئية* 💰\n\n";
+
+        $message .= "Dear {$reservation['name']} | عزيزنا {$reservation['name']}،\n\n";
+
+        $message .= "Payment received: " . $currencySymbol . " " . number_format($total_amount, 2) . "\n";
+        $message .= "المبلغ المدفوع: " . $currencySymbol . " " . number_format($total_amount, 2) . "\n\n";
+
+        $message .= "⚠️ *Remaining Balance | المبلغ المتبقي:* " . $currencySymbol . " " . number_format($remaining, 2) . "\n\n";
+
+        $message .= "📋 *Reservation ID | رقم الحجز:* {$reservation_id}\n\n";
+
+        $message .= "Complete the payment to receive your tickets.\n";
+        $message .= "أكمل الدفع لاستلام تذاكرك.\n\n";
+
+        $message .= "🎉 Thank you! | شكراً لك! 🎉\n";
+    }
+
+    sendWhatsAppMessage($reservation['phone'], $message);
+}
 ?>

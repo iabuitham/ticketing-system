@@ -107,6 +107,25 @@ function getCurrencySymbol() {
 }
 
 /**
+ * Get base URL for the system
+ */
+function getBaseUrl() {
+    $url = getSetting('base_url', '');
+    if (!empty($url)) {
+        return rtrim($url, '/') . '/';
+    }
+    
+    $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'];
+    $scriptName = dirname($_SERVER['SCRIPT_NAME']);
+    $basePath = str_replace('/admin', '', $scriptName);
+    $basePath = str_replace('/public', '', $basePath);
+    $basePath = rtrim($basePath, '/');
+    
+    return $protocol . '://' . $host . $basePath . '/';
+}
+
+/**
  * Format price with currency
  */
 function formatPrice($amount) {
@@ -139,27 +158,19 @@ function generateRandomString($length = 5) {
 }
 
 /**
- * Get next sequential number for reservation (ensures never 0)
+ * Get next sequential number for reservation
  */
 function getNextSequentialNumber() {
     $conn = getConnection();
-    
-    // Get the maximum sequential number, handling NULLs
-    $result = $conn->query("SELECT COALESCE(MAX(sequential_number), 0) as max_seq FROM reservations");
-    $row = $result->fetch_assoc();
-    $max_seq = intval($row['max_seq']);
+    $result = $conn->query("SELECT COALESCE(MAX(sequential_number), 0) + 1 as next_num FROM reservations");
+    $next = $result->fetch_assoc()['next_num'];
     $conn->close();
-    
-    // If no records or max is 0, start from 1
-    if ($max_seq <= 0) {
-        return 1;
-    }
-    
-    return $max_seq + 1;
+    if ($next <= 0) $next = 1;
+    return $next;
 }
 
 /**
- * Generate Reservation ID with pattern: RES0001-15G12A3T0K-AT54G
+ * Generate Reservation ID
  */
 function generateReservationId($adults, $teens, $kids) {
     $prefix = 'RES';
@@ -168,64 +179,383 @@ function generateReservationId($adults, $teens, $kids) {
     $totalGuests = $adults + $teens + $kids;
     $breakdown = $totalGuests . 'G' . $adults . 'A' . $teens . 'T' . $kids . 'K';
     $randomSuffix = generateRandomString(5);
-    
     return $prefix . $sequentialFormatted . '-' . $breakdown . '-' . $randomSuffix;
 }
 
 /**
- * Generate Ticket ID for each attendee
+ * Generate Ticket ID
  */
 function generateTicketId($reservationId, $attendeeType, $attendeeNumber) {
     $typeCode = '';
     switch ($attendeeType) {
-        case 'adult':
-            $typeCode = 'A';
-            break;
-        case 'teen':
-            $typeCode = 'T';
-            break;
-        case 'kid':
-            $typeCode = 'K';
-            break;
+        case 'adult': $typeCode = 'A'; break;
+        case 'teen': $typeCode = 'T'; break;
+        case 'kid': $typeCode = 'K'; break;
     }
-    
     $numberFormatted = str_pad($attendeeNumber, 3, '0', STR_PAD_LEFT);
-    $ticketId = $reservationId . '-' . $typeCode . $numberFormatted;
-    
-    return $ticketId;
+    return $reservationId . '-' . $typeCode . $numberFormatted;
 }
 
 /**
- * Regenerate reservation ID keeping the same sequential number and random suffix
+ * Regenerate reservation ID keeping same sequential number and random suffix
  */
 function regenerateReservationIdFromOld($old_id, $new_adults, $new_teens, $new_kids) {
-    // Extract sequential number and random suffix from old ID
     if (preg_match('/^RES(\d{4})-(\d+G\d+A\d+T\d+K)-([A-Z0-9]{5})$/', $old_id, $matches)) {
         $sequential = $matches[1];
         $randomSuffix = $matches[3];
     } else {
-        // If pattern doesn't match, generate fresh
         return generateReservationId($new_adults, $new_teens, $new_kids);
     }
-    
-    $prefix = 'RES';
     $totalGuests = $new_adults + $new_teens + $new_kids;
     $breakdown = $totalGuests . 'G' . $new_adults . 'A' . $new_teens . 'T' . $new_kids . 'K';
+    return 'RES' . $sequential . '-' . $breakdown . '-' . $randomSuffix;
+}
+
+// Add to your includes/functions.php
+
+/**
+ * Prevent double booking for same customer/table
+ */
+function preventDoubleBooking($conn, $phone, $table_number, $event_date = null) {
+    if ($event_date === null) {
+        $event_date = date('Y-m-d');
+    }
     
-    return $prefix . $sequential . '-' . $breakdown . '-' . $randomSuffix;
+    // Check if customer already has a reservation for this date
+    $stmt = $conn->prepare("
+        SELECT COUNT(*) as count 
+        FROM reservations 
+        WHERE phone = ? 
+        AND DATE(created_at) = ?
+        AND status NOT IN ('cancelled', 'expired', 'completed')
+    ");
+    $stmt->bind_param("ss", $phone, $event_date);
+    $stmt->execute();
+    $result = $stmt->get_result()->fetch_assoc();
+    
+    if ($result['count'] > 0) {
+        throw new Exception("You already have an active reservation. Only one booking allowed per person per event.");
+    }
+    
+    // Check if table is already booked
+    $stmt2 = $conn->prepare("
+        SELECT COUNT(*) as count 
+        FROM reservations r
+        WHERE r.table_id = ? 
+        AND DATE(r.created_at) = ?
+        AND r.status NOT IN ('cancelled', 'expired', 'completed')
+    ");
+    $stmt2->bind_param("ss", $table_number, $event_date);
+    $stmt2->execute();
+    $result2 = $stmt2->get_result()->fetch_assoc();
+    
+    if ($result2['count'] > 0) {
+        throw new Exception("This table is already booked for today. Please select another table.");
+    }
+    
+    return true;
 }
 
 /**
- * Decode Reservation ID to get original data
+ * Send WhatsApp text message
+ */
+/**
+ * Send WhatsApp text message using Ultramsg
+ */
+function sendWhatsAppMessage($to, $message) {
+    // Log the attempt for debugging
+    error_log("WhatsApp send attempt - To: $to");
+    
+    $enabled = getSetting('enable_whatsapp', '0') == '1';
+    if (!$enabled) {
+        error_log("WhatsApp is disabled in settings");
+        return false;
+    }
+    
+    $instanceId = getSetting('ultramsg_instance_id', '');
+    $token = getSetting('ultramsg_token', '');
+    
+    if (empty($instanceId) || empty($token)) {
+        error_log("Missing Ultramsg credentials - Instance ID: " . ($instanceId ? 'set' : 'empty') . ", Token: " . ($token ? 'set' : 'empty'));
+        return false;
+    }
+    
+    // Format phone number correctly
+    $to = preg_replace('/[^0-9]/', '', $to);
+    if (substr($to, 0, 1) == '0') {
+        $to = substr($to, 1);
+    }
+    if (substr($to, 0, 3) != '962') {
+        $to = '962' . $to;
+    }
+    
+    error_log("Formatted phone: $to");
+    
+    // Prepare the request
+    $data = [
+        'token' => $token,
+        'to' => $to,
+        'body' => $message,
+        'priority' => 1
+    ];
+    
+    $url = "https://api.ultramsg.com/{$instanceId}/messages/chat";
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    curl_close($ch);
+    
+    error_log("Ultramsg Response - HTTP: $httpCode");
+    error_log("Response body: $response");
+    if ($curlError) {
+        error_log("CURL Error: $curlError");
+    }
+    
+    // Check for success
+    $responseData = json_decode($response, true);
+    if ($httpCode == 200 && isset($responseData['sent']) && ($responseData['sent'] === true || $responseData['sent'] === 1 || $responseData['sent'] === '1')) {
+        error_log("WhatsApp sent successfully to: $to");
+        return true;
+    }
+    
+    // Also accept if there's no error and message was sent
+    if ($httpCode == 200 && !isset($responseData['error'])) {
+        error_log("WhatsApp likely sent successfully to: $to");
+        return true;
+    }
+    
+    error_log("Failed to send WhatsApp to: $to - Response: $response");
+    return false;
+}
+
+/**
+ * Send WhatsApp document using Ultramsg
+ */
+function sendWhatsAppDocument($to, $documentUrl, $caption = '') {
+    $enabled = getSetting('enable_whatsapp', '0') == '1';
+    if (!$enabled) return false;
+    
+    $instanceId = getSetting('ultramsg_instance_id', '');
+    $token = getSetting('ultramsg_token', '');
+    
+    if (empty($instanceId) || empty($token)) return false;
+    
+    $to = preg_replace('/[^0-9]/', '', $to);
+    if (substr($to, 0, 1) == '0') $to = substr($to, 1);
+    if (substr($to, 0, 3) != '962') $to = '962' . $to;
+    
+    $data = [
+        'token' => $token,
+        'to' => $to,
+        'document' => $documentUrl,
+        'filename' => basename($documentUrl),
+        'caption' => $caption
+    ];
+    
+    $url = "https://api.ultramsg.com/{$instanceId}/messages/document";
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    $responseData = json_decode($response, true);
+    return ($httpCode == 200 && isset($responseData['sent']) && ($responseData['sent'] === true || $responseData['sent'] === 1));
+}
+
+/**
+ * Send WhatsApp image using Ultramsg
+ */
+function sendWhatsAppImage($to, $imageUrl, $caption = '') {
+    error_log("sendWhatsAppImage called - To: $to, URL: $imageUrl");
+    
+    $enabled = getSetting('enable_whatsapp', '0') == '1';
+    if (!$enabled) {
+        error_log("WhatsApp is disabled");
+        return false;
+    }
+    
+    $instanceId = getSetting('ultramsg_instance_id', '');
+    $token = getSetting('ultramsg_token', '');
+    
+    if (empty($instanceId) || empty($token)) {
+        error_log("Missing Ultramsg credentials");
+        return false;
+    }
+    
+    // Format phone number correctly
+    $to = preg_replace('/[^0-9]/', '', $to);
+    if (substr($to, 0, 1) == '0') $to = substr($to, 1);
+    if (substr($to, 0, 3) != '962') $to = '962' . $to;
+    
+    // Prepare the request
+    $data = [
+        'token' => $token,
+        'to' => $to,
+        'image' => $imageUrl,
+        'caption' => $caption
+    ];
+    
+    $url = "https://api.ultramsg.com/{$instanceId}/messages/image";
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    error_log("Ultramsg Response - HTTP: $httpCode");
+    error_log("Response body: $response");
+    
+    // Ultramsg returns HTTP 200 on success, even if response says 'sent' => true
+    // Some versions return 'sent' => 1 instead of true
+    if ($httpCode == 200) {
+        $responseData = json_decode($response, true);
+        // Check for both 'sent' => true and 'sent' => 1
+        if (isset($responseData['sent']) && ($responseData['sent'] === true || $responseData['sent'] === 1 || $responseData['sent'] === '1')) {
+            error_log("Image sent successfully to: $to");
+            return true;
+        }
+        // Also accept if there's no error and message was sent
+        if (!isset($responseData['error'])) {
+            error_log("Image likely sent successfully to: $to");
+            return true;
+        }
+    }
+    
+    error_log("Failed to send image to: $to - Response: $response");
+    return false;
+}
+
+/**
+ * Send all tickets for a reservation as beautiful ticket images (using template + QR code)
+ */
+function sendAllTicketsAsImages($reservation_id, $customerPhone, $customerName) {
+    $conn = getConnection();
+    
+    // Get all tickets
+    $ticketsStmt = $conn->prepare("SELECT * FROM ticket_codes WHERE reservation_id = ? AND is_active = 1 ORDER BY guest_type, guest_number");
+    $ticketsStmt->bind_param("s", $reservation_id);
+    $ticketsStmt->execute();
+    $tickets = $ticketsStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $ticketsStmt->close();
+    
+    // Get event details
+    $eventStmt = $conn->prepare("SELECT event_name, event_date, event_time, venue FROM event_settings WHERE id = ?");
+    $event_id = $_SESSION['selected_event_id'] ?? 0;
+    $eventStmt->bind_param("i", $event_id);    $eventStmt->execute();
+    $event = $eventStmt->get_result()->fetch_assoc();
+    $eventStmt->close();
+    $conn->close();
+    
+    if (empty($tickets)) {
+        error_log("No tickets found for reservation: $reservation_id");
+        return false;
+    }
+    
+    // Update session with event details for the ticket
+    if ($event) {
+        $_SESSION['selected_event_date'] = $event['event_date'];
+        $_SESSION['selected_event_time'] = $event['event_time'];
+        $_SESSION['selected_event_venue'] = $event['venue'];
+    }
+    
+    $baseUrl = getBaseUrl();
+    $eventName = $event['event_name'] ?? getSetting('site_name', 'Event');
+    
+    // Clean phone number
+    $cleanPhone = preg_replace('/[^0-9]/', '', $customerPhone);
+    if (substr($cleanPhone, 0, 1) == '0') $cleanPhone = substr($cleanPhone, 1);
+    if (substr($cleanPhone, 0, 3) != '962') $cleanPhone = '962' . $cleanPhone;
+    
+    // Send header message
+    $headerMessage = "🎟️ *YOUR TICKETS ARE READY!* 🎟️\n\n";
+    $headerMessage .= "Dear {$customerName},\n\n";
+    $headerMessage .= "Thank you for your payment! Your tickets are below.\n\n";
+    $headerMessage .= "📋 *Reservation ID:* {$reservation_id}\n";
+    $headerMessage .= "🎪 *Event:* {$eventName}\n";
+    $headerMessage .= "📱 *Total Tickets:* " . count($tickets) . "\n\n";
+    
+    sendWhatsAppMessage($cleanPhone, $headerMessage);
+    
+    // Send each ticket as a beautiful image
+    $sentCount = 0;
+    foreach ($tickets as $index => $ticket) {
+        $typeLabel = ucfirst($ticket['guest_type']);
+        $ticketNumber = str_pad($ticket['guest_number'], 3, '0', STR_PAD_LEFT);
+        
+        // Generate ticket image URL using the template
+        $ticketImageUrl = $baseUrl . "admin/generate_ticket_image.php?ticket_code=" . urlencode($ticket['ticket_code']);
+        
+        $caption = "🎫 *Ticket " . ($index + 1) . " of " . count($tickets) . "*\n";
+        $caption .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $caption .= "🎪 {$typeLabel} Ticket #{$ticketNumber}\n";
+        $caption .= "👤 {$customerName}\n";
+        $caption .= "🍽️ Table: {$ticket['table_id']}\n";
+        $caption .= "🎟️ ID: `{$ticket['ticket_code']}`\n";
+        $caption .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $caption .= "📱 Save this image. Show at entrance.";
+        
+        // Send the image
+        $result = sendWhatsAppImage($cleanPhone, $ticketImageUrl, $caption);
+        
+        if ($result) {
+            $sentCount++;
+            error_log("Ticket sent: {$ticket['ticket_code']}");
+        } else {
+            error_log("Failed to send ticket: {$ticket['ticket_code']}");
+        }
+        
+        // Wait between messages to ensure order
+        if ($index < count($tickets) - 1) {
+            usleep(1000000); // 1 second delay between tickets
+        }
+    }
+    
+    // Send closing message ONLY after all tickets are sent
+    if ($sentCount > 0) {
+        $closingMessage = "✅ *All {$sentCount} ticket(s) sent successfully!*\n\n";
+        $closingMessage .= "📸 Each ticket has been sent as an image above.\n";
+        $closingMessage .= "💾 Press and hold on each image to save to your phone.\n";
+        $closingMessage .= "📱 Show the saved images at the entrance.\n\n";
+        $closingMessage .= "Thank you for choosing us! 🎉";
+        
+        sendWhatsAppMessage($cleanPhone, $closingMessage);
+    }
+    
+    return $sentCount;
+}
+
+/**
+ * Decode Reservation ID
  */
 function decodeReservationId($reservationId) {
     $pattern = '/^RES(\d{4})-(\d+G\d+A\d+T\d+K)-([A-Z0-9]{5})$/';
-    
     if (preg_match($pattern, $reservationId, $matches)) {
-        // Parse the breakdown part
         $breakdown = $matches[2];
         preg_match('/(\d+)G(\d+)A(\d+)T(\d+)K/', $breakdown, $breakdown_matches);
-        
         return [
             'sequential' => intval($matches[1]),
             'total_guests' => intval($breakdown_matches[1] ?? 0),
@@ -235,83 +565,27 @@ function decodeReservationId($reservationId) {
             'random_suffix' => $matches[3]
         ];
     }
-    
     return null;
 }
 
 /**
- * Calculate ticket prices based on current settings
+ * Update table availability
  */
-function calculateTicketPrice($type, $quantity = 1, $isEarlyBird = false, $groupSize = 0) {
-    $price = 0;
-    
-    switch ($type) {
-        case 'adult':
-            $price = getSetting('ticket_price_adult', 10);
-            break;
-        case 'teen':
-            $price = getSetting('ticket_price_teen', 10);
-            break;
-        case 'kid':
-            $price = getSetting('ticket_price_kid', 0);
-            break;
-        default:
-            $price = 0;
-    }
-    
-    $total = $price * $quantity;
-    
-    if ($isEarlyBird) {
-        $earlyBirdDiscount = getSetting('early_bird_discount', 0);
-        if ($earlyBirdDiscount > 0) {
-            $total = $total * (1 - $earlyBirdDiscount / 100);
+function updateTableAvailability() {
+    $conn = getConnection();
+    $conn->query("UPDATE `tables` SET `is_used` = 0");
+    $result = $conn->query("SELECT DISTINCT table_id FROM reservations WHERE status NOT IN ('cancelled', 'paid')");
+    while ($row = $result->fetch_assoc()) {
+        $tableId = $row['table_id'];
+        if (!empty($tableId)) {
+            $conn->query("UPDATE `tables` SET `is_used` = 1 WHERE table_number = '$tableId'");
         }
     }
-    
-    $minGroupSize = getSetting('min_group_size', 10);
-    if ($groupSize >= $minGroupSize) {
-        $groupDiscount = getSetting('group_discount', 0);
-        if ($groupDiscount > 0) {
-            $total = $total * (1 - $groupDiscount / 100);
-        }
-    }
-    
-    return max(0, $total);
-}
-
-/**
- * Get total paid amount for a reservation
- */
-function getTotalPaid($reservation_id) {
-    $conn = getConnection();
-    $stmt = $conn->prepare("SELECT COALESCE(SUM(amount), 0) as total_paid FROM split_payments WHERE reservation_id = ?");
-    $stmt->bind_param("s", $reservation_id);
-    $stmt->execute();
-    $result = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
     $conn->close();
-    return floatval($result['total_paid']);
 }
 
 /**
- * Get remaining amount due for a reservation
- */
-function getRemainingDue($reservation_id) {
-    $conn = getConnection();
-    $stmt = $conn->prepare("SELECT total_amount FROM reservations WHERE reservation_id = ?");
-    $stmt->bind_param("s", $reservation_id);
-    $stmt->execute();
-    $result = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    
-    $totalPaid = getTotalPaid($reservation_id);
-    $conn->close();
-    
-    return max(0, floatval($result['total_amount']) - $totalPaid);
-}
-
-/**
- * Get current active event
+ * Get current event
  */
 function getCurrentEvent() {
     $conn = getConnection();
@@ -322,291 +596,28 @@ function getCurrentEvent() {
 }
 
 /**
- * Get all upcoming events
- */
-function getUpcomingEvents($limit = null) {
-    $conn = getConnection();
-    $query = "SELECT * FROM event_settings WHERE event_date >= CURDATE() AND status = 'upcoming' ORDER BY event_date ASC";
-    if ($limit) {
-        $query .= " LIMIT " . intval($limit);
-    }
-    $result = $conn->query($query);
-    $events = $result->fetch_all(MYSQLI_ASSOC);
-    $conn->close();
-    return $events;
-}
-
-/**
- * Send email notification (if enabled)
- */
-function sendEmail($to, $subject, $body) {
-    $enabled = getSetting('enable_email', '1') == '1';
-    if (!$enabled) return false;
-    
-    $smtpHost = getSetting('smtp_host', '');
-    $smtpPort = getSetting('smtp_port', '587');
-    $smtpUser = getSetting('smtp_user', '');
-    $smtpPass = getSetting('smtp_pass', '');
-    
-    if (empty($smtpHost) || empty($smtpUser)) return false;
-    
-    return true;
-}
-
-/**
- * Check if maintenance mode is enabled
- */
-function isMaintenanceMode() {
-    $maintenance = getSetting('maintenance_mode', '0');
-    return $maintenance == '1';
-}
-
-/**
- * Get theme color
- */
-function getThemeColor() {
-    return getSetting('theme_color', '#4f46e5');
-}
-
-/**
- * Check if dark mode is enabled
- */
-function isDarkModeEnabled() {
-    return getSetting('dark_mode_enabled', '1') == '1';
-}
-
-/**
- * Get cancellation policy text
- */
-function getCancellationPolicy() {
-    return getSetting('cancellation_policy', 'Tickets are non-refundable 24 hours before event');
-}
-
-/**
- * Get terms and conditions
- */
-function getTermsConditions() {
-    return getSetting('terms_conditions', 'Please read our terms and conditions carefully.');
-}
-
-/**
- * Check daily reservation limit
- */
-function checkDailyLimit() {
-    $maxPerDay = getSetting('max_reservations_per_day', 1000);
-    $conn = getConnection();
-    $today = date('Y-m-d');
-    $result = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE DATE(created_at) = '$today'");
-    $count = $result->fetch_assoc()['count'];
-    $conn->close();
-    return $count < $maxPerDay;
-}
-
-/**
- * Get ticket type labels
- */
-function getTicketLabels() {
-    return [
-        'adult' => getSetting('label_adult', 'Adults'),
-        'teen' => getSetting('label_teen', 'Teens'),
-        'kid' => getSetting('label_kid', 'Kids')
-    ];
-}
-
-/**
- * Get footer text
- */
-function getFooterText() {
-    return getSetting('footer_text', '© 2024 Ticketing System. All rights reserved.');
-}
-
-/**
- * Log user activity
- */
-function logActivity($userId, $action, $details = null) {
-    $conn = getConnection();
-    $ip = $_SERVER['REMOTE_ADDR'] ?? null;
-    $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? null;
-    
-    $stmt = $conn->prepare("INSERT INTO audit_log (user_id, action, details, ip_address, user_agent) VALUES (?, ?, ?, ?, ?)");
-    $stmt->bind_param("issss", $userId, $action, $details, $ip, $userAgent);
-    $result = $stmt->execute();
-    $stmt->close();
-    $conn->close();
-    return $result;
-}
-
-/**
- * Calculate days remaining until event
+ * Get days remaining until event
  */
 function getDaysRemaining($event_date) {
     $today = new DateTime();
     $event = new DateTime($event_date);
     $interval = $today->diff($event);
-    
     $days = $interval->days;
-    
-    if ($today > $event) {
-        return -$days;
-    }
-    
-    return $days;
+    return $today > $event ? -$days : $days;
 }
 
 /**
- * Get days remaining text with appropriate styling
+ * Get days remaining text
  */
 function getDaysRemainingText($event_date) {
     $days = getDaysRemaining($event_date);
-    
     if ($days < 0) {
         $abs_days = abs($days);
-        if ($abs_days == 1) {
-            return "Event was yesterday";
-        } else {
-            return "Event passed " . $abs_days . " days ago";
-        }
-    } elseif ($days == 0) {
-        return "🎉 TODAY IS THE EVENT DAY! 🎉";
-    } elseif ($days == 1) {
-        return "🔥 TOMORROW! 1 day remaining 🔥";
-    } elseif ($days <= 7) {
-        return "⚠️ Only " . $days . " days remaining! ⚠️";
-    } elseif ($days <= 30) {
-        return "📅 " . $days . " days remaining";
-    } else {
-        return "🗓️ " . $days . " days until the event";
-    }
-}
-
-/**
- * Send WhatsApp message using Ultramsg
- */
-/**
- * Send WhatsApp message using Ultramsg
- */
-function sendWhatsAppMessage($to, $message) {
-    // Check if enabled
-    $enabled = getSetting('enable_whatsapp', '0') == '1';
-    if (!$enabled) return false;
-    
-    // Get credentials
-    $instanceId = getSetting('ultramsg_instance_id', '');
-    $token = getSetting('ultramsg_token', '');
-    
-    if (empty($instanceId) || empty($token)) {
-        error_log("Ultramsg: Missing credentials");
-        return false;
-    }
-    
-    // Clean phone number - remove ALL non-digits
-    $to = preg_replace('/[^0-9]/', '', $to);
-    
-    // Remove leading zeros
-    $to = ltrim($to, '0');
-    
-    // Remove country code if already there (962)
-    if (substr($to, 0, 3) == '962') {
-        $to = substr($to, 3);
-    }
-    
-    // Now add the country code correctly
-    $to = '962' . $to;
-    
-    // Final validation - number should be 12 digits (962 + 9 digits)
-    if (strlen($to) != 12) {
-        error_log("Ultramsg: Invalid phone number length: " . strlen($to) . " - Number: " . $to);
-        return false;
-    }
-    
-    // Prepare data
-    $data = [
-        'token' => $token,
-        'to' => $to,
-        'body' => $message,
-        'priority' => 1
-    ];
-    
-    // Send request
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, "https://api.ultramsg.com/{$instanceId}/messages/chat");
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    
-    // Log result
-    $responseData = json_decode($response, true);
-    if ($httpCode == 200 && isset($responseData['sent']) && $responseData['sent']) {
-        error_log("WhatsApp sent successfully to: {$to}");
-        return true;
-    } else {
-        error_log("WhatsApp failed: " . $response);
-        return false;
-    }
-}
-
-/**
- * Send WhatsApp image using Ultramsg - sends actual image file
- */
-/**
- * Send WhatsApp image - sends REAL image file (not link)
- */
-function sendWhatsAppImage($to, $imagePath, $caption = '') {
-    $enabled = getSetting('enable_whatsapp', '0') == '1';
-    if (!$enabled) return false;
-    
-    $instanceId = getSetting('ultramsg_instance_id', '');
-    $token = getSetting('ultramsg_token', '');
-    
-    if (empty($instanceId) || empty($token)) return false;
-    
-    // Clean phone number
-    $to = preg_replace('/[^0-9]/', '', $to);
-    $to = ltrim($to, '0');
-    if (substr($to, 0, 3) == '962') {
-        $to = substr($to, 3);
-    }
-    $to = '962' . $to;
-    
-    // If imagePath is not a file, try to download it
-    if (!file_exists($imagePath)) {
-        $imageData = @file_get_contents($imagePath);
-        if (!$imageData) return false;
-        $tempFile = tempnam(sys_get_temp_dir(), 'wa_img_');
-        file_put_contents($tempFile, $imageData);
-        $imagePath = $tempFile;
-    }
-    
-    // Send via cURL
-    $curl = curl_init();
-    curl_setopt($curl, CURLOPT_URL, "https://api.ultramsg.com/{$instanceId}/messages/image");
-    curl_setopt($curl, CURLOPT_POST, true);
-    
-    $postfields = [
-        'token' => $token,
-        'to' => $to,
-        'caption' => $caption,
-        'image' => new CURLFile($imagePath)
-    ];
-    
-    curl_setopt($curl, CURLOPT_POSTFIELDS, $postfields);
-    curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, false);
-    
-    $response = curl_exec($curl);
-    $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
-    curl_close($curl);
-    
-    // Clean up temp file
-    if (isset($tempFile) && file_exists($tempFile)) {
-        unlink($tempFile);
-    }
-    
-    return $httpCode == 200;
+        return $abs_days == 1 ? "Event was yesterday" : "Event passed " . $abs_days . " days ago";
+    } elseif ($days == 0) return "🎉 TODAY IS THE EVENT DAY! 🎉";
+    elseif ($days == 1) return "🔥 TOMORROW! 1 day remaining 🔥";
+    elseif ($days <= 7) return "⚠️ Only " . $days . " days remaining! ⚠️";
+    elseif ($days <= 30) return "📅 " . $days . " days remaining";
+    else return "🗓️ " . $days . " days until the event";
 }
 ?>

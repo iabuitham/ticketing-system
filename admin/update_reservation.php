@@ -22,20 +22,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $notes = sanitizeInput($_POST['notes'] ?? '');
     $new_status = sanitizeInput($_POST['status']);
     
+    // Get the stored price tier and prices from the form
+    $price_tier = sanitizeInput($_POST['price_tier'] ?? 'regular');
+    $adultPrice = floatval($_POST['adult_price'] ?? 0);
+    $teenPrice = floatval($_POST['teen_price'] ?? 0);
+    $kidPrice = floatval($_POST['kid_price'] ?? 0);
+
     // Get current reservation
     $stmt = $conn->prepare("SELECT * FROM reservations WHERE reservation_id = ?");
     $stmt->bind_param("s", $reservation_id);
     $stmt->execute();
     $reservation = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-    
+
     if (!$reservation) {
         $_SESSION['update_message'] = "Reservation not found!";
         $_SESSION['update_message_type'] = "error";
         header('Location: dashboard.php');
         exit();
     }
-    
+
+    // Check if guest counts changed
+    $old_adults = intval($reservation['adults']);
+    $old_teens = intval($reservation['teens']);
+    $old_kids = intval($reservation['kids']);
+    $old_total = $old_adults + $old_teens + $old_kids;
+    $new_total = $new_adults + $new_teens + $new_kids;
+    $guests_increased = $new_total > $old_total;
+    $guests_decreased = $new_total < $old_total;
+    $guest_change = $new_total - $old_total;
+
     // Get total paid from split_payments
     $stmt = $conn->prepare("SELECT COALESCE(SUM(amount), 0) as total_paid FROM split_payments WHERE reservation_id = ?");
     $stmt->bind_param("s", $reservation_id);
@@ -43,109 +59,287 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $paidResult = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     $total_paid = floatval($paidResult['total_paid']);
-    
-    // Get ticket prices from event
-    $selected_event_id = $_SESSION['selected_event_id'] ?? 0;
-    $adultPrice = 10;
-    $teenPrice = 10;
-    $kidPrice = 0;
-    
-    if ($selected_event_id > 0) {
-        $stmt = $conn->prepare("SELECT ticket_price_adult, ticket_price_teen, ticket_price_kid FROM event_settings WHERE id = ?");
-        $stmt->bind_param("i", $selected_event_id);
-        $stmt->execute();
-        $event_data = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        if ($event_data) {
-            $adultPrice = floatval($event_data['ticket_price_adult']);
-            $teenPrice = floatval($event_data['ticket_price_teen']);
-            $kidPrice = floatval($event_data['ticket_price_kid']);
-        }
-    }
-    
-    // Calculate new values based on NEW guest counts
+
+    // Calculate new values using the stored prices
     $new_total_amount = ($new_adults * $adultPrice) + ($new_teens * $teenPrice) + ($new_kids * $kidPrice);
-    $new_additional_due = max(0, $new_total_amount - $total_paid);
-    
+
+    // Calculate the difference
+    $amount_difference = $new_total_amount - $total_paid;
+
+    if ($amount_difference > 0) {
+        $new_additional_due = $amount_difference;
+        $credit_amount = 0;
+    } else {
+        $new_additional_due = 0;
+        $credit_amount = abs($amount_difference);
+    }
+
     // Determine status
     if ($new_status == 'cancelled') {
         $final_status = 'cancelled';
-    } elseif ($new_additional_due <= 0) {
+    } elseif ($new_total_amount <= $total_paid) {
         $final_status = 'paid';
     } else {
         $final_status = $new_status;
     }
-    
-    // Update the reservation
-    $stmt = $conn->prepare("UPDATE reservations SET 
-        name = ?, 
-        phone = ?, 
-        table_id = ?, 
-        adults = ?, 
-        teens = ?, 
-        kids = ?, 
-        total_amount = ?, 
-        additional_amount_due = ?, 
-        notes = ?, 
-        status = ?, 
-        updated_at = NOW() 
-        WHERE reservation_id = ?");
-    
-    $stmt->bind_param(
-        "sssiiiddsss",
-        $name, $phone, $table_id,
-        $new_adults, $new_teens, $new_kids,
-        $new_total_amount, $new_additional_due,
-        $notes, $final_status,
-        $reservation_id
-    );
-    
-    if ($stmt->execute()) {
-        // Update tickets - delete old and create new
-        $conn->query("DELETE FROM ticket_codes WHERE reservation_id = '$reservation_id'");
-        
-        // Generate new tickets for adults
-        for ($i = 1; $i <= $new_adults; $i++) {
-            $ticketCode = generateTicketId($reservation_id, 'adult', $i);
-            $stmt2 = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'adult', ?)");
-            $stmt2->bind_param("ssi", $reservation_id, $ticketCode, $i);
-            $stmt2->execute();
-            $stmt2->close();
+
+    // Generate NEW reservation ID if guests changed
+    $new_reservation_id = $reservation_id;
+    if ($guests_increased || $guests_decreased) {
+        $new_reservation_id = regenerateReservationIdFromOld($reservation_id, $new_adults, $new_teens, $new_kids);
+    }
+
+    // Start transaction
+    $conn->begin_transaction();
+
+    try {
+        // If reservation ID changed, update all related tables
+        if ($new_reservation_id != $reservation_id) {
+            // Disable foreign key checks temporarily
+            $conn->query("SET FOREIGN_KEY_CHECKS = 0");
+
+            // Update the reservation with new ID
+            $stmt = $conn->prepare("UPDATE reservations SET 
+                reservation_id = ?,
+                name = ?, 
+                phone = ?, 
+                table_id = ?, 
+                adults = ?, 
+                teens = ?, 
+                kids = ?, 
+                total_amount = ?, 
+                additional_amount_due = ?, 
+                notes = ?, 
+                status = ?, 
+                price_tier = ?,
+                updated_at = NOW() 
+                WHERE id = ?");
+
+            $stmt->bind_param(
+                "ssssiiiddsssi",
+                $new_reservation_id,
+                $name,
+                $phone,
+                $table_id,
+                $new_adults,
+                $new_teens,
+                $new_kids,
+                $new_total_amount,
+                $new_additional_due,
+                $notes,
+                $final_status,
+                $price_tier,
+                $reservation['id']
+            );
+            $stmt->execute();
+            $stmt->close();
+
+            // Update split_payments to new reservation_id
+            $stmt = $conn->prepare("UPDATE split_payments SET reservation_id = ? WHERE reservation_id = ?");
+            $stmt->bind_param("ss", $new_reservation_id, $reservation_id);
+            $stmt->execute();
+            $stmt->close();
+
+            // Update ticket_codes to new reservation_id
+            $stmt = $conn->prepare("UPDATE ticket_codes SET reservation_id = ? WHERE reservation_id = ?");
+            $stmt->bind_param("ss", $new_reservation_id, $reservation_id);
+            $stmt->execute();
+            $stmt->close();
+
+            // Update ticket codes themselves
+            $tickets = $conn->query("SELECT id, guest_type, guest_number FROM ticket_codes WHERE reservation_id = '$new_reservation_id'");
+            while ($ticket = $tickets->fetch_assoc()) {
+                $new_ticket_code = generateTicketId($new_reservation_id, $ticket['guest_type'], $ticket['guest_number']);
+                $conn->query("UPDATE ticket_codes SET ticket_code = '$new_ticket_code' WHERE id = {$ticket['id']}");
+            }
+
+            $conn->query("SET FOREIGN_KEY_CHECKS = 1");
+        } else {
+            // Just update the reservation without changing ID
+            $stmt = $conn->prepare("UPDATE reservations SET 
+                name = ?, 
+                phone = ?, 
+                table_id = ?, 
+                adults = ?, 
+                teens = ?, 
+                kids = ?, 
+                total_amount = ?, 
+                additional_amount_due = ?, 
+                notes = ?, 
+                status = ?, 
+                price_tier = ?,
+                updated_at = NOW() 
+                WHERE reservation_id = ?");
+
+            $stmt->bind_param(
+                "sssiiiddssss",
+                $name,
+                $phone,
+                $table_id,
+                $new_adults,
+                $new_teens,
+                $new_kids,
+                $new_total_amount,
+                $new_additional_due,
+                $notes,
+                $final_status,
+                $price_tier,
+                $reservation_id
+            );
+            $stmt->execute();
+            $stmt->close();
         }
-        
-        // Generate new tickets for teens
-        for ($i = 1; $i <= $new_teens; $i++) {
-            $ticketCode = generateTicketId($reservation_id, 'teen', $i);
-            $stmt2 = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'teen', ?)");
-            $stmt2->bind_param("ssi", $reservation_id, $ticketCode, $i);
-            $stmt2->execute();
-            $stmt2->close();
+
+        // Regenerate tickets if guests changed
+        if ($guests_increased || $guests_decreased) {
+            $target_id = ($new_reservation_id != $reservation_id) ? $new_reservation_id : $reservation_id;
+
+            // Delete ALL existing tickets for this reservation
+            $conn->query("DELETE FROM ticket_codes WHERE reservation_id = '$target_id'");
+
+            // Generate new tickets for adults
+            for ($i = 1; $i <= $new_adults; $i++) {
+                $ticketCode = generateTicketId($target_id, 'adult', $i);
+                $stmt2 = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'adult', ?)");
+                $stmt2->bind_param("ssi", $target_id, $ticketCode, $i);
+                $stmt2->execute();
+                $stmt2->close();
+            }
+
+            // Generate new tickets for teens
+            for ($i = 1; $i <= $new_teens; $i++) {
+                $ticketCode = generateTicketId($target_id, 'teen', $i);
+                $stmt2 = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'teen', ?)");
+                $stmt2->bind_param("ssi", $target_id, $ticketCode, $i);
+                $stmt2->execute();
+                $stmt2->close();
+            }
+
+            // Generate new tickets for kids
+            for ($i = 1; $i <= $new_kids; $i++) {
+                $ticketCode = generateTicketId($target_id, 'kid', $i);
+                $stmt2 = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'kid', ?)");
+                $stmt2->bind_param("ssi", $target_id, $ticketCode, $i);
+                $stmt2->execute();
+                $stmt2->close();
+            }
         }
-        
-        // Generate new tickets for kids
-        for ($i = 1; $i <= $new_kids; $i++) {
-            $ticketCode = generateTicketId($reservation_id, 'kid', $i);
-            $stmt2 = $conn->prepare("INSERT INTO ticket_codes (reservation_id, ticket_code, guest_type, guest_number) VALUES (?, ?, 'kid', ?)");
-            $stmt2->bind_param("ssi", $reservation_id, $ticketCode, $i);
-            $stmt2->execute();
-            $stmt2->close();
+
+        // Handle credit if customer overpaid (guests decreased)
+        if ($guests_decreased && $credit_amount > 0) {
+            // Create credit note
+            $stmt = $conn->prepare("INSERT INTO credit_notes (reservation_id, amount, reason, status, created_by, created_at, notes) 
+                VALUES (?, ?, ?, 'pending', ?, NOW(), ?)");
+            $reason = "Guest count decreased from $old_total to $new_total guests";
+            $notes_text = "Original total: " . number_format($reservation['total_amount'], 2) .
+                " | New total: " . number_format($new_total_amount, 2) .
+                " | Credit amount: " . number_format($credit_amount, 2);
+            $stmt->bind_param("sdsss", $new_reservation_id, $credit_amount, $reason, $_SESSION['admin_username'], $notes_text);
+            $stmt->execute();
+            $stmt->close();
         }
-        
+
+        // Update table availability
+        updateTableAvailability();
+
+        $conn->commit();
+
+        // Prepare success message
         $_SESSION['update_message'] = "Reservation updated successfully!";
+        if ($guests_increased && $new_reservation_id != $reservation_id) {
+            $_SESSION['update_message'] .= " New Reservation ID: " . $new_reservation_id;
+        }
+        if ($guests_increased) {
+            $_SESSION['update_message'] .= " Tickets have been regenerated.";
+        }
         if ($new_additional_due > 0) {
             $_SESSION['update_message'] .= " | Additional payment due: " . number_format($new_additional_due, 2) . " " . getCurrencySymbol();
         }
+        if ($guests_decreased && $credit_amount > 0) {
+            $_SESSION['update_message'] .= " | Credit created: " . number_format($credit_amount, 2) . " " . getCurrencySymbol() . " (pending refund)";
+        }
         $_SESSION['update_message_type'] = "success";
-        
-        header("Location: edit_reservation.php?id=" . urlencode($reservation_id));
+
+        // ========== SEND WHATSAPP NOTIFICATION ==========
+        $currencySymbol = getCurrencySymbol();
+
+        // Send message for guest increase
+        if ($guests_increased) {
+            $added_guests = $guest_change;
+            $message = "📢 *RESERVATION UPDATED - GUESTS INCREASED* 📢\n";
+            $message .= "📢 *تم تحديث الحجز - زيادة عدد الضيوف* 📢\n\n";
+            $message .= "Dear {$name},\n";
+            $message .= "عزيزنا {$name}،\n\n";
+            $message .= "Your reservation has been updated.\n";
+            $message .= "تم تحديث حجزك بنجاح.\n\n";
+            $message .= "📋 *Reservation ID | رقم الحجز:* {$new_reservation_id}\n";
+            $message .= "👥 *Guests added | عدد الضيوف المضافين:* +{$added_guests}\n";
+            $message .= "👤 *New total guests | إجمالي الضيوف الجديد:* {$new_total}\n";
+            $message .= "🍽️ *Table | الطاولة:* {$table_id}\n";
+            $message .= "💰 *Additional amount due | المبلغ الإضافي المستحق:* {$currencySymbol} " . number_format($new_additional_due, 2) . "\n\n";
+            $message .= "Please complete the payment using the steps used before.\n";
+            $message .= "يرجى إكمال الدفع باستخدام نفس الخطوات السابقة.\n\n";
+            $message .= "Thank you! 🙏\n";
+            $message .= "شكراً لك! 🙏\n";
+            sendWhatsAppMessage($phone, $message);
+        }
+
+        // Send message for guest decrease - MODIFIED: Now sends for ALL guest decreases
+        if ($guests_decreased) {
+            $removed_guests = abs($guest_change);
+            
+            if ($credit_amount > 0) {
+                // Message with credit info
+                $message = "📢 *RESERVATION UPDATED - GUESTS DECREASED* 📢\n";
+                $message .= "📢 *تم تحديث الحجز - انخفاض عدد الضيوف* 📢\n\n";
+                $message .= "Dear {$name},\n";
+                $message .= "عزيزنا {$name}،\n\n";
+                $message .= "Your reservation has been updated.\n";
+                $message .= "تم تحديث حجزك بنجاح.\n\n";
+                $message .= "📋 *Reservation ID | رقم الحجز:* {$new_reservation_id}\n";
+                $message .= "👥 *Guests removed | عدد الضيوف المخفضين:* {$removed_guests}\n";
+                $message .= "👤 *New total guests | إجمالي الضيوف الجديد:* {$new_total}\n";
+                $message .= "🍽️ *Table | الطاولة:* {$table_id}\n";
+                $message .= "💰 *Credit amount | قيمة الرصيد الدائن:* {$currencySymbol} " . number_format($credit_amount, 2) . "\n\n";
+                $message .= "A credit note has been created. Our team will contact you regarding the refund.\n";
+                $message .= "تم إنشاء إشعار دائن. سيتواصل معك فريقنا بخصوص استرداد المبلغ.\n\n";
+                $message .= "Thank you for your understanding! 🙏\n";
+                $message .= "شكراً لتفهمك! 🙏\n";
+            } else {
+                // Message without credit (no payment made yet)
+                $message = "📢 *RESERVATION UPDATED - GUESTS DECREASED* 📢\n";
+                $message .= "📢 *تم تحديث الحجز - انخفاض عدد الضيوف* 📢\n\n";
+                $message .= "Dear {$name},\n";
+                $message .= "عزيزنا {$name}،\n\n";
+                $message .= "Your reservation has been updated.\n";
+                $message .= "تم تحديث حجزك بنجاح.\n\n";
+                $message .= "📋 *Reservation ID | رقم الحجز:* {$new_reservation_id}\n";
+                $message .= "👥 *Guests removed | عدد الضيوف المخفضين:* {$removed_guests}\n";
+                $message .= "👤 *New total guests | إجمالي الضيوف الجديد:* {$new_total}\n";
+                $message .= "🍽️ *Table | الطاولة:* {$table_id}\n";
+                $message .= "💰 *New total amount | المبلغ الإجمالي الجديد:* {$currencySymbol} " . number_format($new_total_amount, 2) . "\n\n";
+                
+                if ($new_additional_due > 0) {
+                    $message .= "⚠️ *Remaining balance | الرصيد المتبقي:* {$currencySymbol} " . number_format($new_additional_due, 2) . "\n\n";
+                } else {
+                    $message .= "✅ *Your reservation is now fully paid! | حجزك الآن مدفوع بالكامل!* ✅\n\n";
+                }
+                
+                $message .= "Thank you! 🙏\n";
+                $message .= "شكراً لك! 🙏\n";
+            }
+            sendWhatsAppMessage($phone, $message);
+        }
+
+        header("Location: edit_reservation.php?id=" . urlencode($new_reservation_id));
         exit();
-    } else {
-        $_SESSION['update_message'] = "Error updating reservation: " . $conn->error;
+    } catch (Exception $e) {
+        $conn->rollback();
+        $_SESSION['update_message'] = "Error updating reservation: " . $e->getMessage();
         $_SESSION['update_message_type'] = "error";
         header("Location: edit_reservation.php?id=" . urlencode($reservation_id));
         exit();
     }
-    $stmt->close();
 }
 
 header('Location: dashboard.php');

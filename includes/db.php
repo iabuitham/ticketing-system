@@ -1,11 +1,9 @@
 <?php
 /**
  * Database connection file
- * This file should only contain database connection functions
  */
 
 function getConnection() {
-    // Include database configuration
     require_once __DIR__ . '/config.php';
     
     $conn = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
@@ -14,14 +12,15 @@ function getConnection() {
         die("Connection failed: " . $conn->connect_error);
     }
     
-    // Set charset to UTF-8
+    // Set charset to utf8mb4 for proper Arabic/unicode support
     $conn->set_charset("utf8mb4");
+    
+    // Force MySQL to use Jordan timezone (UTC+3)
+    $conn->query("SET time_zone = '" . DB_TIMEZONE . "'");
     
     return $conn;
 }
 
-// For backward compatibility
-function getDB() {
-    return getConnection();
-}
+// Current datetime in Jordan timezone (use this instead of NOW() if needed)
+$currentDateTime = date('Y-m-d H:i:s');
 ?>

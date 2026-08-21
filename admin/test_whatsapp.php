@@ -8,139 +8,130 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
     exit();
 }
 
-$test_number = isset($_GET['phone']) ? $_GET['phone'] : '';
-$result = false;
-$message = '';
+$test_result = '';
+$test_phone = '';
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $test_phone = sanitizeInput($_POST['phone']);
+    $test_message = "🧪 *Test Message from Ticketing System* 🧪\n\n";
+    $test_message .= "This is a test message to verify WhatsApp integration.\n";
+    $test_message .= "If you receive this, your WhatsApp configuration is working correctly! ✅\n\n";
+    $test_message .= "Time: " . date('Y-m-d H:i:s');
+    
+    $result = sendWhatsAppMessage($test_phone, $test_message);
+    
+    if ($result) {
+        $test_result = '<div class="alert alert-success">✅ Test message sent successfully to ' . htmlspecialchars($test_phone) . '!</div>';
+    } else {
+        $test_result = '<div class="alert alert-error">❌ Failed to send test message. Check error logs.</div>';
+    }
+}
+
+// Get current settings
+$enabled = getSetting('enable_whatsapp', '0');
 $instanceId = getSetting('ultramsg_instance_id', '');
 $token = getSetting('ultramsg_token', '');
-
-if ($test_number) {
-    $test_message = "🎉 *Ultramsg Test Message*\n\n";
-    $test_message .= "Your WhatsApp integration is working!\n\n";
-    $test_message .= "✅ Ticketing System is connected\n";
-    $test_message .= "📅 Time: " . date('Y-m-d H:i:s') . "\n\n";
-    $test_message .= "You can now receive:\n";
-    $test_message .= "• Reservation confirmations\n";
-    $test_message .= "• Payment receipts\n";
-    $test_message .= "• Event reminders\n";
-    $test_message .= "• Digital tickets\n\n";
-    $test_message .= "Thank you for using our system! 🎫";
-    
-    $result = sendWhatsAppMessage($test_number, $test_message);
-    $message = $result ? "✓ Message sent successfully!" : "✗ Failed to send message";
-}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Test WhatsApp - Ticketing System</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <title>Test WhatsApp</title>
     <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
+            background: #f0f2f5;
             padding: 20px;
         }
+        .container { max-width: 600px; margin: 0 auto; }
         .card {
             background: white;
             border-radius: 24px;
-            padding: 40px;
-            max-width: 500px;
-            width: 100%;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 30px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
-        h1 { color: #4f46e5; margin-bottom: 10px; }
-        .status {
-            background: #f1f5f9;
-            padding: 15px;
-            border-radius: 12px;
-            margin: 20px 0;
-        }
-        .status-item {
-            display: flex;
-            justify-content: space-between;
-            padding: 8px 0;
-            border-bottom: 1px solid #e2e8f0;
-        }
-        .badge {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
-        }
-        .badge-success { background: #d1fae5; color: #065f46; }
-        .badge-error { background: #fee2e2; color: #991b1b; }
+        h1 { margin-bottom: 20px; color: #333; }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; font-weight: 600; }
         input {
             width: 100%;
             padding: 12px;
-            border: 1px solid #cbd5e1;
+            border: 1px solid #ddd;
             border-radius: 12px;
-            font-size: 16px;
-            margin: 15px 0;
+            font-size: 14px;
         }
-        button {
-            width: 100%;
-            padding: 12px;
-            background: #10b981;
+        .btn {
+            padding: 12px 24px;
+            background: #25D366;
             color: white;
             border: none;
             border-radius: 12px;
+            cursor: pointer;
             font-size: 16px;
             font-weight: 600;
-            cursor: pointer;
         }
-        button:hover { background: #059669; }
-        .result { margin-top: 20px; padding: 15px; border-radius: 12px; text-align: center; }
-        .result.success { background: #d1fae5; color: #065f46; }
-        .result.error { background: #fee2e2; color: #991b1b; }
-        a { display: block; text-align: center; margin-top: 20px; color: #64748b; }
+        .btn:hover { background: #128C7E; }
+        .alert {
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+        }
+        .alert-success { background: #d1fae5; color: #065f46; border-left: 4px solid #10b981; }
+        .alert-error { background: #fee2e2; color: #991b1b; border-left: 4px solid #ef4444; }
+        .settings-info {
+            background: #f8fafc;
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        .settings-info h3 { margin-bottom: 10px; color: #4f46e5; }
+        .status-enabled { color: #10b981; font-weight: bold; }
+        .status-disabled { color: #ef4444; font-weight: bold; }
+        .back-link {
+            display: inline-block;
+            margin-top: 20px;
+            color: #4f46e5;
+            text-decoration: none;
+        }
     </style>
 </head>
 <body>
+<div class="container">
     <div class="card">
-        <h1><i class="bi bi-whatsapp"></i> Test WhatsApp</h1>
-        <p>Send a test message to verify your integration</p>
+        <h1>📱 Test WhatsApp Integration</h1>
         
-        <div class="status">
-            <div class="status-item">
-                <span>Instance ID:</span>
-                <span class="<?php echo !empty($instanceId) ? 'badge-success' : 'badge-error'; ?> badge">
-                    <?php echo !empty($instanceId) ? '✓ Configured' : '✗ Missing'; ?>
-                </span>
-            </div>
-            <div class="status-item">
-                <span>API Token:</span>
-                <span class="<?php echo !empty($token) ? 'badge-success' : 'badge-error'; ?> badge">
-                    <?php echo !empty($token) ? '✓ Configured' : '✗ Missing'; ?>
-                </span>
-            </div>
-            <div class="status-item">
-                <span>WhatsApp Enabled:</span>
-                <span class="badge-success badge">✓ Enabled</span>
-            </div>
+        <div class="settings-info">
+            <h3>Current Settings:</h3>
+            <p>📡 WhatsApp Enabled: <span class="<?php echo $enabled == '1' ? 'status-enabled' : 'status-disabled'; ?>"><?php echo $enabled == '1' ? '✅ YES' : '❌ NO'; ?></span></p>
+            <p>🔑 Instance ID: <?php echo $instanceId ? '✅ Set (' . substr($instanceId, 0, 10) . '...)' : '❌ Not set'; ?></p>
+            <p>🎫 Token: <?php echo $token ? '✅ Set (' . substr($token, 0, 10) . '...)' : '❌ Not set'; ?></p>
         </div>
         
-        <form method="GET">
-            <input type="tel" name="phone" placeholder="Your phone number (e.g., 962797314111)" value="<?php echo htmlspecialchars($test_number); ?>" required>
-            <button type="submit"><i class="bi bi-send"></i> Send Test Message</button>
-        </form>
-        
-        <?php if ($message): ?>
-            <div class="result <?php echo $result ? 'success' : 'error'; ?>">
-                <i class="bi bi-<?php echo $result ? 'check-circle' : 'x-circle'; ?>"></i>
-                <?php echo $message; ?>
+        <?php if ($enabled != '1'): ?>
+            <div class="alert alert-error">
+                ⚠️ WhatsApp is disabled in System Settings. Please enable it first.
+            </div>
+        <?php elseif (empty($instanceId) || empty($token)): ?>
+            <div class="alert alert-error">
+                ⚠️ Ultramsg credentials are missing. Please configure them in System Settings.
             </div>
         <?php endif; ?>
         
-        <a href="settings.php"><i class="bi bi-gear"></i> Go to Settings</a>
+        <?php echo $test_result; ?>
+        
+        <form method="POST">
+            <div class="form-group">
+                <label>Phone Number (with country code, e.g., 9627XXXXXXXX)</label>
+                <input type="tel" name="phone" placeholder="9627XXXXXXXX" value="<?php echo htmlspecialchars($test_phone); ?>" required>
+            </div>
+            <button type="submit" class="btn">📤 Send Test Message</button>
+        </form>
+        
+        <a href="dashboard.php" class="back-link">← Back to Dashboard</a>
     </div>
+</div>
 </body>
 </html>

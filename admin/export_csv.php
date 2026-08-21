@@ -16,7 +16,7 @@ $date_to = isset($_GET['to']) ? $_GET['to'] : '';
 // Get database connection
 $conn = getConnection();
 
-// Build query - Simple version without payment_type issues
+// Build query with only basic columns (no payment_proof or payment_method)
 $query = "SELECT 
     r.reservation_id,
     r.name,
@@ -29,8 +29,6 @@ $query = "SELECT
     r.status,
     r.total_amount,
     r.additional_amount_due,
-    r.payment_method,
-    r.payment_proof,
     r.created_at,
     r.updated_at,
     (SELECT COUNT(*) FROM ticket_codes WHERE reservation_id = r.reservation_id) as ticket_count,
@@ -38,7 +36,7 @@ $query = "SELECT
 FROM reservations r
 WHERE 1=1";
 
-// Add filters using prepared statements to avoid SQL injection
+// Add filters
 if ($status_filter && $status_filter != 'all') {
     $query .= " AND r.status = '" . $conn->real_escape_string($status_filter) . "'";
 }
@@ -68,13 +66,10 @@ header('Content-Disposition: attachment; filename="reservations_export_' . date(
 header('Pragma: no-cache');
 header('Expires: 0');
 
-// Create output stream
 $output = fopen('php://output', 'w');
-
-// Add UTF-8 BOM for proper Arabic/Unicode support
 fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
 
-// Add headers
+// Simplified headers
 fputcsv($output, [
     'Reservation ID',
     'Customer Name',
@@ -87,18 +82,14 @@ fputcsv($output, [
     'Status',
     'Total Amount',
     'Additional Amount Due',
-    'Payment Method',
     'Total Paid',
     'Ticket Count',
-    'Payment Proof',
     'Created Date',
     'Last Updated'
 ]);
 
-// Get currency symbol
 $currencySymbol = getCurrencySymbol();
 
-// Add data rows
 foreach ($reservations as $row) {
     fputcsv($output, [
         $row['reservation_id'],
@@ -112,10 +103,8 @@ foreach ($reservations as $row) {
         $row['status'],
         number_format(floatval($row['total_amount']), 2) . ' ' . $currencySymbol,
         number_format(floatval($row['additional_amount_due']), 2) . ' ' . $currencySymbol,
-        $row['payment_method'] ?: 'Not paid',
         number_format(floatval($row['total_paid']), 2) . ' ' . $currencySymbol,
         $row['ticket_count'],
-        $row['payment_proof'] ? 'Yes' : 'No',
         date('Y-m-d H:i:s', strtotime($row['created_at'])),
         date('Y-m-d H:i:s', strtotime($row['updated_at']))
     ]);

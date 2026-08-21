@@ -3,7 +3,6 @@ session_start();
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
 
-// If already logged in, redirect to dashboard
 if (isset($_SESSION['admin_logged_in']) && $_SESSION['admin_logged_in'] === true) {
     header('Location: dashboard.php');
     exit();
@@ -12,7 +11,7 @@ if (isset($_SESSION['admin_logged_in']) && $_SESSION['admin_logged_in'] === true
 $error = '';
 $conn = getConnection();
 
-// Get all active events for dropdown
+// Get events for dropdown
 $events = [];
 $result = $conn->query("SELECT id, event_name, event_date, venue, status FROM event_settings WHERE status != 'completed' ORDER BY event_date ASC");
 if ($result) {
@@ -21,22 +20,38 @@ if ($result) {
     }
 }
 
-// Handle login form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = sanitizeInput($_POST['username'] ?? '');
     $password = $_POST['password'] ?? '';
     $event_id = intval($_POST['event_id'] ?? 0);
     
-    // Default admin credentials (you should move these to database)
-    $valid_username = 'admin';
-    $valid_password = 'admin123'; // Change this!
+    // Debug - remove after fixing
+    error_log("Login attempt - Username: " . $username);
     
-    if ($username === $valid_username && $password === $valid_password) {
+    // Query the admins table
+    $stmt = $conn->prepare("SELECT * FROM admins WHERE username = ?");
+    $stmt->bind_param("s", $username);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $admin = $result->fetch_assoc();
+    $stmt->close();
+    
+    // Debug - remove after fixing
+    if ($admin) {
+        error_log("User found in database");
+        error_log("Stored hash: " . $admin['password']);
+    } else {
+        error_log("User NOT found in database");
+    }
+    
+    // Verify password
+    if ($admin && password_verify($password, $admin['password'])) {
+        error_log("Password verified successfully");
+        
         $_SESSION['admin_logged_in'] = true;
-        $_SESSION['admin_username'] = $username;
+        $_SESSION['admin_username'] = $admin['username'];
         $_SESSION['selected_event_id'] = $event_id;
         
-        // Get event details for session
         if ($event_id > 0) {
             $stmt = $conn->prepare("SELECT * FROM event_settings WHERE id = ?");
             $stmt->bind_param("i", $event_id);
@@ -58,6 +73,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: dashboard.php');
         exit();
     } else {
+        error_log("Password verification failed");
         $error = 'Invalid username or password!';
     }
 }

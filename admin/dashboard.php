@@ -16,41 +16,267 @@ $selected_event_id = $_SESSION['selected_event_id'] ?? 0;
 $selected_event_name = $_SESSION['selected_event_name'] ?? 'No Event Selected';
 $selected_event_date = $_SESSION['selected_event_date'] ?? '';
 
+// Check if event is closed
+$eventStatusCheck = $conn->prepare("SELECT status, is_closed FROM event_settings WHERE id = ?");
+$eventStatusCheck->bind_param("i", $selected_event_id);
+$eventStatusCheck->execute();
+$eventData = $eventStatusCheck->get_result()->fetch_assoc();
+$eventStatusCheck->close();
+$isEventClosed = ($eventData && ($eventData['status'] == 'completed' || $eventData['is_closed'] == 1));
+
+// Handle Close Event
+if (isset($_POST['close_event']) && $selected_event_id > 0) {
+    $password = $_POST['password'] ?? '';
+    if ($password === 'AdminDelete2026') {
+        // Start transaction
+        $conn->begin_transaction();
+
+        try {
+            // Get event details with stats
+            $eventStmt = $conn->prepare("
+                SELECT e.*,
+                    (SELECT SUM(total_amount) FROM reservations WHERE event_id = e.id AND status = 'paid') as total_revenue,
+                    (SELECT COUNT(*) FROM reservations WHERE event_id = e.id AND status != 'cancelled') as total_attendees
+                FROM event_settings e
+                WHERE e.id = ?
+            ");
+            $eventStmt->bind_param("i", $selected_event_id);
+            $eventStmt->execute();
+            $event = $eventStmt->get_result()->fetch_assoc();
+            $eventStmt->close();
+
+            if ($event) {
+                // 1. Insert into archived_events
+                $archiveEventStmt = $conn->prepare("
+                    INSERT INTO archived_events (
+                        id, event_name, event_date, event_time, venue, description, capacity,
+                        ticket_price_adult, ticket_price_teen, ticket_price_kid, tickets_sold,
+                        status, closed_at, total_revenue, total_attendees
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', NOW(), ?, ?)
+                ");
+                $archiveEventStmt->bind_param(
+                    "isssssidddidd",
+                    $event['id'],
+                    $event['event_name'],
+                    $event['event_date'],
+                    $event['event_time'],
+                    $event['venue'],
+                    $event['description'],
+                    $event['capacity'],
+                    $event['ticket_price_adult'],
+                    $event['ticket_price_teen'],
+                    $event['ticket_price_kid'],
+                    $event['tickets_sold'],
+                    $event['total_revenue'],
+                    $event['total_attendees']
+                );
+                $archiveEventStmt->execute();
+                $archiveEventStmt->close();
+
+                // 2. Archive all reservations for this event
+                $reservations = $conn->query("SELECT * FROM reservations WHERE event_id = $selected_event_id");
+
+                while ($res = $reservations->fetch_assoc()) {
+                    // Insert archived reservation
+                    $archiveResStmt = $conn->prepare("
+                        INSERT INTO archived_reservations (
+                            id, archived_event_id, reservation_id, sequential_number, name, phone,
+                            adults, teens, kids, table_id, total_amount, additional_amount_due,
+                            price_tier, status, notes, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ");
+                    $archiveResStmt->bind_param(
+                        "iisssiiiiiddsssss",
+                        $res['id'],
+                        $selected_event_id,
+                        $res['reservation_id'],
+                        $res['sequential_number'],
+                        $res['name'],
+                        $res['phone'],
+                        $res['adults'],
+                        $res['teens'],
+                        $res['kids'],
+                        $res['table_id'],
+                        $res['total_amount'],
+                        $res['additional_amount_due'],
+                        $res['price_tier'],
+                        $res['status'],
+                        $res['notes'],
+                        $res['created_at'],
+                        $res['updated_at']
+                    );
+                    $archiveResStmt->execute();
+                    $archiveResStmt->close();
+
+// 3. Archive payments for this reservation
+$payments = $conn->query("SELECT * FROM split_payments WHERE reservation_id = '{$res['reservation_id']}'");
+while ($pay = $payments->fetch_assoc()) {
+    // Convert NULL values for bind_param
+    $receipt_id = $pay['receipt_id'] ?? '';
+    $proof_file = $pay['proof_file'] ?? '';
+    $proof_path = $pay['proof_path'] ?? '';
+    $payment_type = $pay['payment_type'] ?? 'additional';
+    $received_by = $pay['received_by'] ?? '';
+    $payment_date = $pay['payment_date'] ?? date('Y-m-d H:i:s');
+    $notes = $pay['notes'] ?? '';
+    $is_fnb = intval($pay['is_fnb'] ?? 0);
+    $fnb_amount = floatval($pay['fnb_amount'] ?? 0);
+    $created_at = $pay['created_at'] ?? date('Y-m-d H:i:s');
+    
+    $archivePayStmt = $conn->prepare("
+        INSERT INTO archived_split_payments (
+            id, archived_reservation_id, payment_method, amount, receipt_id,
+            proof_file, proof_path, payment_type, received_by, payment_date,
+            notes, is_fnb, fnb_amount, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ");
+    $archivePayStmt->bind_param(
+        "issdssssssssd",
+        $pay['id'],
+        $res['reservation_id'],
+        $pay['payment_method'],
+        $pay['amount'],
+        $receipt_id,
+        $proof_file,
+        $proof_path,
+        $payment_type,
+        $received_by,
+        $payment_date,
+        $notes,
+        $is_fnb,
+        $fnb_amount,
+        $created_at
+    );
+    $archivePayStmt->execute();
+    $archivePayStmt->close();
+}
+                    // 4. Archive tickets for this reservation
+                    $tickets = $conn->query("SELECT * FROM ticket_codes WHERE reservation_id = '{$res['reservation_id']}'");
+                    while ($tic = $tickets->fetch_assoc()) {
+                        $archiveTicketStmt = $conn->prepare("
+                            INSERT INTO archived_ticket_codes (
+                                id, archived_reservation_id, ticket_code, guest_type, guest_number,
+                                is_scanned, scanned_at, created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ");
+                        $archiveTicketStmt->bind_param(
+                            "issiiiss",
+                            $tic['id'],
+                            $res['reservation_id'],
+                            $tic['ticket_code'],
+                            $tic['guest_type'],
+                            $tic['guest_number'],
+                            $tic['is_scanned'],
+                            $tic['scanned_at'],
+                            $tic['created_at']
+                        );
+                        $archiveTicketStmt->execute();
+                        $archiveTicketStmt->close();
+                    }
+                }
+
+                // 5. Archive credit notes for this event
+                $creditNotes = $conn->query("
+                    SELECT cn.* FROM credit_notes cn
+                    JOIN reservations r ON cn.reservation_id = r.reservation_id
+                    WHERE r.event_id = $selected_event_id
+                ");
+                while ($cn = $creditNotes->fetch_assoc()) {
+                    $archiveCnStmt = $conn->prepare("
+                        INSERT INTO archived_credit_notes (
+                            id, archived_reservation_id, amount, reason, status,
+                            created_by, processed_at, notes, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ");
+                    $archiveCnStmt->bind_param(
+                        "isdssssss",
+                        $cn['id'],
+                        $cn['reservation_id'],
+                        $cn['amount'],
+                        $cn['reason'],
+                        $cn['status'],
+                        $cn['created_by'],
+                        $cn['processed_at'],
+                        $cn['notes'],
+                        $cn['created_at']
+                    );
+                    $archiveCnStmt->execute();
+                    $archiveCnStmt->close();
+                }
+
+                // 6. Update event status to completed
+                $updateStmt = $conn->prepare("UPDATE event_settings SET status = 'completed', is_closed = 1, closed_at = NOW() WHERE id = ?");
+                $updateStmt->bind_param("i", $selected_event_id);
+                $updateStmt->execute();
+                $updateStmt->close();
+
+                $conn->commit();
+
+                $_SESSION['switch_error'] = "Event has been closed and archived successfully! Data preserved for reporting.";
+                $_SESSION['switch_error_type'] = "success";
+            } else {
+                throw new Exception("Event not found");
+            }
+        } catch (Exception $e) {
+            $conn->rollback();
+            $_SESSION['switch_error'] = "Error closing event: " . $e->getMessage();
+            $_SESSION['switch_error_type'] = "error";
+        }
+
+        header('Location: dashboard.php');
+        exit();
+    } else {
+        $_SESSION['switch_error'] = "Invalid password! Event not closed.";
+        $_SESSION['switch_error_type'] = "error";
+        header('Location: dashboard.php');
+        exit();
+    }
+}
+
 // Get event-specific ticket prices
 $event_ticket_prices = $_SESSION['event_ticket_prices'] ?? null;
-
 if (!$event_ticket_prices && $selected_event_id > 0) {
-    $stmt = $conn->prepare("SELECT ticket_price_adult, ticket_price_teen, ticket_price_kid FROM event_settings WHERE id = ?");
+    $stmt = $conn->prepare("SELECT ticket_price_adult, ticket_price_teen, ticket_price_kid, loyalty_price_adult, loyalty_price_teen, loyalty_price_kid FROM event_settings WHERE id = ?");
     $stmt->bind_param("i", $selected_event_id);
     $stmt->execute();
     $event_prices = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-
     if ($event_prices) {
         $event_ticket_prices = [
             'adult' => $event_prices['ticket_price_adult'],
             'teen' => $event_prices['ticket_price_teen'],
-            'kid' => $event_prices['ticket_price_kid']
+            'kid' => $event_prices['ticket_price_kid'],
+            'loyalty_adult' => $event_prices['loyalty_price_adult'] ?? $event_prices['ticket_price_adult'] * 0.8,
+            'loyalty_teen' => $event_prices['loyalty_price_teen'] ?? $event_prices['ticket_price_teen'] * 0.8,
+            'loyalty_kid' => $event_prices['loyalty_price_kid'] ?? $event_prices['ticket_price_kid']
         ];
         $_SESSION['event_ticket_prices'] = $event_ticket_prices;
     }
 }
 
-// Use event-specific prices or fall back to system settings
-$adultPrice = $event_ticket_prices['adult'] ?? getSetting('ticket_price_adult', 10);
-$teenPrice = $event_ticket_prices['teen'] ?? getSetting('ticket_price_teen', 10);
+$adultPrice = $event_ticket_prices['adult'] ?? getSetting('ticket_price_adult', 8);
+$teenPrice = $event_ticket_prices['teen'] ?? getSetting('ticket_price_teen', 8);
 $kidPrice = $event_ticket_prices['kid'] ?? getSetting('ticket_price_kid', 0);
+$loyaltyAdultPrice = $event_ticket_prices['loyalty_adult'] ?? $adultPrice * 0.8;
+$loyaltyTeenPrice = $event_ticket_prices['loyalty_teen'] ?? $teenPrice * 0.8;
+$loyaltyKidPrice = $event_ticket_prices['loyalty_kid'] ?? $kidPrice;
 
 // Get filters
 $status_filter = isset($_GET['status']) ? $_GET['status'] : '';
 $search = isset($_GET['search']) ? sanitizeInput($_GET['search']) : '';
 
-// Build query with total paid from split_payments
 $query = "SELECT r.*, 
-          COALESCE((SELECT SUM(amount) FROM split_payments WHERE reservation_id = r.reservation_id), 0) as total_paid
-          FROM reservations r WHERE 1=1";
-$params = [];
-$types = "";
+    COALESCE(SUM(sp.amount), 0) as total_paid,
+    CASE 
+        WHEN r.status = 'cancelled' THEN 0
+        ELSE (r.total_amount - COALESCE(SUM(sp.amount), 0))
+    END as actual_amount_due
+    FROM reservations r
+    LEFT JOIN split_payments sp ON r.reservation_id = sp.reservation_id
+    WHERE r.event_id = ?
+    GROUP BY r.reservation_id";
+$params = [$selected_event_id];
+$types = "i";
 
 if ($status_filter && $status_filter != 'all') {
     $query .= " AND r.status = ?";
@@ -77,111 +303,203 @@ $stmt->execute();
 $reservations = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
-// Calculate actual amount due for each reservation
-foreach ($reservations as &$res) {
-    // Get total paid from split_payments
-    $stmt_paid = $conn->prepare("SELECT COALESCE(SUM(amount), 0) as total_paid FROM split_payments WHERE reservation_id = ?");
-    $stmt_paid->bind_param("s", $res['reservation_id']);
-    $stmt_paid->execute();
-    $paidResult = $stmt_paid->get_result()->fetch_assoc();
-    $stmt_paid->close();
-    
-    $totalPaid = floatval($paidResult['total_paid']);
-    $totalAmount = floatval($res['total_amount']);
-    $res['actual_amount_due'] = max(0, $totalAmount - $totalPaid);
-    $res['total_paid'] = $totalPaid;
-}
-unset($res);
+// ========== CORRECTED STATISTICS QUERIES ==========
 
-// Get statistics
-$statsResult = $conn->query("SELECT 
-    COUNT(*) as total,
-    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-    SUM(CASE WHEN status = 'registered' THEN 1 ELSE 0 END) as registered,
-    SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid,
-    SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
-    SUM(additional_amount_due) as total_additional_due
-FROM reservations");
+// 1. RESERVATION COUNTS (by event)
+$statsResult = $conn->prepare("
+    SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN status = 'registered' THEN 1 ELSE 0 END) as registered,
+        SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid,
+        SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
+    FROM reservations
+    WHERE event_id = ?
+");
+$statsResult->bind_param("i", $selected_event_id);
+$statsResult->execute();
+$stats = $statsResult->get_result()->fetch_assoc();
+$statsResult->close();
 
-$stats = $statsResult->fetch_assoc();
-$stats = [
-    'total' => $stats['total'] ?? 0,
-    'pending' => $stats['pending'] ?? 0,
-    'registered' => $stats['registered'] ?? 0,
-    'paid' => $stats['paid'] ?? 0,
-    'cancelled' => $stats['cancelled'] ?? 0,
-    'total_additional_due' => $stats['total_additional_due'] ?? 0
-];
+// 2. AMOUNT DUE (Only from pending/registered)
+$amountDueResult = $conn->prepare("
+    SELECT COALESCE(SUM(additional_amount_due), 0) as total
+    FROM reservations
+    WHERE event_id = ? AND status IN ('pending', 'registered')
+");
+$amountDueResult->bind_param("i", $selected_event_id);
+$amountDueResult->execute();
+$totalAmountDue = $amountDueResult->get_result()->fetch_assoc()['total'];
+$amountDueResult->close();
 
-// Get attendee stats
-$attendeeResult = $conn->query("SELECT 
-    SUM(CASE WHEN status = 'paid' THEN adults ELSE 0 END) as total_adults,
-    SUM(CASE WHEN status = 'paid' THEN teens ELSE 0 END) as total_teens,
-    SUM(CASE WHEN status = 'paid' THEN kids ELSE 0 END) as total_kids,
-    SUM(CASE WHEN status = 'paid' THEN adults + teens + kids ELSE 0 END) as total_attendees,
-    SUM(CASE WHEN status IN ('pending', 'registered') THEN adults + teens + kids ELSE 0 END) as pending_attendees
-FROM reservations");
+// 3. ATTENDEE STATS - COMPLETE WITH PENDING BREAKDOWN
+$attendeeResult = $conn->prepare("
+    SELECT 
+        -- FULLY PAID ATTENDEES (status = 'paid' AND additional_amount_due = 0)
+        SUM(CASE WHEN status = 'paid' AND additional_amount_due = 0 THEN adults ELSE 0 END) as fully_paid_adults,
+        SUM(CASE WHEN status = 'paid' AND additional_amount_due = 0 THEN teens ELSE 0 END) as fully_paid_teens,
+        SUM(CASE WHEN status = 'paid' AND additional_amount_due = 0 THEN kids ELSE 0 END) as fully_paid_kids,
+        SUM(CASE WHEN status = 'paid' AND additional_amount_due = 0 THEN adults + teens + kids ELSE 0 END) as total_attendees_paid,
+        
+        -- TOTAL BOOKED (all non-cancelled - for reference)
+        SUM(CASE WHEN status != 'cancelled' THEN adults ELSE 0 END) as total_adults,
+        SUM(CASE WHEN status != 'cancelled' THEN teens ELSE 0 END) as total_teens,
+        SUM(CASE WHEN status != 'cancelled' THEN kids ELSE 0 END) as total_kids,
+        SUM(CASE WHEN status != 'cancelled' THEN adults + teens + kids ELSE 0 END) as total_attendees,
+        
+        -- PENDING BREAKDOWN BY GENDER (all pending attendees)
+        SUM(CASE WHEN (status IN ('pending', 'registered') OR additional_amount_due > 0) AND status != 'cancelled'
+            THEN adults ELSE 0 END) as pending_adults,
+        SUM(CASE WHEN (status IN ('pending', 'registered') OR additional_amount_due > 0) AND status != 'cancelled'
+            THEN teens ELSE 0 END) as pending_teens,
+        SUM(CASE WHEN (status IN ('pending', 'registered') OR additional_amount_due > 0) AND status != 'cancelled'
+            THEN kids ELSE 0 END) as pending_kids,
+        
+        -- NEW PENDING ATTENDEES (never paid)
+        SUM(CASE WHEN (status IN ('pending', 'registered') AND additional_amount_due = total_amount)
+                AND status != 'cancelled'
+            THEN adults + teens + kids ELSE 0 END) as new_pending_attendees,
+            
+        -- OLD PENDING ATTENDEES (had payments before, but increased guests)
+        SUM(CASE WHEN (status IN ('pending', 'registered') AND additional_amount_due > 0 AND additional_amount_due < total_amount)
+                AND status != 'cancelled'
+            THEN adults + teens + kids ELSE 0 END) as old_pending_attendees,
+            
+        -- Total pending
+        SUM(CASE WHEN (status IN ('pending', 'registered') OR additional_amount_due > 0) AND status != 'cancelled'
+            THEN adults + teens + kids ELSE 0 END) as total_pending_attendees
+    FROM reservations
+    WHERE event_id = ?
+");
+$attendeeResult->bind_param("i", $selected_event_id);
+$attendeeResult->execute();
+$attendeeStats = $attendeeResult->get_result()->fetch_assoc();
+$attendeeResult->close();
 
-$attendeeStats = $attendeeResult->fetch_assoc();
-$attendeeStats = [
-    'total_adults' => $attendeeStats['total_adults'] ?? 0,
-    'total_teens' => $attendeeStats['total_teens'] ?? 0,
-    'total_kids' => $attendeeStats['total_kids'] ?? 0,
-    'total_attendees' => $attendeeStats['total_attendees'] ?? 0,
-    'pending_attendees' => $attendeeStats['pending_attendees'] ?? 0
-];
+// 4. REVENUE FROM ALL PAYMENTS (by event)
+$allPaymentsResult = $conn->prepare("
+    SELECT 
+        SUM(CASE WHEN sp.payment_method = 'cash' THEN sp.amount ELSE 0 END) as cash,
+        SUM(CASE WHEN sp.payment_method = 'cliq' THEN sp.amount ELSE 0 END) as cliq,
+        SUM(CASE WHEN sp.payment_method = 'visa' THEN sp.amount ELSE 0 END) as visa,
+        SUM(sp.amount) as total,
+        SUM(CASE WHEN r.price_tier = 'regular' THEN sp.amount ELSE 0 END) as regular_revenue,
+        SUM(CASE WHEN r.price_tier = 'loyalty' THEN sp.amount ELSE 0 END) as loyalty_revenue
+    FROM split_payments sp
+    INNER JOIN reservations r ON sp.reservation_id = r.reservation_id
+    WHERE r.event_id = ? AND r.status != 'cancelled'
+");
+$allPaymentsResult->bind_param("i", $selected_event_id);
+$allPaymentsResult->execute();
+$allPayments = $allPaymentsResult->get_result()->fetch_assoc();
+$allPaymentsResult->close();
 
-// Get revenue by payment method
-$revenueResult = $conn->query("SELECT 
-    SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END) as cash,
-    SUM(CASE WHEN payment_method = 'cliq' THEN amount ELSE 0 END) as cliq,
-    SUM(CASE WHEN payment_method = 'visa' THEN amount ELSE 0 END) as visa,
-    SUM(amount) as total
-FROM split_payments");
+// 5. REFUNDS
+$refundResult = $conn->prepare("
+    SELECT COALESCE(SUM(amount), 0) as total 
+    FROM credit_notes cn
+    INNER JOIN reservations r ON cn.reservation_id = r.reservation_id
+    WHERE cn.status = 'processed' AND r.event_id = ?
+");
+$refundResult->bind_param("i", $selected_event_id);
+$refundResult->execute();
+$totalRefunded = $refundResult->get_result()->fetch_assoc()['total'] ?? 0;
+$refundResult->close();
 
-$revenue = $revenueResult->fetch_assoc();
-$revenue = [
-    'cash' => $revenue['cash'] ?? 0,
-    'cliq' => $revenue['cliq'] ?? 0,
-    'visa' => $revenue['visa'] ?? 0,
-    'total' => $revenue['total'] ?? 0
-];
+// 6. NET REVENUE
+$netRevenue = max(0, floatval($allPayments['total']) - $totalRefunded);
+$regularNetRevenue = max(0, floatval($allPayments['regular_revenue']) - $totalRefunded * (floatval($allPayments['regular_revenue']) / max(1, floatval($allPayments['total']))));
+$loyaltyNetRevenue = max(0, floatval($allPayments['loyalty_revenue']) - $totalRefunded * (floatval($allPayments['loyalty_revenue']) / max(1, floatval($allPayments['total']))));
 
-// Get cancelled revenue
-$cancelledResult = $conn->query("SELECT SUM(total_amount) as total FROM reservations WHERE status = 'cancelled' AND total_amount > 0");
-$cancelledRow = $cancelledResult->fetch_assoc();
-$cancelledRevenue = $cancelledRow['total'] ?? 0;
+// 7. CANCELLED STATS
+$cancelledResult = $conn->prepare("
+    SELECT 
+        COUNT(*) as count,
+        COALESCE(SUM(sp.amount), 0) as total_paid
+    FROM reservations r
+    LEFT JOIN split_payments sp ON r.reservation_id = sp.reservation_id
+    WHERE r.event_id = ? AND r.status = 'cancelled'
+");
+$cancelledResult->bind_param("i", $selected_event_id);
+$cancelledResult->execute();
+$cancelledData = $cancelledResult->get_result()->fetch_assoc();
+$cancelledResult->close();
+$cancelledCount = $cancelledData['count'] ?? 0;
+$cancelledRevenue = $cancelledData['total_paid'] ?? 0;
 
+// ========== SYSTEM SETTINGS ==========
 $currency = getSetting('currency', 'JOD');
 $currencySymbol = getCurrencySymbol();
 $siteName = getSetting('site_name', 'Ticketing System');
 $themeColor = getSetting('theme_color', '#4f46e5');
 
-// Get today's stats
-$todayResult = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE DATE(created_at) = CURDATE()");
-$todayCount = $todayResult->fetch_assoc()['count'] ?? 0;
-
-// Check for switch error message
+// ========== SWITCH ERROR MESSAGES ==========
 $switch_error = $_SESSION['switch_error'] ?? '';
 $switch_error_type = $_SESSION['switch_error_type'] ?? '';
 unset($_SESSION['switch_error']);
 unset($_SESSION['switch_error_type']);
 
-// Get event count for switch button
+// ========== EVENT COUNT FOR SWITCH BUTTON ==========
 $conn_count = getConnection();
-$eventCountResult = $conn_count->query("SELECT COUNT(*) as count FROM event_settings WHERE status != 'completed'");
-$activeEventCount = $eventCountResult->fetch_assoc()['count'];
+$eventCountResult = $conn_count->prepare("SELECT COUNT(*) as count FROM event_settings WHERE status != 'completed'");
+$eventCountResult->execute();
+$activeEventCount = $eventCountResult->get_result()->fetch_assoc()['count'];
 $conn_count->close();
+
+// Calculate days left to event
+$today = new DateTime();
+$daysLeft = null;
+$eventDateObj = null;
+$daysLeftText = '';
+$daysLeftClass = '';
+
+if ($selected_event_date && $selected_event_date != '') {
+    $eventDateObj = new DateTime($selected_event_date);
+    $interval = $today->diff($eventDateObj);
+    $daysLeft = intval($interval->format('%r%a'));
+    
+    if ($daysLeft < 0) {
+        $daysLeftText = 'Event passed';
+        $daysLeftClass = 'event-passed';
+    } elseif ($daysLeft == 0) {
+        $daysLeftText = '🎉 TODAY IS THE EVENT DAY! 🎉';
+        $daysLeftClass = 'event-today';
+    } elseif ($daysLeft == 1) {
+        $daysLeftText = '🔥 TOMORROW! 1 day remaining 🔥';
+        $daysLeftClass = 'event-urgent';
+    } elseif ($daysLeft <= 7) {
+        $daysLeftText = "⚠️ Only $daysLeft days remaining! ⚠️";
+        $daysLeftClass = 'event-warning';
+    } else {
+        $daysLeftText = "📅 $daysLeft days until the event";
+        $daysLeftClass = 'event-normal';
+    }
+}
+
+// Get floor plan image
+$floorPlanImage = '';
+if ($selected_event_id > 0) {
+    $checkColumn = $conn->query("SHOW COLUMNS FROM event_settings LIKE 'floor_plan_image'");
+    if ($checkColumn && $checkColumn->num_rows > 0) {
+        $floorPlanResult = $conn->prepare("SELECT floor_plan_image FROM event_settings WHERE id = ?");
+        $floorPlanResult->bind_param("i", $selected_event_id);
+        $floorPlanResult->execute();
+        $floorPlanData = $floorPlanResult->get_result()->fetch_assoc();
+        $floorPlanResult->close();
+        $floorPlanImage = $floorPlanData['floor_plan_image'] ?? '';
+    }
+}
 
 $conn->close();
 ?>
 <!DOCTYPE html>
-<html lang="<?php echo $lang; ?>" dir="<?php echo getDirection(); ?>">
+<html lang="<?php echo getCurrentLanguage(); ?>" dir="<?php echo getDirection(); ?>">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
-    <title><?php echo t('dashboard'); ?> - <?php echo htmlspecialchars($siteName); ?></title>
+    <title><?php echo t('Dashboard'); ?> - <?php echo htmlspecialchars($siteName); ?></title>
+    <link rel="shortcut icon" href="favicon.jpg" type="image/x-icon">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
         * {
@@ -270,14 +588,6 @@ $conn->close();
             display: flex;
             align-items: center;
             justify-content: center;
-        }
-
-        .dark-mode-toggle:hover {
-            background: rgba(0, 0, 0, 0.1);
-        }
-
-        body.dark-mode .dark-mode-toggle:hover {
-            background: rgba(255, 255, 255, 0.1);
         }
 
         .language-switcher {
@@ -402,6 +712,132 @@ $conn->close();
             margin-right: 6px;
         }
 
+        /* Date & Countdown Styles */
+        .date-countdown {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+
+        .date-box, .countdown-box {
+            background: white;
+            border-radius: 20px;
+            padding: 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        body.dark-mode .date-box, body.dark-mode .countdown-box {
+            background: #1e293b;
+        }
+
+        .date-box i, .countdown-box i {
+            font-size: 36px;
+            color: #4f46e5;
+        }
+
+        .date-info, .countdown-info {
+            flex: 1;
+        }
+
+        .date-label, .countdown-label {
+            font-size: 12px;
+            color: #64748b;
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        body.dark-mode .date-label, body.dark-mode .countdown-label {
+            color: #94a3b8;
+        }
+
+        .date-value {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1e293b;
+            display: block;
+        }
+
+        body.dark-mode .date-value {
+            color: #e2e8f0;
+        }
+
+        .date-time {
+            font-size: 14px;
+            color: #4f46e5;
+            display: block;
+            margin-top: 3px;
+        }
+
+        .countdown-value {
+            font-size: 18px;
+            font-weight: 600;
+            display: block;
+        }
+
+        .countdown-box.event-today {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+        }
+        .countdown-box.event-today i,
+        .countdown-box.event-today .countdown-label,
+        .countdown-box.event-today .countdown-value {
+            color: white;
+        }
+
+        .countdown-box.event-urgent {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: white;
+        }
+        .countdown-box.event-urgent i,
+        .countdown-box.event-urgent .countdown-label,
+        .countdown-box.event-urgent .countdown-value {
+            color: white;
+        }
+
+        .countdown-box.event-warning {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+        }
+        .countdown-box.event-warning i,
+        .countdown-box.event-warning .countdown-label,
+        .countdown-box.event-warning .countdown-value {
+            color: white;
+        }
+
+        .countdown-box.event-normal {
+            background: linear-gradient(135deg, #4f46e5, #4338ca);
+            color: white;
+        }
+        .countdown-box.event-normal i,
+        .countdown-box.event-normal .countdown-label,
+        .countdown-box.event-normal .countdown-value {
+            color: white;
+        }
+
+        .countdown-box.event-passed {
+            background: #64748b;
+            color: white;
+        }
+
+        .progress-bar-container {
+            background: rgba(255,255,255,0.3);
+            border-radius: 10px;
+            height: 6px;
+            margin-top: 10px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            background: rgba(255,255,255,0.9);
+            height: 100%;
+            border-radius: 10px;
+            transition: width 0.5s ease;
+        }
+
         .filters-bar {
             background: white;
             border-radius: 20px;
@@ -463,6 +899,7 @@ $conn->close();
             text-decoration: none;
             display: inline-flex;
             align-items: center;
+            margin: 3px;
             gap: 6px;
             font-weight: 500;
             font-size: 14px;
@@ -622,11 +1059,17 @@ $conn->close();
             color: #1e293b;
             text-align: center;
             min-width: 50px;
+            cursor: pointer;
         }
 
         body.dark-mode .badge-table {
             background: #334155;
             color: #e2e8f0;
+        }
+
+        .badge-table:hover {
+            background: #4f46e5;
+            color: white;
         }
 
         .guest-badge {
@@ -702,20 +1145,8 @@ $conn->close();
         }
 
         @keyframes spin {
-            0% {
-                transform: rotate(0deg);
-            }
-
-            100% {
-                transform: rotate(360deg);
-            }
-        }
-
-        .loading-text {
-            color: white;
-            margin-top: 15px;
-            font-size: 14px;
-            text-align: center;
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
 
         .sound-notification {
@@ -735,26 +1166,8 @@ $conn->close();
         }
 
         @keyframes slideInRight {
-            from {
-                opacity: 0;
-                transform: translateX(100%);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateX(0);
-            }
-        }
-
-        .sound-notification.fade-out {
-            animation: fadeOut 0.5s ease forwards;
-        }
-
-        @keyframes fadeOut {
-            to {
-                opacity: 0;
-                transform: translateX(100%);
-            }
+            from { opacity: 0; transform: translateX(100%); }
+            to { opacity: 1; transform: translateX(0); }
         }
 
         .modal-overlay {
@@ -770,10 +1183,6 @@ $conn->close();
             justify-content: center;
         }
 
-        body.dark-mode .modal-overlay {
-            background: rgba(0, 0, 0, 0.7);
-        }
-
         .modal-overlay.active {
             display: flex;
         }
@@ -782,7 +1191,7 @@ $conn->close();
             background: white;
             border-radius: 24px;
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            max-width: 600px;
+            max-width: 500px;
             width: 90%;
             max-height: 90vh;
             overflow-y: auto;
@@ -790,15 +1199,8 @@ $conn->close();
         }
 
         @keyframes modalSlideIn {
-            from {
-                opacity: 0;
-                transform: translateY(-50px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+            from { opacity: 0; transform: translateY(-50px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         body.dark-mode .modal-container {
@@ -857,7 +1259,6 @@ $conn->close();
             color: #cbd5e1;
         }
 
-        .form-group input,
         .form-group select {
             width: 100%;
             padding: 10px;
@@ -866,11 +1267,23 @@ $conn->close();
             font-size: 14px;
         }
 
-        body.dark-mode .form-group input,
         body.dark-mode .form-group select {
             background: #0f172a;
             border-color: #334155;
             color: #e2e8f0;
+        }
+
+        .modal-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        body.dark-mode .modal-buttons {
+            border-top-color: #334155;
         }
 
         .amount-due-display {
@@ -920,17 +1333,29 @@ $conn->close();
             border-radius: 8px;
         }
 
-        .modal-buttons {
-            display: flex;
-            justify-content: flex-end;
-            gap: 12px;
-            margin-top: 20px;
-            padding-top: 20px;
-            border-top: 1px solid #e2e8f0;
+        .payment-split-item .form-group input,
+        .payment-split-item .form-group select,
+        .payment-split-item .form-group input[type="text"],
+        .payment-split-item .form-group input[type="number"],
+        .payment-split-item .form-group input[type="file"] {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 10px;
+            font-size: 14px;
+            background-color: #ffffff;
+            color: #1e293b;
+            transition: all 0.2s ease;
+            box-sizing: border-box;
         }
 
-        body.dark-mode .modal-buttons {
-            border-top-color: #334155;
+        body.dark-mode .payment-split-item .form-group input,
+        body.dark-mode .payment-split-item .form-group select,
+        body.dark-mode .payment-split-item .form-group input[type="text"],
+        body.dark-mode .payment-split-item .form-group input[type="number"] {
+            background-color: #0f172a;
+            border-color: #334155;
+            color: #e2e8f0;
         }
 
         [dir="rtl"] {
@@ -965,50 +1390,74 @@ $conn->close();
             .stats-grid {
                 grid-template-columns: repeat(2, 1fr);
             }
+            .date-countdown {
+                grid-template-columns: 1fr;
+            }
         }
 
         @media (max-width: 768px) {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-
+            .date-countdown {
+                grid-template-columns: 1fr;
+            }
             .filters-bar {
                 flex-direction: column;
             }
-
             .search-box {
                 width: 100%;
             }
-
             .search-box input,
             .search-box select {
                 flex: 1;
             }
-
             .navbar {
                 flex-direction: column;
                 text-align: center;
             }
-
             .nav-links {
                 justify-content: center;
             }
-
             .header-controls {
                 justify-content: center;
             }
-
             .table-container {
                 overflow-x: auto;
             }
-
             table {
                 min-width: 850px;
             }
-
             .btn-group {
                 flex-wrap: nowrap;
             }
+        }
+
+        .alert {
+            padding: 12px 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .alert-success {
+            background: #d1fae5;
+            color: #065f46;
+            border-left: 4px solid #10b981;
+        }
+
+        .alert-error {
+            background: #fee2e2;
+            color: #991b1b;
+            border-left: 4px solid #ef4444;
+        }
+
+        .alert-warning {
+            background: #fef3c7;
+            color: #92400e;
+            border-left: 4px solid #f59e0b;
         }
     </style>
 </head>
@@ -1033,24 +1482,34 @@ $conn->close();
                         <small><?php echo $selected_event_date ? date('M d, Y', strtotime($selected_event_date)) : ''; ?></small>
                     </div>
                     <?php if ($activeEventCount > 1): ?>
-                        <a href="logout.php?switch_event=1" class="btn btn-sm btn-secondary" style="padding: 4px 8px;" title="Switch to another event">
+                        <a href="switch_event.php" class="btn btn-sm btn-secondary" style="padding: 4px 12px;">
                             <i class="bi bi-arrow-repeat"></i> Switch
                         </a>
                     <?php else: ?>
-                        <button class="btn btn-sm btn-secondary" style="padding: 4px 8px; opacity: 0.5; cursor: not-allowed;" disabled title="Only one event available">
+                        <button class="btn btn-sm btn-secondary" style="padding: 4px 12px; opacity: 0.5;" disabled title="Only one event available">
                             <i class="bi bi-arrow-repeat"></i> Switch
                         </button>
+                    <?php endif; ?>
+                    <?php if (!$isEventClosed && $selected_event_id > 0): ?>
+                        <button onclick="openCloseEventModal()" class="btn btn-sm btn-danger" style="padding: 4px 12px;">
+                            <i class="bi bi-lock-fill"></i> Close Event
+                        </button>
+                    <?php endif; ?>
+                    <?php if ($floorPlanImage): ?>
+                        <a href="floor_plan.php" class="btn btn-sm btn-info" style="padding: 4px 12px;">
+                            <i class="bi bi-map"></i> Floor Plan
+                        </a>
                     <?php endif; ?>
                 </div>
                 <div class="header-controls">
                     <button id="darkModeToggle" class="dark-mode-toggle"><i class="bi bi-moon-fill"></i></button>
                     <div class="language-switcher">
-                        <button onclick="setLanguage('en')" class="<?php echo $lang == 'en' ? 'active' : ''; ?>">EN</button>
-                        <button onclick="setLanguage('ar')" class="<?php echo $lang == 'ar' ? 'active' : ''; ?>">AR</button>
+                        <button onclick="setLanguage('en')" class="<?php echo getCurrentLanguage() == 'en' ? 'active' : ''; ?>">EN</button>
+                        <button onclick="setLanguage('ar')" class="<?php echo getCurrentLanguage() == 'ar' ? 'active' : ''; ?>">AR</button>
                     </div>
                     <button id="soundToggle" onclick="toggleSound()" class="btn btn-secondary" style="background: #10b981;"><i class="bi bi-volume-up-fill"></i> Sound On</button>
-                    <span><i class="bi bi-person-circle"></i> <?php echo t('welcome'); ?>, <?php echo htmlspecialchars($_SESSION['admin_username']); ?></span>
-                    <a href="logout.php" class="btn-logout"><i class="bi bi-box-arrow-right"></i> <?php echo t('logout'); ?></a>
+                    <span><i class="bi bi-person-circle"></i> <?php echo t('Welcome'); ?>, <?php echo htmlspecialchars($_SESSION['admin_username']); ?></span>
+                    <a href="logout.php" class="btn-logout"><i class="bi bi-box-arrow-right"></i> <?php echo t('Logout'); ?></a>
                 </div>
             </div>
         </div>
@@ -1063,83 +1522,69 @@ $conn->close();
         <?php endif; ?>
 
         <div class="stats-grid">
+            <!-- Total Booked Card -->
             <div class="stat-card primary">
-                <div class="stat-number"><?php echo number_format(floatval($attendeeStats['total_attendees'])); ?></div>
-                <div class="stat-label"><i class="bi bi-people-fill"></i> <?php echo t('total_attendees'); ?></div>
+                <div class="stat-number"><?php echo number_format(floatval($attendeeStats['total_attendees_paid'] ?? 0)); ?></div>
+                <div class="stat-label"><i class="bi bi-people-fill"></i> <?php echo t('Total Booked (Paid)'); ?></div>
                 <div class="stat-details">
-                    <div class="detail-item">
-                        <span><i class="bi bi-gender-male"></i> <?php echo t('adults'); ?></span>
-                        <span><?php echo number_format(floatval($attendeeStats['total_adults'])); ?></span>
-                    </div>
-                    <div class="detail-item">
-                        <span><i class="bi bi-gender-female"></i> <?php echo t('teens'); ?></span>
-                        <span><?php echo number_format(floatval($attendeeStats['total_teens'])); ?></span>
-                    </div>
-                    <div class="detail-item">
-                        <span><i class="bi bi-egg-fried"></i> <?php echo t('kids'); ?></span>
-                        <span><?php echo number_format(floatval($attendeeStats['total_kids'])); ?></span>
-                    </div>
+                    <div class="detail-item"><span><i class="bi bi-gender-male"></i> <?php echo t('Adults (Paid)'); ?></span><span><?php echo number_format(floatval($attendeeStats['fully_paid_adults'] ?? 0)); ?></span></div>
+                    <div class="detail-item"><span><i class="bi bi-gender-female"></i> <?php echo t('Teens (Paid)'); ?></span><span><?php echo number_format(floatval($attendeeStats['fully_paid_teens'] ?? 0)); ?></span></div>
+                    <div class="detail-item"><span><i class="bi bi-egg-fried"></i> <?php echo t('Kids (Paid)'); ?></span><span><?php echo number_format(floatval($attendeeStats['fully_paid_kids'] ?? 0)); ?></span></div>
                 </div>
             </div>
 
+            <!-- Pending Attendees Card -->
             <div class="stat-card warning">
-                <div class="stat-number"><?php echo number_format(floatval($attendeeStats['pending_attendees'])); ?></div>
-                <div class="stat-label"><i class="bi bi-hourglass-split"></i> <?php echo t('pending_attendees'); ?></div>
+                <div class="stat-number"><?php echo number_format(floatval($attendeeStats['total_pending_attendees'] ?? 0)); ?></div>
+                <div class="stat-label"><i class="bi bi-hourglass-split"></i> <?php echo t('Pending Attendees'); ?></div>
                 <div class="stat-details">
                     <div class="detail-item">
-                        <span><i class="bi bi-currency-dollar"></i> <?php echo t('amount_due'); ?></span>
-                        <span><?php echo number_format(floatval($stats['total_additional_due']), 2); ?> <?php echo $currencySymbol; ?></span>
+                        <span><i class="bi bi-plus-circle"></i> New (Never Paid)</span>
+                        <span><?php echo number_format(floatval($attendeeStats['new_pending_attendees'] ?? 0)); ?></span>
                     </div>
                     <div class="detail-item">
-                        <span><i class="bi bi-clock-history"></i> <?php echo t('pending'); ?></span>
-                        <span><?php echo intval($stats['pending']) + intval($stats['registered']); ?> <?php echo t('reservations'); ?></span>
+                        <span><i class="bi bi-arrow-repeat"></i> Old (Additional Due)</span>
+                        <span><?php echo number_format(floatval($attendeeStats['old_pending_attendees'] ?? 0)); ?></span>
+                    </div>
+                    <div class="detail-item">
+                        <span><i class="bi bi-gender-male"></i> Adults Pending</span>
+                        <span><?php echo number_format(floatval($attendeeStats['pending_adults'] ?? 0)); ?></span>
+                    </div>
+                    <div class="detail-item">
+                        <span><i class="bi bi-gender-female"></i> Teens Pending</span>
+                        <span><?php echo number_format(floatval($attendeeStats['pending_teens'] ?? 0)); ?></span>
+                    </div>
+                    <div class="detail-item">
+                        <span><i class="bi bi-egg-fried"></i> Kids Pending</span>
+                        <span><?php echo number_format(floatval($attendeeStats['pending_kids'] ?? 0)); ?></span>
+                    </div>
+                    <div class="detail-item">
+                        <span><i class="bi bi-currency-dollar"></i> <?php echo t('Amount Due'); ?></span>
+                        <span><?php echo number_format(floatval($totalAmountDue), 2); ?> <?php echo $currencySymbol; ?></span>
                     </div>
                 </div>
             </div>
 
+            <!-- Revenue Card -->
             <div class="stat-card success">
-                <div class="stat-number"><?php echo number_format(floatval($revenue['total']), 2); ?> <?php echo $currencySymbol; ?></div>
-                <div class="stat-label"><i class="bi bi-graph-up"></i> <?php echo t('total_revenue'); ?></div>
+                <div class="stat-number"><?php echo number_format(floatval($allPayments['total'] ?? 0), 2); ?> <?php echo $currencySymbol; ?></div>
+                <div class="stat-label"><i class="bi bi-cash-stack"></i> <?php echo t('Total Revenue'); ?></div>
                 <div class="stat-details">
-                    <div class="detail-item">
-                        <span><i class="bi bi-cash-stack"></i> <?php echo t('cash'); ?></span>
-                        <span><?php echo number_format(floatval($revenue['cash']), 2); ?> <?php echo $currencySymbol; ?></span>
-                    </div>
-                    <div class="detail-item">
-                        <span><i class="bi bi-phone"></i> <?php echo t('cliq'); ?></span>
-                        <span><?php echo number_format(floatval($revenue['cliq']), 2); ?> <?php echo $currencySymbol; ?></span>
-                    </div>
-                    <div class="detail-item">
-                        <span><i class="bi bi-credit-card"></i> <?php echo t('visa'); ?></span>
-                        <span><?php echo number_format(floatval($revenue['visa']), 2); ?> <?php echo $currencySymbol; ?></span>
-                    </div>
-                    <div class="detail-item">
-                        <span><i class="bi bi-x-circle"></i> <?php echo t('cancelled'); ?></span>
-                        <span class="detail-value" style="color: #fecaca;">- <?php echo number_format(floatval($cancelledRevenue), 2); ?> <?php echo $currencySymbol; ?></span>
-                    </div>
+                    <div class="detail-item"><span><i class="bi bi-cash-stack"></i> <?php echo t('Cash'); ?></span><span><?php echo number_format(floatval($allPayments['cash'] ?? 0), 2); ?> <?php echo $currencySymbol; ?></span></div>
+                    <div class="detail-item"><span><i class="bi bi-phone"></i> <?php echo t('Cliq'); ?></span><span><?php echo number_format(floatval($allPayments['cliq'] ?? 0), 2); ?> <?php echo $currencySymbol; ?></span></div>
+                    <div class="detail-item"><span><i class="bi bi-credit-card"></i> <?php echo t('Visa'); ?></span><span><?php echo number_format(floatval($allPayments['visa'] ?? 0), 2); ?> <?php echo $currencySymbol; ?></span></div>
                 </div>
             </div>
 
+            <!-- Net Revenue Card -->
             <div class="stat-card info">
-                <div class="stat-number"><?php echo intval($stats['total']); ?></div>
-                <div class="stat-label"><i class="bi bi-calendar-check"></i> <?php echo t('total_reservations'); ?></div>
+                <div class="stat-number"><?php echo number_format(floatval($netRevenue), 2); ?> <?php echo $currencySymbol; ?></div>
+                <div class="stat-label"><i class="bi bi-graph-up"></i> <?php echo t('Net Revenue'); ?></div>
                 <div class="stat-details">
-                    <div class="detail-item">
-                        <span><i class="bi bi-hourglass-top"></i> <?php echo t('pending'); ?></span>
-                        <span><?php echo intval($stats['pending']); ?></span>
-                    </div>
-                    <div class="detail-item">
-                        <span><i class="bi bi-check-circle"></i> <?php echo t('registered'); ?></span>
-                        <span><?php echo intval($stats['registered']); ?></span>
-                    </div>
-                    <div class="detail-item">
-                        <span><i class="bi bi-check-circle-fill"></i> <?php echo t('paid'); ?></span>
-                        <span><?php echo intval($stats['paid']); ?></span>
-                    </div>
-                    <div class="detail-item">
-                        <span><i class="bi bi-slash-circle"></i> <?php echo t('cancelled'); ?></span>
-                        <span><?php echo intval($stats['cancelled']); ?></span>
-                    </div>
+                    <div class="detail-item"><span><i class="bi bi-tag"></i> Regular Price</span><span><?php echo number_format(floatval($regularNetRevenue), 2); ?> <?php echo $currencySymbol; ?></span></div>
+                    <div class="detail-item"><span><i class="bi bi-star"></i> Loyalty Price</span><span><?php echo number_format(floatval($loyaltyNetRevenue), 2); ?> <?php echo $currencySymbol; ?></span></div>
+                    <div class="detail-item"><span><i class="bi bi-arrow-return-left"></i> <?php echo t('Refunds'); ?></span><span class="detail-value" style="color: #f59e0b;">- <?php echo number_format(floatval($totalRefunded), 2); ?> <?php echo $currencySymbol; ?></span></div>
+                    <div class="detail-item"><span><i class="bi bi-x-circle"></i> <?php echo t('Cancelled'); ?></span><span class="detail-value" style="color: #fecaca;">- <?php echo number_format(floatval($cancelledRevenue), 2); ?> <?php echo $currencySymbol; ?></span></div>
                 </div>
             </div>
         </div>
@@ -1147,27 +1592,30 @@ $conn->close();
         <div class="filters-bar">
             <div class="search-box">
                 <i class="bi bi-search search-icon"></i>
-                <input type="text" id="search" placeholder="<?php echo t('search'); ?>" value="<?php echo htmlspecialchars($search); ?>">
+                <input type="text" id="search" placeholder="<?php echo t('Search'); ?>" value="<?php echo htmlspecialchars($search); ?>">
                 <select id="statusFilter">
-                    <option value="all" <?php echo $status_filter == 'all' ? 'selected' : ''; ?>><?php echo t('all'); ?></option>
-                    <option value="pending" <?php echo $status_filter == 'pending' ? 'selected' : ''; ?>><?php echo t('pending'); ?></option>
-                    <option value="registered" <?php echo $status_filter == 'registered' ? 'selected' : ''; ?>><?php echo t('registered'); ?></option>
-                    <option value="paid" <?php echo $status_filter == 'paid' ? 'selected' : ''; ?>><?php echo t('paid'); ?></option>
-                    <option value="cancelled" <?php echo $status_filter == 'cancelled' ? 'selected' : ''; ?>><?php echo t('cancelled'); ?></option>
+                    <option value="all" <?php echo $status_filter == 'all' ? 'selected' : ''; ?>><?php echo t('All'); ?></option>
+                    <option value="pending" <?php echo $status_filter == 'pending' ? 'selected' : ''; ?>><?php echo t('Pending'); ?></option>
+                    <option value="registered" <?php echo $status_filter == 'registered' ? 'selected' : ''; ?>><?php echo t('Registered'); ?></option>
+                    <option value="paid" <?php echo $status_filter == 'paid' ? 'selected' : ''; ?>><?php echo t('Paid'); ?></option>
+                    <option value="cancelled" <?php echo $status_filter == 'cancelled' ? 'selected' : ''; ?>><?php echo t('Cancelled'); ?></option>
                 </select>
-                <button onclick="applyFilters()" class="btn btn-primary"><i class="bi bi-funnel"></i> <?php echo t('apply'); ?></button>
-                <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-repeat"></i> <?php echo t('reset'); ?></a>
+                <button onclick="applyFilters()" class="btn btn-primary"><i class="bi bi-funnel"></i> <?php echo t('Apply'); ?></button>
+                <a href="dashboard.php" class="btn btn-secondary"><i class="bi bi-arrow-repeat"></i> <?php echo t('Reset'); ?></a>
             </div>
             <div>
-                <a href="create_reservation.php" class="btn btn-primary"><i class="bi bi-plus-circle"></i> <?php echo t('new_reservation'); ?></a>
-                <a href="bulk_whatsapp.php" class="btn btn-success"><i class="bi bi-whatsapp"></i> <?php echo t('bulk_whatsapp'); ?></a>
-                <a href="view_tickets.php" class="btn btn-info"><i class="bi bi-ticket-perforated"></i> All Tickets</a>
-                <button onclick="openExportModal()" class="btn btn-info"><i class="bi bi-filetype-csv"></i> <?php echo t('export_csv'); ?></button>
-                <a href="print_statement.php" class="btn btn-secondary"><i class="bi bi-printer"></i> <?php echo t('print_statement'); ?></a>
-                <a href="manager_report.php" class="btn btn-secondary"><i class="bi bi-bar-chart-steps"></i> <?php echo t('analytics'); ?></a>
+                <a href="create_reservation.php" class="btn btn-primary"><i class="bi bi-plus-circle"></i> <?php echo t('New Reservation'); ?></a>
+                <a href="bulk_whatsapp.php" class="btn btn-success"><i class="bi bi-whatsapp"></i> <?php echo t('Bulk Whatsapp'); ?></a>
+                <button onclick="openExportModal()" class="btn btn-info"><i class="bi bi-filetype-csv"></i> <?php echo t('Export CSV'); ?></button>
+                <a href="print_statement.php" class="btn btn-secondary"><i class="bi bi-printer"></i> <?php echo t('Print Statement'); ?></a>
+                <a href="manager_report.php" class="btn btn-secondary"><i class="bi bi-bar-chart-steps"></i> <?php echo t('Analytics'); ?></a>
                 <a href="tables.php" class="btn btn-secondary"><i class="bi bi-grid-3x3-gap-fill"></i> Tables</a>
-                <a href="settings.php" class="btn btn-secondary"><i class="bi bi-gear"></i> <?php echo t('system_settings'); ?></a>
                 <a href="tickets_dashboard.php" class="btn btn-info"><i class="bi bi-ticket-perforated"></i> Ticket Dashboard</a>
+                <a href="qr_scanner.php" class="btn btn-info"><i class="bi bi-qr-code"></i> Ticket Validator</a>
+                <a href="floor_plan.php" class="btn btn-secondary"><i class="bi bi-map"></i> Floor Plan</a>
+                <a href="customers.php" class="btn btn-warning"><i class="bi bi-person"></i> Customers</a>
+                <a href="ticket_transfer.php" class="btn btn-secondary"><i class="bi bi-send"></i> Transfer Ticket</a>
+                <a href="hall_report.php" class="btn btn-success"><i class="bi bi-person"></i> Hall Report</a>
             </div>
         </div>
 
@@ -1181,89 +1629,112 @@ $conn->close();
                         <th style="min-width: 80px;"><i class="bi bi-grid-3x3-gap-fill"></i> <?php echo t('table_id'); ?></th>
                         <th style="min-width: 120px;"><i class="bi bi-people"></i> <?php echo t('guests'); ?></th>
                         <th style="min-width: 100px;"><i class="bi bi-info-circle"></i> <?php echo t('status'); ?></th>
-                        <th style="min-width: 100px;"><i class="bi bi-currency-dollar"></i> <?php echo t('amount_due'); ?></th>
+                        <th style="min-width: 100px;"><i class="bi bi-currency-dollar"></i> <?php echo t('Amount Due'); ?></th>
                         <th style="min-width: 120px;"><i class="bi bi-calendar3"></i> <?php echo t('created'); ?></th>
-                        <th style="min-width: 220px;"><i class="bi bi-gear"></i> <?php echo t('actions'); ?></th>
+                        <th style="min-width: 280px;"><i class="bi bi-gear"></i> <?php echo t('actions'); ?></th>
                     </tr>
                 </thead>
                 <tbody>
-    <?php foreach ($reservations as $res): 
-        $totalGuests = ($res['adults'] ?? 0) + ($res['teens'] ?? 0) + ($res['kids'] ?? 0);
-        // Use actual_amount_due that we calculated earlier
-        $amountDue = isset($res['actual_amount_due']) ? floatval($res['actual_amount_due']) : 0;
-        
-        // Fallback calculation if not set
-        if ($amountDue == 0 && isset($res['total_amount']) && isset($res['total_paid'])) {
-            $amountDue = max(0, floatval($res['total_amount']) - floatval($res['total_paid']));
-        }
-    ?>
+                    <?php foreach ($reservations as $res):
+                        $totalGuests = ($res['adults'] ?? 0) + ($res['teens'] ?? 0) + ($res['kids'] ?? 0);
+                        $amountDue = isset($res['actual_amount_due']) ? floatval($res['actual_amount_due']) : 0;
+                    ?>
                         <tr>
                             <td><strong><?php echo htmlspecialchars($res['reservation_id']); ?></strong></td>
                             <td><?php echo htmlspecialchars($res['name']); ?></td>
                             <td><?php echo htmlspecialchars($res['phone']); ?></td>
-                            <td style="text-align: center;"><span class="badge-table"><?php echo htmlspecialchars($res['table_id']); ?></span></td>
-                            <td>
-                                <span class="guest-badge">
-                                    <?php echo $totalGuests; ?> 
-                                    <small>(<?php echo intval($res['adults'] ?? 0); ?>A, <?php echo intval($res['teens'] ?? 0); ?>T, <?php echo intval($res['kids'] ?? 0); ?>K)</small>
-                                </span>
-                            </td>
-                            <td>
-                                <span class="status-badge status-<?php echo $res['status']; ?>">
-                                    <i class="bi <?php echo $res['status'] == 'paid' ? 'bi-check-circle-fill' : ($res['status'] == 'pending' ? 'bi-hourglass-split' : ($res['status'] == 'registered' ? 'bi-check-circle' : 'bi-slash-circle')); ?>"></i>
-                                    <?php echo ucfirst($res['status']); ?>
-                                </span>
-                            </td>
-                            <td>
-                                <?php if ($amountDue > 0): ?>
-                                    <span class="amount-due-badge"><i class="bi bi-exclamation-triangle-fill"></i> <?php echo number_format($amountDue, 2); ?> <?php echo $currencySymbol; ?></span>
+                            <td style="text-align: center;">
+                                <?php if (empty($res['table_id'])): ?>
+                                    <span class="badge-table" onclick="openTableModal('<?php echo $res['reservation_id']; ?>', '<?php echo htmlspecialchars($res['name']); ?>', '<?php echo htmlspecialchars($res['phone']); ?>')" style="background: #f59e0b; color: white;">
+                                        <i class="bi bi-plus-circle"></i> Assign
+                                    </span>
                                 <?php else: ?>
-                                    <span class="text-muted">-</span>
+                                    <span class="badge-table" onclick="openTableModal('<?php echo $res['reservation_id']; ?>', '<?php echo htmlspecialchars($res['name']); ?>', '<?php echo htmlspecialchars($res['phone']); ?>')">
+                                        <?php echo htmlspecialchars($res['table_id']); ?> <i class="bi bi-pencil"></i>
+                                    </span>
                                 <?php endif; ?>
                             </td>
+                            <td><span class="guest-badge"><?php echo $totalGuests; ?> <small>(<?php echo intval($res['adults'] ?? 0); ?>A, <?php echo intval($res['teens'] ?? 0); ?>T, <?php echo intval($res['kids'] ?? 0); ?>K)</small></span></td>
+                            <td><span class="status-badge status-<?php echo $res['status']; ?>"><i class="bi <?php echo $res['status'] == 'paid' ? 'bi-check-circle-fill' : ($res['status'] == 'pending' ? 'bi-hourglass-split' : ($res['status'] == 'registered' ? 'bi-check-circle' : 'bi-slash-circle')); ?>"></i><?php echo ucfirst($res['status']); ?></span></td>
+                            <td><?php if ($amountDue > 0): ?><span class="amount-due-badge"><i class="bi bi-exclamation-triangle-fill"></i> <?php echo number_format($amountDue, 2); ?> <?php echo $currencySymbol; ?></span><?php else: ?><span class="text-muted">-</span><?php endif; ?></td>
                             <td><?php echo date('M d, H:i', strtotime($res['created_at'])); ?></td>
                             <td class="actions">
                                 <div class="btn-group">
-                                    <a href="view_reservation.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-secondary" title="View">
-                                        <i class="bi bi-eye"></i>
-                                    </a>
-                                    <a href="edit_reservation.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-warning" title="Edit">
-                                        <i class="bi bi-pencil"></i>
-                                    </a>
-                                    <a href="view_tickets.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-info" title="View Tickets">
-                                        <i class="bi bi-ticket-perforated"></i>
-                                    </a>
-                                    
-                                   <!-- PAYMENT BUTTON - FIXED -->
-<?php if ($res['status'] != 'cancelled' && $amountDue > 0): ?>
-    <button onclick="openPaymentModal('<?php echo $res['reservation_id']; ?>', <?php echo floatval($res['total_amount'] ?? 0); ?>, <?php echo $amountDue; ?>)" class="btn btn-sm btn-success" title="Pay">
-        <i class="bi bi-credit-card"></i> Pay <?php echo number_format($amountDue, 2); ?>
-    </button>
-<?php endif; ?>
-                                    
-                                    <button onclick="deleteReservation('<?php echo $res['reservation_id']; ?>', this)" class="btn btn-sm btn-danger" title="Delete">
-                                        <i class="bi bi-trash3"></i>
-                                    </button>
-                                    <?php if ($res['status'] == 'paid'): ?>
-                                        <a href="print_ticket.php?reservation_id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-primary" title="Print Ticket">
-                                            <i class="bi bi-printer"></i>
-                                        </a>
+                                    <a href="view_reservation.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-secondary" title="View"><i class="bi bi-eye"></i></a>
+                                    <a href="edit_reservation.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-warning" title="Edit"><i class="bi bi-pencil"></i></a>
+                                    <a href="/public/reservation_tickets.php?id=<?php echo urlencode($res['reservation_id']); ?>" class="btn btn-sm btn-info" title="View Tickets"><i class="bi bi-ticket-perforated"></i></a>
+
+                                    <!-- Send Floor Plan button -->
+                                    <button onclick="sendFloorPlan('<?php echo $res['reservation_id']; ?>', '<?php echo htmlspecialchars($res['phone']); ?>', '<?php echo htmlspecialchars($res['name']); ?>')" class="btn btn-sm btn-success" title="Send Floor Plan"><i class="bi bi-map"></i></button>
+
+                                    <?php if ($res['status'] != 'cancelled' && $amountDue > 0): ?>
+                                        <button onclick="openPaymentModal('<?php echo $res['reservation_id']; ?>', <?php echo floatval($res['total_amount'] ?? 0); ?>, <?php echo $amountDue; ?>)" class="btn btn-sm btn-success" title="Pay"><i class="bi bi-credit-card"></i> Pay <?php echo number_format($amountDue, 2); ?></button>
                                     <?php endif; ?>
+                                    <button onclick="deleteReservation('<?php echo $res['reservation_id']; ?>', this)" class="btn btn-sm btn-danger" title="Delete"><i class="bi bi-trash3"></i></button>
                                 </div>
                             </td>
                         </tr>
                     <?php endforeach; ?>
-                    
                     <?php if (empty($reservations)): ?>
                         <tr>
-                            <td colspan="9" style="text-align: center; padding: 60px;">
-                                <i class="bi bi-inbox" style="font-size: 48px; opacity: 0.5;"></i>
-                                <p style="margin-top: 10px;"><?php echo t('no_reservations'); ?></p>
+                            <td colspan="9" style="text-align: center; padding: 60px;"><i class="bi bi-inbox" style="font-size: 48px; opacity: 0.5;"></i>
+                                <p style="margin-top: 10px;"><?php echo t('No Reservations'); ?></p>
                             </td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
             </table>
+        </div>
+    </div>
+
+    <!-- Table Assignment Modal -->
+    <div id="tableModal" class="modal-overlay">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h3><i class="bi bi-grid-3x3-gap-fill"></i> Assign Table Number</h3>
+                <button onclick="closeTableModal()" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="assignReservationId">
+                <div id="assignCustomerInfo" style="background: #f1f5f9; padding: 10px; border-radius: 8px; margin-bottom: 15px;"></div>
+                <div class="form-group">
+                    <label>Select Table Number</label>
+                    <select id="assignTableNumber" required>
+                        <option value="">-- Select a table --</option>
+                    </select>
+                </div>
+                <div class="modal-buttons">
+                    <button type="button" onclick="closeTableModal()" class="btn btn-secondary">Cancel</button>
+                    <button type="button" onclick="assignTable()" class="btn btn-primary">Assign Table</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Close Event Modal -->
+    <div id="closeEventModal" class="modal-overlay">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h3><i class="bi bi-lock-fill"></i> Close Event</h3>
+                <button onclick="closeCloseEventModal()" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="background: #fee2e2; padding: 15px; border-radius: 12px; margin-bottom: 20px;">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    <strong>Warning:</strong> Closing this event will prevent any further modifications to reservations. This action can be reversed by an administrator.
+                </div>
+                <form method="POST">
+                    <input type="hidden" name="close_event" value="1">
+                    <div class="form-group">
+                        <label>Enter Admin Password to Confirm</label>
+                        <input type="password" name="password" required>
+                    </div>
+                    <div class="modal-buttons">
+                        <button type="button" onclick="closeCloseEventModal()" class="btn btn-secondary">Cancel</button>
+                        <button type="submit" class="btn btn-danger">Close Event</button>
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
 
@@ -1279,20 +1750,15 @@ $conn->close();
                     <div class="label">Outstanding Balance (Amount Due)</div>
                     <div class="amount" id="modalTotalAmountDue">0.00 <?php echo $currencySymbol; ?></div>
                 </div>
-
                 <div id="remainingAmountDisplay" style="background: #fef3c7; padding: 10px; border-radius: 8px; margin-bottom: 15px; text-align: center;">
                     <small>Remaining to pay: <strong id="remainingAmount">0.00</strong> <?php echo $currencySymbol; ?></small>
                 </div>
-
                 <div id="paymentSplits"></div>
-
                 <button type="button" class="btn btn-secondary btn-sm" onclick="addPaymentSplit()" style="margin-bottom: 20px; width: 100%;">
                     <i class="bi bi-plus-circle"></i> Add Another Payment Method
                 </button>
-
                 <input type="hidden" id="paymentReservationId">
                 <input type="hidden" id="totalAmountDue">
-
                 <div class="modal-buttons">
                     <button type="button" onclick="closePaymentModal()" class="btn btn-secondary">Cancel</button>
                     <button type="button" onclick="processSplitPayments()" class="btn btn-success">
@@ -1307,44 +1773,28 @@ $conn->close();
     <div id="exportModal" class="modal-overlay">
         <div class="modal-container">
             <div class="modal-header">
-                <h3><i class="bi bi-filetype-csv"></i> <?php echo t('export_csv'); ?></h3>
+                <h3><i class="bi bi-filetype-csv"></i> <?php echo t('Export CSV'); ?></h3>
                 <button onclick="closeExportModal()" class="modal-close">&times;</button>
             </div>
             <div class="modal-body">
-                <div style="background: #f1f5f9; border-radius: 16px; padding: 16px; margin-bottom: 20px;">
-                    <p style="margin: 0; color: #334155;"><i class="bi bi-info-circle"></i> <?php echo t('select_export_options'); ?></p>
-                </div>
-
                 <form id="exportForm" method="GET" action="export_csv.php">
                     <div style="margin-bottom: 20px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #334155; font-size: 14px;"><i class="bi bi-funnel"></i> <?php echo t('filter_by_status'); ?></label>
-                        <select name="status" style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 12px; font-size: 14px;">
-                            <option value="all"><?php echo t('all'); ?></option>
-                            <option value="pending"><?php echo t('pending'); ?></option>
-                            <option value="registered"><?php echo t('registered'); ?></option>
-                            <option value="paid"><?php echo t('paid'); ?></option>
-                            <option value="cancelled"><?php echo t('cancelled'); ?></option>
+                        <label style="display: block; margin-bottom: 8px; font-weight: 600;"><i class="bi bi-funnel"></i> <?php echo t('Filter By Status'); ?></label>
+                        <select name="status" style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 12px;">
+                            <option value="all"><?php echo t('All'); ?></option>
+                            <option value="pending"><?php echo t('Pending'); ?></option>
+                            <option value="registered"><?php echo t('Registered'); ?></option>
+                            <option value="paid"><?php echo t('Paid'); ?></option>
+                            <option value="cancelled"><?php echo t('Cancelled'); ?></option>
                         </select>
                     </div>
-
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
-                        <div>
-                            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #334155; font-size: 14px;"><i class="bi bi-calendar"></i> <?php echo t('from_date'); ?></label>
-                            <input type="date" name="from" style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 12px; font-size: 14px;">
-                        </div>
-                        <div>
-                            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #334155; font-size: 14px;"><i class="bi bi-calendar"></i> <?php echo t('to_date'); ?></label>
-                            <input type="date" name="to" style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 12px; font-size: 14px;">
-                        </div>
+                        <div><label style="display: block; margin-bottom: 8px; font-weight: 600;"><i class="bi bi-calendar"></i> <?php echo t('From Date'); ?></label><input type="date" name="from" style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 12px;"></div>
+                        <div><label style="display: block; margin-bottom: 8px; font-weight: 600;"><i class="bi bi-calendar"></i> <?php echo t('To Date'); ?></label><input type="date" name="to" style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 12px;"></div>
                     </div>
-
-                    <div style="background: #e0e7ff; border-radius: 12px; padding: 12px; margin-bottom: 20px;">
-                        <small style="color: #3730a3;"><i class="bi bi-info-square"></i> 📌 <?php echo t('export_note'); ?></small>
-                    </div>
-
                     <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
-                        <button type="button" onclick="closeExportModal()" style="padding: 10px 20px; background: #64748b; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 500;"><i class="bi bi-x-lg"></i> <?php echo t('cancel'); ?></button>
-                        <button type="submit" style="padding: 10px 20px; background: <?php echo $themeColor; ?>; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 500;"><i class="bi bi-download"></i> <?php echo t('export_csv'); ?></button>
+                        <button type="button" onclick="closeExportModal()" style="padding: 10px 20px; background: #64748b; color: white; border: none; border-radius: 10px; cursor: pointer;"><i class="bi bi-x-lg"></i> <?php echo t('cancel'); ?></button>
+                        <button type="submit" style="padding: 10px 20px; background: <?php echo $themeColor; ?>; color: white; border: none; border-radius: 10px; cursor: pointer;"><i class="bi bi-download"></i> <?php echo t('Export CSV'); ?></button>
                     </div>
                 </form>
             </div>
@@ -1364,37 +1814,130 @@ $conn->close();
             if (overlay) overlay.classList.remove('active');
         }
 
-        // Payment Modal Variables
+        // Table Assignment Functions
+        function openTableModal(reservationId, customerName, customerPhone) {
+            document.getElementById('assignReservationId').value = reservationId;
+            document.getElementById('assignCustomerInfo').innerHTML = `
+                <strong>Customer:</strong> ${customerName}<br>
+                <strong>Phone:</strong> ${customerPhone}
+            `;
+
+            fetch('get_available_tables.php')
+                .then(response => response.json())
+                .then(data => {
+                    const select = document.getElementById('assignTableNumber');
+                    select.innerHTML = '<option value="">-- Select a table --</option>';
+                    if (data.success && data.tables) {
+                        data.tables.forEach(table => {
+                            select.innerHTML += `<option value="${table.table_number}">Table ${table.table_number} ${table.section ? '(' + table.section + ')' : ''}</option>`;
+                        });
+                    } else {
+                        select.innerHTML += '<option value="" disabled>No available tables</option>';
+                    }
+                    document.getElementById('tableModal').classList.add('active');
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error loading tables');
+                });
+        }
+
+        function closeTableModal() {
+            document.getElementById('tableModal').classList.remove('active');
+        }
+
+        function assignTable() {
+            const reservationId = document.getElementById('assignReservationId').value;
+            const tableNumber = document.getElementById('assignTableNumber').value;
+
+            if (!tableNumber) {
+                alert('Please select a table');
+                return;
+            }
+
+            showLoading('Assigning table...');
+
+            fetch('assign_table.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reservation_id: reservationId, table_number: tableNumber })
+            })
+            .then(response => response.json())
+            .then(data => {
+                hideLoading();
+                if (data.success) {
+                    showNotification('Table assigned successfully!', 'success');
+                    closeTableModal();
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showNotification(data.error, 'error');
+                }
+            })
+            .catch(error => {
+                hideLoading();
+                showNotification('Error: ' + error.message, 'error');
+            });
+        }
+
+        // Send Floor Plan
+        function sendFloorPlan(reservationId, phone, name) {
+            if (!confirm(`Send floor plan to ${name} (${phone})?`)) return;
+
+            showLoading('Sending floor plan...');
+
+            fetch('send_floor_plan.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reservation_id: reservationId, phone: phone, name: name })
+            })
+            .then(response => response.json())
+            .then(data => {
+                hideLoading();
+                if (data.success) {
+                    showNotification('Floor plan sent successfully!', 'success');
+                } else {
+                    showNotification(data.error, 'error');
+                }
+            })
+            .catch(error => {
+                hideLoading();
+                showNotification('Error: ' + error.message, 'error');
+            });
+        }
+
+        // Close Event Functions
+        function openCloseEventModal() {
+            document.getElementById('closeEventModal').classList.add('active');
+        }
+
+        function closeCloseEventModal() {
+            document.getElementById('closeEventModal').classList.remove('active');
+        }
+
+        // Payment Modal Functions
         let currentReservationId = '';
         let currentAmountDue = 0;
         let currentTotalAmount = 0;
         let paymentSplitCount = 0;
 
-function openPaymentModal(reservationId, totalAmount, amountDue) {
-    console.log("Opening payment modal for:", reservationId);
-    console.log("Total Amount:", totalAmount);
-    console.log("Amount Due:", amountDue);
-    
-    currentReservationId = reservationId;
-    currentTotalAmount = parseFloat(totalAmount);
-    currentAmountDue = parseFloat(amountDue);
-    
-    if (isNaN(currentAmountDue) || currentAmountDue <= 0) {
-        alert("No amount due for this reservation.");
-        return;
-    }
-    
-    document.getElementById('paymentReservationId').value = reservationId;
-    document.getElementById('modalTotalAmountDue').innerHTML = currentAmountDue.toFixed(2) + ' <?php echo $currencySymbol; ?>';
-    document.getElementById('totalAmountDue').value = currentAmountDue;
-    
-    document.getElementById('paymentSplits').innerHTML = '';
-    paymentSplitCount = 0;
-    addPaymentSplit();
-    
-    updateRemainingAmount();
-    document.getElementById('paymentModal').style.display = 'flex';
-}
+        function openPaymentModal(reservationId, totalAmount, amountDue) {
+            currentReservationId = reservationId;
+            currentTotalAmount = parseFloat(totalAmount);
+            currentAmountDue = parseFloat(amountDue);
+            if (isNaN(currentAmountDue) || currentAmountDue <= 0) {
+                alert("No amount due for this reservation.");
+                return;
+            }
+            document.getElementById('paymentReservationId').value = reservationId;
+            document.getElementById('modalTotalAmountDue').innerHTML = currentAmountDue.toFixed(2) + ' <?php echo $currencySymbol; ?>';
+            document.getElementById('totalAmountDue').value = currentAmountDue;
+            document.getElementById('paymentSplits').innerHTML = '';
+            paymentSplitCount = 0;
+            addPaymentSplit();
+            updateRemainingAmount();
+            document.getElementById('paymentModal').style.display = 'flex';
+        }
+
         function closePaymentModal() {
             document.getElementById('paymentModal').style.display = 'none';
         }
@@ -1402,33 +1945,17 @@ function openPaymentModal(reservationId, totalAmount, amountDue) {
         function addPaymentSplit() {
             const container = document.getElementById('paymentSplits');
             const splitIndex = paymentSplitCount;
-
             const splitDiv = document.createElement('div');
             splitDiv.className = 'payment-split-item';
             splitDiv.setAttribute('data-split-index', splitIndex);
             splitDiv.innerHTML = `
                 <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-bottom: 10px; align-items: end;">
-                    <div class="form-group">
-                        <label>Payment Method</label>
-                        <select class="payment-method" onchange="togglePaymentFields(this, ${splitIndex})">
-                            <option value="">Select</option>
-                            <option value="cash">Cash</option>
-                            <option value="cliq">CliQ</option>
-                            <option value="visa">Visa</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Amount (<?php echo $currencySymbol; ?>)</label>
-                        <input type="number" class="payment-amount" step="0.01" placeholder="0.00" onkeyup="updateRemainingAmount()">
-                    </div>
-                    <div class="form-group">
-                        <label>&nbsp;</label>
-                        <button type="button" class="btn btn-danger btn-sm" onclick="removePaymentSplit(this)">Remove</button>
-                    </div>
+                    <div class="form-group"><label>Payment Method</label><select class="payment-method" onchange="togglePaymentFields(this, ${splitIndex})"><option value="">Select</option><option value="cash">Cash</option><option value="cliq">CliQ</option><option value="visa">Visa</option></select></div>
+                    <div class="form-group"><label>Amount (<?php echo $currencySymbol; ?>)</label><input type="number" class="payment-amount" step="0.01" placeholder="0.00" onkeyup="updateRemainingAmount()" onchange="validateSplitAmount(this)"></div>
+                    <div class="form-group"><label>&nbsp;</label><button type="button" class="btn btn-danger btn-sm" onclick="removePaymentSplit(this)">Remove</button></div>
                 </div>
                 <div class="payment-fields" style="display: none;"></div>
             `;
-
             container.appendChild(splitDiv);
             paymentSplitCount++;
         }
@@ -1446,295 +1973,166 @@ function openPaymentModal(reservationId, totalAmount, amountDue) {
         function togglePaymentFields(selectElement, index) {
             const method = selectElement.value;
             const paymentFields = selectElement.closest('.payment-split-item').querySelector('.payment-fields');
-
             if (method === 'cash') {
-                paymentFields.innerHTML = `
-                    <div class="form-group">
-                        <label><i class="bi bi-person"></i> Received By (Staff Name)</label>
-                        <input type="text" class="received-by" placeholder="Enter staff name" required>
-                    </div>
-                `;
+                paymentFields.innerHTML = `<div class="form-group"><label><i class="bi bi-person"></i> Received By (Staff Name)</label><input type="text" class="received-by" placeholder="Enter staff name" required></div>`;
                 paymentFields.style.display = 'block';
             } else if (method === 'cliq') {
-                paymentFields.innerHTML = `
-                    <div class="form-group">
-                        <label><i class="bi bi-image"></i> Upload Screenshot Evidence</label>
-                        <input type="file" class="proof-file" accept="image/*" onchange="previewImage(this)">
-                        <div class="cliq-preview"></div>
-                        <small style="color: #64748b;">Please upload a screenshot of the CliQ payment confirmation</small>
-                    </div>
-                `;
+                paymentFields.innerHTML = `<div class="form-group"><label><i class="bi bi-image"></i> Upload Screenshot (Optional)</label><input type="file" class="proof-file" accept="image/*" onchange="previewImage(this)"><div class="cliq-preview"></div></div><div class="form-group"><label><i class="bi bi-pencil"></i> Or Enter Reference Number / Transaction ID</label><input type="text" class="proof-text" placeholder="Enter CliQ reference number or transaction ID"><small style="color: #64748b;">You can either upload a screenshot OR enter the reference number</small></div>`;
                 paymentFields.style.display = 'block';
             } else if (method === 'visa') {
-                paymentFields.innerHTML = `
-                    <div class="form-group">
-                        <label><i class="bi bi-receipt"></i> Receipt ID / Transaction ID</label>
-                        <input type="text" class="receipt-id" placeholder="Enter Visa receipt ID" required>
-                        <small style="color: #64748b;">Enter the receipt number from the Visa transaction</small>
-                    </div>
-                `;
+                paymentFields.innerHTML = `<div class="form-group"><label><i class="bi bi-receipt"></i> Receipt ID / Transaction ID</label><input type="text" class="receipt-id" placeholder="Enter Visa receipt ID" required><small style="color: #64748b;">Enter the receipt number from the Visa transaction</small></div>`;
                 paymentFields.style.display = 'block';
             } else {
                 paymentFields.style.display = 'none';
                 paymentFields.innerHTML = '';
             }
-
-            updateRemainingAmount();
         }
 
         function previewImage(input) {
             if (input.files && input.files[0]) {
                 const reader = new FileReader();
                 const previewDiv = input.parentElement.querySelector('.cliq-preview');
-
                 reader.onload = function(e) {
                     previewDiv.innerHTML = `<img src="${e.target.result}" alt="Preview" style="max-width: 100px; max-height: 100px; border-radius: 8px; margin-top: 10px;"><br><small>Preview loaded</small>`;
                 };
-
                 reader.readAsDataURL(input.files[0]);
             }
         }
 
-function updateRemainingAmount() {
-    let totalPaid = 0;
-    const amounts = document.querySelectorAll('.payment-amount');
-    amounts.forEach(amount => {
-        const val = parseFloat(amount.value);
-        if (!isNaN(val)) totalPaid += val;
-    });
-    
-    // Round to 2 decimal places
-    totalPaid = Math.round(totalPaid * 100) / 100;
-    const remaining = Math.round((currentAmountDue - totalPaid) * 100) / 100;
-    
-    const remainingElement = document.getElementById('remainingAmount');
-    if (remainingElement) {
-        remainingElement.textContent = remaining.toFixed(2);
-        if (remaining < -0.01) {
-            remainingElement.style.color = '#ef4444';
-            // Show warning if overpaying
-            document.getElementById('remainingAmountDisplay').style.background = '#fee2e2';
-        } else if (remaining === 0) {
-            remainingElement.style.color = '#10b981';
-            document.getElementById('remainingAmountDisplay').style.background = '#d1fae5';
-        } else {
-            remainingElement.style.color = '#f59e0b';
-            document.getElementById('remainingAmountDisplay').style.background = '#fef3c7';
-        }
-        
-        // Disable process button if overpaying
-        const processBtn = document.querySelector('.modal-buttons .btn-success');
-        if (processBtn) {
-            if (remaining < -0.01) {
-                processBtn.disabled = true;
-                processBtn.style.opacity = '0.5';
-                processBtn.title = 'Cannot pay more than amount due';
-            } else {
-                processBtn.disabled = false;
-                processBtn.style.opacity = '1';
+        function updateRemainingAmount() {
+            let totalPaid = 0;
+            const amounts = document.querySelectorAll('.payment-amount');
+            amounts.forEach(amount => {
+                const val = parseFloat(amount.value);
+                if (!isNaN(val)) totalPaid += val;
+            });
+            totalPaid = Math.round(totalPaid * 100) / 100;
+            const remaining = Math.round((currentAmountDue - totalPaid) * 100) / 100;
+            const remainingElement = document.getElementById('remainingAmount');
+            if (remainingElement) {
+                remainingElement.textContent = remaining.toFixed(2);
+                if (remaining < -0.01) {
+                    remainingElement.style.color = '#ef4444';
+                    document.getElementById('remainingAmountDisplay').style.background = '#fee2e2';
+                } else if (remaining === 0) {
+                    remainingElement.style.color = '#10b981';
+                    document.getElementById('remainingAmountDisplay').style.background = '#d1fae5';
+                } else {
+                    remainingElement.style.color = '#f59e0b';
+                    document.getElementById('remainingAmountDisplay').style.background = '#fef3c7';
+                }
+                const processBtn = document.querySelector('.modal-buttons .btn-success');
+                if (processBtn) {
+                    if (remaining < -0.01) {
+                        processBtn.disabled = true;
+                        processBtn.style.opacity = '0.5';
+                    } else {
+                        processBtn.disabled = false;
+                        processBtn.style.opacity = '1';
+                    }
+                }
             }
         }
-    }
-}
 
-function addPaymentSplit() {
-    const container = document.getElementById('paymentSplits');
-    const splitIndex = paymentSplitCount;
-    
-    const splitDiv = document.createElement('div');
-    splitDiv.className = 'payment-split-item';
-    splitDiv.setAttribute('data-split-index', splitIndex);
-    splitDiv.innerHTML = `
-        <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-bottom: 10px; align-items: end;">
-            <div class="form-group">
-                <label>Payment Method</label>
-                <select class="payment-method" onchange="togglePaymentFields(this, ${splitIndex})">
-                    <option value="">Select</option>
-                    <option value="cash">Cash</option>
-                    <option value="cliq">CliQ</option>
-                    <option value="visa">Visa</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label>Amount (<?php echo $currencySymbol; ?>)</label>
-                <input type="number" class="payment-amount" step="0.01" placeholder="0.00" 
-                       onkeyup="updateRemainingAmount()" 
-                       onchange="validateSplitAmount(this)">
-            </div>
-            <div class="form-group">
-                <label>&nbsp;</label>
-                <button type="button" class="btn btn-danger btn-sm" onclick="removePaymentSplit(this)">Remove</button>
-            </div>
-        </div>
-        <div class="payment-fields" style="display: none;"></div>
-    `;
-    
-    container.appendChild(splitDiv);
-    paymentSplitCount++;
-}
+        function validateSplitAmount(input) {
+            let value = parseFloat(input.value);
+            if (isNaN(value)) value = 0;
+            let otherTotal = 0;
+            const allAmounts = document.querySelectorAll('.payment-amount');
+            allAmounts.forEach(amount => {
+                if (amount !== input) {
+                    otherTotal += parseFloat(amount.value) || 0;
+                }
+            });
+            const maxAllowed = currentAmountDue - otherTotal;
+            if (value > maxAllowed + 0.01) {
+                alert(`Maximum allowed for this split is ${maxAllowed.toFixed(2)} (remaining amount due)`);
+                input.value = maxAllowed.toFixed(2);
+                updateRemainingAmount();
+            }
+        }
 
-function validateSplitAmount(input) {
-    let value = parseFloat(input.value);
-    if (isNaN(value)) value = 0;
-    
-    // Calculate current total of other splits
-    let otherTotal = 0;
-    const allAmounts = document.querySelectorAll('.payment-amount');
-    allAmounts.forEach(amount => {
-        if (amount !== input) {
-            otherTotal += parseFloat(amount.value) || 0;
-        }
-    });
-    
-    const maxAllowed = currentAmountDue - otherTotal;
-    
-    if (value > maxAllowed + 0.01) {
-        alert(`Maximum allowed for this split is ${maxAllowed.toFixed(2)} (remaining amount due)`);
-        input.value = maxAllowed.toFixed(2);
-        updateRemainingAmount();
-    }
-}
-
-async function processSplitPayments() {
-    const splits = [];
-    const splitItems = document.querySelectorAll('.payment-split-item');
-    let totalAmount = 0;
-    
-    for (let item of splitItems) {
-        const method = item.querySelector('.payment-method').value;
-        const amount = parseFloat(item.querySelector('.payment-amount').value);
-        
-        if (!method) {
-            alert('Please select a payment method for all splits');
-            return;
-        }
-        
-        if (isNaN(amount) || amount <= 0) {
-            alert('Please enter valid amount for all splits');
-            return;
-        }
-        
-        totalAmount += amount;
-        
-        const splitData = {
-            method: method,
-            amount: amount
-        };
-        
-        if (method === 'cash') {
-            const receivedBy = item.querySelector('.received-by')?.value;
-            if (!receivedBy) {
-                alert('Please enter who received the cash payment');
+        async function processSplitPayments() {
+            const splits = [];
+            const splitItems = document.querySelectorAll('.payment-split-item');
+            let totalAmount = 0;
+            const formData = new FormData();
+            formData.append('reservation_id', currentReservationId);
+            for (let i = 0; i < splitItems.length; i++) {
+                const item = splitItems[i];
+                const method = item.querySelector('.payment-method').value;
+                const amount = parseFloat(item.querySelector('.payment-amount').value);
+                if (!method || isNaN(amount) || amount <= 0) {
+                    alert('Please fill all payment details');
+                    return;
+                }
+                totalAmount += amount;
+                const splitData = { method: method, amount: amount };
+                if (method === 'cash') {
+                    const receivedBy = item.querySelector('.received-by')?.value;
+                    if (!receivedBy) {
+                        alert('Please enter who received the cash');
+                        return;
+                    }
+                    splitData.received_by = receivedBy;
+                } else if (method === 'cliq') {
+                    const fileInput = item.querySelector('.proof-file');
+                    if (fileInput && fileInput.files[0]) {
+                        formData.append('proof_' + i, fileInput.files[0]);
+                    }
+                    const proofText = item.querySelector('.proof-text')?.value;
+                    if (proofText) {
+                        splitData.proof_text = proofText;
+                    }
+                } else if (method === 'visa') {
+                    const receiptId = item.querySelector('.receipt-id')?.value;
+                    if (!receiptId) {
+                        alert('Please enter receipt ID');
+                        return;
+                    }
+                    splitData.receipt_id = receiptId;
+                }
+                splits.push(splitData);
+            }
+            totalAmount = Math.round(totalAmount * 100) / 100;
+            if (Math.abs(totalAmount - currentAmountDue) > 0.02) {
+                alert(`Total (${totalAmount.toFixed(2)}) does not match amount due (${currentAmountDue.toFixed(2)})`);
                 return;
             }
-            splitData.received_by = receivedBy;
-        } else if (method === 'cliq') {
-            const fileInput = item.querySelector('.proof-file');
-            if (!fileInput.files[0]) {
-                alert('Please upload a screenshot for CliQ payment');
-                return;
+            formData.append('splits', JSON.stringify(splits));
+            showLoading('Processing payment...');
+            try {
+                const response = await fetch('process_split_payment.php', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                hideLoading();
+                if (data.success) {
+                    showNotification('Payment processed successfully!', 'success');
+                    closePaymentModal();
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showNotification('Error: ' + (data.error || 'Payment failed'), 'error');
+                }
+            } catch (error) {
+                hideLoading();
+                showNotification('Error: ' + error.message, 'error');
             }
-            splitData.hasFile = true;
-        } else if (method === 'visa') {
-            const receiptId = item.querySelector('.receipt-id')?.value;
-            if (!receiptId) {
-                alert('Please enter receipt ID for Visa payment');
-                return;
-            }
-            splitData.receipt_id = receiptId;
         }
-        
-        splits.push(splitData);
-    }
-    
-    // Round to 2 decimal places
-    totalAmount = Math.round(totalAmount * 100) / 100;
-    const amountDue = Math.round(currentAmountDue * 100) / 100;
-    
-    console.log("Total Amount to Pay:", totalAmount);
-    console.log("Amount Due:", amountDue);
-    
-    // Check if total matches the amount due (allow 0.01 tolerance)
-    if (Math.abs(totalAmount - amountDue) > 0.02) {
-        if (totalAmount < amountDue) {
-            alert(`Total payment (${totalAmount.toFixed(2)}) is less than amount due (${amountDue.toFixed(2)}). Please add more.`);
-        } else {
-            alert(`Total payment (${totalAmount.toFixed(2)}) exceeds amount due (${amountDue.toFixed(2)}). Please reduce the amount.`);
-        }
-        return;
-    }
-    
-    // Use the exact amount due (not the total from inputs)
-    const exactAmount = amountDue;
-    
-    // Adjust the last split to match exact amount if needed
-    if (Math.abs(totalAmount - exactAmount) > 0.01) {
-        const lastSplit = splits[splits.length - 1];
-        lastSplit.amount = exactAmount - (totalAmount - lastSplit.amount);
-    }
-    
-    showLoading('Processing payments...');
-    
-    const formData = new FormData();
-    formData.append('reservation_id', currentReservationId);
-    formData.append('splits', JSON.stringify(splits));
-    
-    try {
-        const response = await fetch('process_split_payment.php', {
-            method: 'POST',
-            body: formData
-        });
-        
-        const text = await response.text();
-        console.log("Raw response:", text);
-        
-        let data;
-        try {
-            data = JSON.parse(text);
-        } catch(e) {
-            console.error("Failed to parse JSON:", text);
-            alert("Server error. Check logs.");
-            hideLoading();
-            return;
-        }
-        
-        hideLoading();
-        
-        if (data.success) {
-            alert('✓ Payment processed successfully!');
-            closePaymentModal();
-            location.reload();
-        } else {
-            alert('Error: ' + (data.error || 'Payment failed'));
-        }
-    } catch (error) {
-        hideLoading();
-        alert('Error: ' + error.message);
-        console.error(error);
-    }
-}
 
         function deleteReservation(reservationId, element) {
             const password = prompt('⚠️ SECURITY VERIFICATION REQUIRED\n\nEnter admin password to delete this reservation:\n(Default: AdminDelete2026)');
-
             if (password === null) return;
-
             if (password !== 'AdminDelete2026') {
                 showNotification('Invalid password!', 'error');
                 return;
             }
-
             showLoading('Deleting reservation...');
-
             fetch('delete_reservation.php', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    reservation_id: reservationId,
-                    password: password
-                })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reservation_id: reservationId, password: password })
             })
             .then(response => response.json())
             .then(data => {
@@ -1760,22 +2158,57 @@ async function processSplitPayments() {
         }
 
         let soundEnabled = localStorage.getItem('soundEnabled') === 'true';
+        let audioContext = null;
+
+        function initAudio() {
+            if (audioContext) return;
+            try {
+                audioContext = new(window.AudioContext || window.webkitAudioContext)();
+            } catch (e) {
+                console.log('Web Audio not supported');
+            }
+        }
 
         function playNotificationSound() {
             if (!soundEnabled) return;
+            initAudio();
+            if (!audioContext) return;
             try {
-                const audioContext = new(window.AudioContext || window.webkitAudioContext)();
+                if (audioContext.state === 'suspended') audioContext.resume();
+                const now = audioContext.currentTime;
                 const oscillator = audioContext.createOscillator();
                 const gainNode = audioContext.createGain();
                 oscillator.connect(gainNode);
                 gainNode.connect(audioContext.destination);
                 oscillator.frequency.value = 880;
-                gainNode.gain.value = 0.3;
+                gainNode.gain.value = 0.15;
                 oscillator.start();
-                gainNode.gain.exponentialRampToValueAtTime(0.00001, audioContext.currentTime + 0.5);
-                oscillator.stop(audioContext.currentTime + 0.5);
-                if (audioContext.state === 'suspended') audioContext.resume();
-            } catch (e) {}
+                gainNode.gain.exponentialRampToValueAtTime(0.00001, now + 0.3);
+                oscillator.stop(now + 0.3);
+            } catch (e) {
+                console.log('Sound error:', e);
+            }
+        }
+
+        document.addEventListener('click', function initAudioOnClick() {
+            initAudio();
+            if (audioContext && audioContext.state === 'suspended') audioContext.resume();
+            document.removeEventListener('click', initAudioOnClick);
+        });
+
+        function updateSoundButton() {
+            const soundBtn = document.getElementById('soundToggle');
+            if (soundBtn) {
+                soundBtn.innerHTML = soundEnabled ? '<i class="bi bi-volume-up-fill"></i> Sound On' : '<i class="bi bi-volume-mute-fill"></i> Sound Off';
+                soundBtn.style.background = soundEnabled ? '#10b981' : '#64748b';
+            }
+        }
+
+        function toggleSound() {
+            soundEnabled = !soundEnabled;
+            localStorage.setItem('soundEnabled', soundEnabled);
+            updateSoundButton();
+            showNotification(`Sound ${soundEnabled ? 'enabled' : 'disabled'}`, 'info');
         }
 
         function showNotification(message, type = 'info') {
@@ -1788,17 +2221,6 @@ async function processSplitPayments() {
                 notification.style.animation = 'fadeOut 0.5s ease forwards';
                 setTimeout(() => notification.remove(), 500);
             }, 3000);
-        }
-
-        function toggleSound() {
-            soundEnabled = !soundEnabled;
-            localStorage.setItem('soundEnabled', soundEnabled);
-            const soundBtn = document.getElementById('soundToggle');
-            if (soundBtn) {
-                soundBtn.innerHTML = soundEnabled ? '<i class="bi bi-volume-up-fill"></i> Sound On' : '<i class="bi bi-volume-mute-fill"></i> Sound Off';
-                soundBtn.style.background = soundEnabled ? '#10b981' : '#64748b';
-            }
-            showNotification(`Sound notifications ${soundEnabled ? 'enabled' : 'disabled'}`, 'info');
         }
 
         function checkNewReservations() {
@@ -1816,8 +2238,7 @@ async function processSplitPayments() {
         function applyFilters() {
             const search = document.getElementById('search').value;
             const status = document.getElementById('statusFilter').value;
-            let url = `dashboard.php?search=${encodeURIComponent(search)}&status=${status}&lang=<?php echo $lang; ?>`;
-            window.location.href = url;
+            window.location.href = `dashboard.php?search=${encodeURIComponent(search)}&status=${status}&lang=<?php echo getCurrentLanguage(); ?>`;
         }
 
         function setLanguage(lang) {
@@ -1834,6 +2255,7 @@ async function processSplitPayments() {
             document.getElementById('exportModal').style.display = 'none';
         }
 
+        // Dark mode initialization
         const darkModeToggle = document.getElementById('darkModeToggle');
         const isDarkMode = localStorage.getItem('darkMode') === 'true';
         if (isDarkMode) {
@@ -1848,11 +2270,7 @@ async function processSplitPayments() {
         });
 
         document.addEventListener('DOMContentLoaded', function() {
-            const soundBtn = document.getElementById('soundToggle');
-            if (soundBtn) {
-                soundBtn.innerHTML = soundEnabled ? '<i class="bi bi-volume-up-fill"></i> Sound On' : '<i class="bi bi-volume-mute-fill"></i> Sound Off';
-                soundBtn.style.background = soundEnabled ? '#10b981' : '#64748b';
-            }
+            updateSoundButton();
             setInterval(checkNewReservations, 30000);
         });
 
@@ -1863,8 +2281,12 @@ async function processSplitPayments() {
         window.onclick = function(event) {
             const exportModal = document.getElementById('exportModal');
             const paymentModal = document.getElementById('paymentModal');
+            const tableModal = document.getElementById('tableModal');
+            const closeEventModal = document.getElementById('closeEventModal');
             if (event.target === exportModal) closeExportModal();
             if (event.target === paymentModal) closePaymentModal();
+            if (event.target === tableModal) closeTableModal();
+            if (event.target === closeEventModal) closeCloseEventModal();
         }
     </script>
 </body>
