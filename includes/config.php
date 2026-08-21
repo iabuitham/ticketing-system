@@ -4,13 +4,13 @@
  */
 
 // Database configuration
-define('DB_HOST', 'sql103.ezyro.com');
-define('DB_USER', 'ezyro_41780028');
-define('DB_NAME', 'ezyro_41780028_ticketing_system');
-define('DB_PASS', '6dfb6092a4');
+define('DB_HOST', 'db.fr-roub1.bengt.wasmernet.com');
+define('DB_USER', 'f6415567768d8000b2eda39f5960');
+define('DB_NAME', 'ticketing_system');
+define('DB_PASS', '069ef641-5567-77a1-8000-8df0665e3366');
 
 // Base URL
-define('BASE_URL', 'https://restorandticketingsystem.unaux.com/');
+define('BASE_URL', 'https://ticketing-system.wasmer.app/');
 
 // Error reporting (turn off in production later)
 error_reporting(E_ALL);
